@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image
 import datetime
 from pathlib import Path
+import re
 
 
 def file_rename(original_name):
@@ -11,12 +12,16 @@ def file_rename(original_name):
         pass
     else:
         parent.mkdir(parents=True)
-    n = len(list(parent.glob(file_path.stem + "*" + file_path.suffix)))
-    if n:
-        filename = parent / "{}({}){}".format(file_path.stem, n, file_path.suffix)  # nameと拡張子を結合
-        return filename
-    else:  # n=0のときoriginal_nameを返す
-        return original_name
+    # n = len(list(parent.glob(file_path.stem + "*" + file_path.suffix)))
+    n = len([p for p in parent.glob("*") if re.search(file_path.stem + r"(\Z|\(\d*\))", p.stem)])
+
+    return parent / "{}({}){}".format(file_path.stem, n, file_path.suffix)  # nameと拡張子を結合
+
+    # if n:
+    #     filename = parent / "{}({}){}".format(file_path.stem, n, file_path.suffix)  # nameと拡張子を結合
+    #     return filename
+    # else:  # n=0のときoriginal_nameを返す
+    #     return original_name
 
 
 class Plasma:  # 仮想プラズマ
@@ -31,12 +36,23 @@ class Plasma:  # 仮想プラズマ
         if o_xyz is None:
             o_xyz = [0, 0, 300]
 
-        d_xyz = np.array(xyz_range) / shape  # size of voxel
-        voxel_start = o_xyz - np.array(xyz_range) / 2
-        self.voxel = np.array([np.append(d_xyz * (np.array([i, j, k]) + 0.5) + voxel_start, [1, 0])
-                               for k in range(shape[2])
-                               for j in range(shape[1])
-                               for i in range(shape[0])]).T  # voxel_size * voxel_num -> x,y,z
+
+        self.d_xyz = np.array(xyz_range) / shape  # size of voxel
+        voxel_num = np.prod(shape)
+
+        # voxel_start = o_xyz - np.array(xyz_range) / 2
+
+        voxel_start=o_xyz - np.array(xyz_range) / 2 + self.d_xyz / 2
+        voxel_end=o_xyz + np.array(xyz_range) / 2 + self.d_xyz / 2
+
+        x,y,z = [np.linspace(start,end,step,endpoint=False) for start,end,step in zip(voxel_start,voxel_end,shape)]
+
+        xxx, yyy, zzz = np.meshgrid(x, y, z)
+        self.voxel = np.r_["1,2,0",xxx.ravel(),yyy.ravel(),zzz.ravel(),np.ones(voxel_num),np.zeros(voxel_num)].T
+        # self.voxel = np.array([np.append(self.d_xyz * (np.array([i, j, k]) + 0.5) + voxel_start, [1, 0])
+        #                        for k in range(shape[2])
+        #                        for j in range(shape[1])
+        #                        for i in range(shape[0])]).T  # voxel_size * voxel_num -> x,y,z
 
 
 class OpticalSystem:
@@ -47,47 +63,46 @@ class OpticalSystem:
                                                                                       2) * self.ppmm / self.aperture_z
 
         mask_r = (self.f * self.aperture_phi * self.ppmm) / (2 * self.aperture_z)
-
         im_0 = np.array([[i, j] for j in range(self.image_size[1]) for i in range(self.image_size[0])]) + 0.5
 
         self.mask_list = [(np.linalg.norm(im_0 - c, axis=1) <= mask_r) for c in self.center_points]
+        self.effective_area = sum(self.mask_list).astype(bool)
 
-        self.effective_area = sum(self.mask_list)
+    def mk_light_vector(self):
 
-    def light_vector(self):
+        if self.plasma_data:
+            active_voxel = self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0]
 
-        active_voxel = self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0]
-
-        if active_voxel.size:
-
-            uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
-
-            r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
-
-            luminosity = (active_voxel[-1] / r_2_list)[:, np.newaxis, :]
-
-            return np.append(uv, luminosity, axis=1)
+            if active_voxel.size:
+                uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
+                r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
+                luminosity = (active_voxel[-1] / r_2_list)[:, np.newaxis, :]
+                self.light_vector = np.append(uv, luminosity, axis=1)
+            else:
+                print('There is no light points!')
         else:
-            return np.array([], dtype=int).reshape(self.hole_num, 3, 0)
+            print('No plasma data. Please make plasma data.')
 
-    def mk_image_vec(self, data):
+    def mk_image_vec(self):
         vec_list = []
-        for datum, mask in zip(data, self.mask_list):
+        for datum, mask in zip(self.light_vector, self.mask_list):
             vec_list.append(np.zeros_like(self.effective_area, dtype=float))
-
             index = np.dot([1, self.image_size[0]], np.floor(datum[:2] * self.ppmm)).astype(int)
-
-            vec_list[-1][index] = datum[-1]
+            index_set = np.unique(index)
+            luminosity = np.array(list(map(sum, [datum[-1, c] for c in [index == i for i in index_set]])))
+            # vec_list[-1][index[index<=self.effective_area.size]] = datum[-1,index<=self.effective_area.size]
+            flag = index_set <= self.effective_area.size
+            vec_list[-1][index_set[flag]] = luminosity[flag]
             vec_list[-1] = vec_list[-1] * mask
 
         image_vec = sum(vec_list)
         return image_vec
 
     def __init__(self, sim_name=None, hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58,
-                 aperture_phi=21, image_size=(170, 170)):
+                 aperture_phi=21, image_size=(170, 170), plasma_data=Plasma()):
 
         self.sim_name = sim_name if sim_name else str(datetime.date.today())
-        self.sim_path = Path("./data/" + self.sim_name)
+        self.sim_path = file_rename(Path("./data/" + self.sim_name + "/simulation"))
 
         if hole_list is None:
             hole_list = [[0.00, 0.00],
@@ -107,7 +122,7 @@ class OpticalSystem:
         self.ppmm = image_size[0] / screen_size[0]
         self.offset = self.screen_size / 2
 
-        self.plasma_data = Plasma()
+        self.plasma_data = plasma_data
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
 
@@ -119,16 +134,18 @@ class OpticalSystem:
         self.center_points = None
         self.mask_list = None
         self.effective_area = None
-
+        self.light_vector = np.empty(shape=(self.hole_num, 3, 0), dtype=int)
         self.image_vec = None
 
     def simulate(self):
+        self.sim_path.mkdir()
         self.mk_mask()
-        im_array = self.mk_image_vec(self.light_vector())
+        self.mk_light_vector()
+        im_array = self.mk_image_vec()
 
         im_pil = Image.fromarray((im_array.reshape(self.image_size) * 255 / im_array.max()).astype("uint8"))
 
-        im_pil.save(file_rename(self.sim_path / "image.png"))
+        im_pil.save(self.sim_path / "image.png")
 
         self.image_vec = im_array[self.effective_area]
 
