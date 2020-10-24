@@ -146,7 +146,7 @@ class OpticalSystem:
         n = (self.hole_size / 2) // 2
         r_array = n - np.linalg.norm(np.meshgrid(np.arange(-n - 1, n + 1 + 1), (np.arange(-n - 1, n + 1 + 1))), axis=0)
         kernel = np.where(r_array > 0, 1.0, 0.0)
-        kernel = kernel / kernel / sum()
+        kernel = kernel / kernel.sum()
         blur_im = ndimage.convolve(org_im, kernel, mode='constant', cval=0)
 
         org_pil = Image.fromarray((org_im.reshape(self.image_size) * 255 / org_im.max()).astype("uint8"))
