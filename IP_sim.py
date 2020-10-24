@@ -156,6 +156,7 @@ class OpticalSystem:
         blur_pil.save(self.sim_path / "blur_image.png")
 
         # self.image_vec = org_im[self.effective_area]
+        return org_im,blur_im,org_pil,blur_pil
 
 
 if __name__ == '__main__':
