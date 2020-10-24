@@ -3,6 +3,7 @@ from PIL import Image
 import datetime
 from pathlib import Path
 import re
+from scipy import ndimage
 
 
 def file_rename(original_name):
@@ -36,19 +37,19 @@ class Plasma:  # 仮想プラズマ
         if o_xyz is None:
             o_xyz = [0, 0, 300]
 
-
         self.d_xyz = np.array(xyz_range) / shape  # size of voxel
         voxel_num = np.prod(shape)
 
         # voxel_start = o_xyz - np.array(xyz_range) / 2
 
-        voxel_start=o_xyz - np.array(xyz_range) / 2 + self.d_xyz / 2
-        voxel_end=o_xyz + np.array(xyz_range) / 2 + self.d_xyz / 2
+        voxel_start = o_xyz - np.array(xyz_range) / 2 + self.d_xyz / 2
+        voxel_end = o_xyz + np.array(xyz_range) / 2 + self.d_xyz / 2
 
-        x,y,z = [np.linspace(start,end,step,endpoint=False) for start,end,step in zip(voxel_start,voxel_end,shape)]
+        x, y, z = [np.linspace(start, end, step, endpoint=False) for start, end, step in
+                   zip(voxel_start, voxel_end, shape)]
 
         xxx, yyy, zzz = np.meshgrid(x, y, z)
-        self.voxel = np.r_["1,2,0",xxx.ravel(),yyy.ravel(),zzz.ravel(),np.ones(voxel_num),np.zeros(voxel_num)].T
+        self.voxel = np.r_["1,2,0", xxx.ravel(), yyy.ravel(), zzz.ravel(), np.ones(voxel_num), np.zeros(voxel_num)].T
         # self.voxel = np.array([np.append(self.d_xyz * (np.array([i, j, k]) + 0.5) + voxel_start, [1, 0])
         #                        for k in range(shape[2])
         #                        for j in range(shape[1])
@@ -141,13 +142,20 @@ class OpticalSystem:
         self.sim_path.mkdir()
         self.mk_mask()
         self.mk_light_vector()
-        im_array = self.mk_image_vec()
+        org_im = self.mk_image_vec()
+        n = (self.hole_size / 2) // 2
+        r_array = n - np.linalg.norm(np.meshgrid(np.arange(-n - 1, n + 1 + 1), (np.arange(-n - 1, n + 1 + 1))), axis=0)
+        kernel = np.where(r_array > 0, 1.0, 0.0)
+        kernel = kernel / kernel / sum()
+        blur_im = ndimage.convolve(org_im, kernel, mode='constant', cval=0)
 
-        im_pil = Image.fromarray((im_array.reshape(self.image_size) * 255 / im_array.max()).astype("uint8"))
+        org_pil = Image.fromarray((org_im.reshape(self.image_size) * 255 / org_im.max()).astype("uint8"))
+        org_pil.save(self.sim_path / "org_image.png")
 
-        im_pil.save(self.sim_path / "image.png")
+        blur_pil = Image.fromarray((blur_im.reshape(self.image_size) * 255 / blur_im.max()).astype("uint8"))
+        blur_pil.save(self.sim_path / "blur_image.png")
 
-        self.image_vec = im_array[self.effective_area]
+        # self.image_vec = org_im[self.effective_area]
 
 
 if __name__ == '__main__':
