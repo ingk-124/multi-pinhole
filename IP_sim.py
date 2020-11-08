@@ -179,7 +179,7 @@ class OpticalSystem:
 
         if np.any(self.plasma_data.d_xyz[:2] > d):
             print("Warning: Voxel size is inadequate. ",
-                  f"(Voxel size={np.round(self.plasma_data.d_xyz[:2], decimals=2)}, {d=:.2})")
+                  f"(Voxel size={np.round(self.plasma_data.d_xyz[:2], decimals=2)}, d={d:.2})")
             print(f"Ideal shape: {(self.plasma_data.xyz_range[:2] / d).astype(int) + 1}")
             while True:
                 c = "y" if auto else input("continue? (y)/n: ")

@@ -27,7 +27,7 @@ def probably_matrix(kw, save=True, parent="./npz/"):
     for i in tqdm(range(I)):
         W.plasma_data.voxel[-1, i] = 1
         H = W.simulate(fast_mode=True)
-        # print(f"{P.shape=},{H.shape=}")
+        # print(f"P.shape={P.shape},H.shape={H.shape}")
         P = sparse.vstack([P, sparse.csr_matrix(H)])
         W.plasma_data.voxel[-1, i] = 0
 
@@ -52,7 +52,7 @@ if __name__ == '__main__':
                       "xyz_range": (100, 100, 100), "o_xyz": (0, 0, 300)}
 
     while True:
-        print(f"{config_dic=}\nIs it OK?",end="")
+        print(f"{config_dic}\nIs it OK?",end="")
         ok = input(" y/n: ")
         if ok == "y":
             break
