@@ -46,7 +46,8 @@ if __name__ == '__main__':
     # o_xyz=(0, 0, 300), n=10
 
     if args.file:
-        config_dic = json.load(args.file)
+        with open(args.file) as f:
+            config_dic = json.load(f)
     else:
         config_dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (10, 10, 10),
                       "xyz_range": (100, 100, 100), "o_xyz": (0, 0, 300)}
