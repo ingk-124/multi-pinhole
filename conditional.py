@@ -14,6 +14,7 @@ def get_option():
 def probably_matrix(kw):
     OpticalSystem(**kw)
 
+
 # def probably_matrix(kw, save=True, parent="./npz/"):
 #     W = OpticalSystem(**kw,auto=True)
 #     path = dir_rename(parent + W.sim_name)
@@ -37,16 +38,29 @@ if __name__ == '__main__':
     args = get_option()
 
     # arguments
-    # sim_name=None, mode="pinhole", hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5,
-    # aperture_z=58, aperture_phi=21, image_size=(170, 170), shape=(10, 10, 10), xyz_range=(100, 100, 100),
-    # o_xyz=(0, 0, 300), n=10
+    # sim_name=None, mode="pinhole", auto=False, tm=False,
+    # hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58, aperture_phi=21,
+    # shape=(10, 10, 10), xyz_range=(100, 100, 100), o_xyz=(0, 0, 300), image_size=(170, 170), n=10
 
     if args.file:
         with open(args.file) as f:
             config_dic = json.load(f)
     else:
-        config_dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (10, 10, 10),
-                      "xyz_range": (200, 200, 500), "o_xyz": (0, 0, 300), "auto": True, "n": 1, "tm":True}
+        config_dic = {"sim_name": None,
+                      "mode": "pinhole",
+                      "auto": True,
+                      "tm": True,
+                      "hole_list": None,
+                      "f": 14.3,
+                      "screen_size": (17.0, 17.0),
+                      "hole_size": 0.5,
+                      "aperture_z": 58,
+                      "aperture_phi": 21,
+                      "shape": (10, 10, 10),
+                      "xyz_range": (100, 100, 100),
+                      "o_xyz": (0, 0, 300),
+                      "image_size": (170, 170),
+                      "n": 2}
 
     while True:
         print(f"{config_dic}\nIs it OK?", end="")

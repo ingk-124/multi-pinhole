@@ -1,6 +1,8 @@
 {
   "sim_name": null,
   "mode": "pinhole",
+  "auto": true,
+  "tm": true,
   "hole_list": null,
   "f": 14.3,
   "screen_size": [17.0, 17.0],
