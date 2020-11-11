@@ -6,6 +6,8 @@ import re
 from scipy import ndimage
 from scipy import sparse
 import matplotlib.pyplot as plt
+import time
+from tqdm import tqdm
 
 
 def dir_rename(dir_name):
@@ -61,7 +63,7 @@ class Plasma:  # 仮想プラズマ
         self.d_xyz = self.xyz_range / shape  # size of voxel
         self.o_xyz = o_xyz
 
-        voxel_num = np.prod(shape)
+        self.J = int(np.prod(shape))
 
         # voxel_start = o_xyz - np.array(xyz_range) / 2
 
@@ -69,11 +71,12 @@ class Plasma:  # 仮想プラズマ
         voxel_end = o_xyz + self.xyz_range / 2 + self.d_xyz / 2
 
         x, y, z = [np.linspace(start, end, step, endpoint=False) for start, end, step in
-                   zip(voxel_start, voxel_end, shape)]
+                   zip(voxel_start, voxel_end, shape)]  # x -> y ->zの順
 
         # xxx, yyy, zzz = np.meshgrid(x,y,z)
         zzz, yyy, xxx = np.meshgrid(z, y, x, indexing="ij")
-        self.voxel = np.r_["1,2,0", xxx.ravel(), yyy.ravel(), zzz.ravel(), np.ones(voxel_num), np.zeros(voxel_num)].T
+        self.voxel = np.r_[
+            "1,2,0", xxx.ravel(), yyy.ravel(), zzz.ravel(), np.ones(self.J), np.zeros(self.J)].T
         # self.voxel = np.array([np.append(self.d_xyz * (np.array([i, j, k]) + 0.5) + voxel_start, [1, 0])
         #                        for k in range(shape[2])
         #                        for j in range(shape[1])
@@ -94,40 +97,42 @@ class OpticalSystem:
         im_0 = np.array([[i, j] for j in range(self.sim_image_size[1]) for i in range(self.sim_image_size[0])]) + 0.5
 
         # 円の中心との距離<mask_rか判定
-        self.mask_list = [(np.linalg.norm(im_0 - c, axis=1) <= mask_r) for c in self.center_points]
+        mask_list = [(np.linalg.norm(im_0 - c, axis=1) <= mask_r) for c in self.center_points]
 
         # self.effective_area = sum(self.mask_list).astype(bool)
         # アパーチャの影がFalse, それ以外がTrueになるarray (shape=self.sim_image_size)
-        self.effective_area = np.sum(self.mask_list, axis=0, dtype=bool)
+        effective_area = np.sum(mask_list, axis=0, dtype=bool)
 
-    def mk_light_vector(self):  # 透視投影なのでxyの向きはそのまま、実際のピンホール画像は上下左右逆なので注意
+        return mask_list, effective_area
 
-        if self.plasma_data:
+    def light_vector(self, tm=False):  # 透視投影なのでxyの向きはそのまま、実際のピンホール画像は上下左右逆なので注意
+
+        if tm:
+            active_voxel = np.r_["0,2,1", self.plasma_data.voxel[:-1], np.ones(self.plasma_data.J)]
+        else:
             active_voxel = self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0]
 
-            if active_voxel.size:
-                uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
-                # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
-                r_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
-                luminosity = (active_voxel[-1] / r_list ** 2)[:, np.newaxis, :]
+        if active_voxel.size:
+            uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
+            # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
+            r_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
+            luminosity = (active_voxel[-1] / r_list ** 2)[:, np.newaxis, :]
 
-                # if self.mode == "lens":
-                #     uv_ = uv - o.hole_xyz[:, :2, None]
-                #     uv = (np.dot(self.mat_P, active_voxel[:4]) /
-                #     np.linalg.norm(self.hole_xyz.reshape(-1,1,3)-active_voxel[:3])).reshape(self.hole_num, 2, -1)
-                #     # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
-                #     r_2_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
-                #     luminosity = (active_voxel[-1] / r_2_list**2)[:, np.newaxis, :]
+            # if self.mode == "lens":
+            #     uv_ = uv - o.hole_xyz[:, :2, None]
+            #     uv = (np.dot(self.mat_P, active_voxel[:4]) /
+            #     np.linalg.norm(self.hole_xyz.reshape(-1,1,3)-active_voxel[:3])).reshape(self.hole_num, 2, -1)
+            #     # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
+            #     r_2_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
+            #     luminosity = (active_voxel[-1] / r_2_list**2)[:, np.newaxis, :]
 
-                self.light_vector = np.append(uv, luminosity, axis=1)
-            else:
-                print('There is no light points!')
+            return np.append(uv, luminosity, axis=1)
         else:
-            print('No plasma data. Please make plasma data.')
+            print('There is no light points!')
 
-    def mk_image_vec(self):
+    def mk_image_vec(self, data):
         vec_list = []
-        for datum, mask in zip(self.light_vector, self.mask_list):
+        for datum, mask in zip(data, self.mask_list):  # ピンホールごとに処理(data/mask)
             vec_list.append(np.zeros_like(self.effective_area, dtype=float))
             index = np.dot([1, self.sim_image_size[0]], np.floor(datum[:2] * self.ppmm)).astype(int)
             index_set = np.unique(index)
@@ -141,7 +146,45 @@ class OpticalSystem:
         image_vec = sum(vec_list)
         return image_vec
 
-    def __init__(self, sim_name=None, mode="pinhole", auto=False,
+    def trans_mat_org(self):
+        if not self.mask_list:
+            self.mk_mask()
+        light_vector = self.light_vector(tm=True)
+        # light_vector -> ピクセル(整数値)に変換 これがrow
+        row_list = np.dot([1, self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
+        # columnのインデックス(hole_num分)
+        columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
+        # holeごとに luminosity/row/column の順にまとめる
+        index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
+                      np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
+
+        # mat_Aのshape
+        shape = (self.I, self.plasma_data.J)
+        # holeごとに処理
+        mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
+        # maskを適応(要素積)
+        mat_A = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)], axis=0)
+        return mat_A
+
+    def blur_mat(self):
+        E = sparse.identity(self.I, dtype='i2', format='csr')
+        E.data = self.effective_area.astype(float)
+        M = sparse.vstack([self.pinhole_blur(m.toarray().reshape(self.sim_image_size)) for m in tqdm(E)]).T
+
+        return self.image_trans_mat * M
+
+    def mk_kernel(self):
+        # widthはピンホールの半径(単位はピクセル)
+        kernel_width = int((self.hole_size / 2) * self.ppmm)
+        # 中心からの距離を算出してwidthから引く
+        r_array = kernel_width - np.linalg.norm(np.meshgrid(np.arange(-kernel_width - 1, kernel_width + 1 + 1),
+                                                            np.arange(-kernel_width - 1, kernel_width + 1 + 1)), axis=0)
+        # 円の内部は1外部は0
+        kernel = np.where(r_array >= 0, 1.0, 0.0)
+        # 正規化
+        return kernel / kernel.sum()
+
+    def __init__(self, sim_name=None, mode="pinhole", auto=False, tm=False,
                  hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58, aperture_phi=21,
                  shape=(10, 10, 10), xyz_range=(100, 100, 100), o_xyz=(0, 0, 300), image_size=(170, 170), n=10):
 
@@ -170,6 +213,7 @@ class OpticalSystem:
         self.ppmm = self.sim_image_size[0] / screen_size[0]
         self.offset = self.screen_size / 2
         self.plasma_data = Plasma(shape, xyz_range, o_xyz)
+        self.I = int(np.prod(self.sim_image_size))
 
         self.__stop__ = False
 
@@ -200,9 +244,14 @@ class OpticalSystem:
                            (f * self.hole_xyz[:, :2]).ravel()]
 
         self.center_points = None
-        self.mask_list = None
-        self.effective_area = None
-        self.light_vector = np.empty(shape=(self.hole_num, 3, 0), dtype=int)
+        self.mask_list, self.effective_area = self.mk_mask()
+
+        self.kernel = self.mk_kernel()
+        self.pinhole_blur = lambda m: sparse.coo_matrix(
+            ndimage.convolve(m, self.kernel, mode='constant', cval=0).ravel())
+
+        if tm:
+            self.transmission_matrix()
 
     def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False):
         if self.__stop__:
@@ -210,19 +259,10 @@ class OpticalSystem:
 
         if not self.mask_list:
             self.mk_mask()
-        self.mk_light_vector()
-        org_sim_im = self.mk_image_vec().reshape(self.sim_image_size)
-        # nはピンホールの半径(単位はピクセル)
-        n = int((self.hole_size / 2) * self.ppmm)
-        # 中心からの距離を算出してnから引く
-        r_array = n - np.linalg.norm(np.meshgrid(np.arange(-n - 1, n + 1 + 1), np.arange(-n - 1, n + 1 + 1)), axis=0)
-        # 円の内部は1外部は0
-        kernel = np.where(r_array >= 0, 1.0, 0.0)
-        # 正規化
-        kernel = kernel / kernel.sum()
-        # print(kernel.shape)
+        org_sim_im = self.mk_image_vec(self.light_vector()).reshape(self.sim_image_size)
+
         # 畳み込み
-        blur_sim_im = ndimage.convolve(org_sim_im, kernel, mode='constant', cval=0)
+        blur_sim_im = ndimage.convolve(org_sim_im, self.kernel, mode='constant', cval=0)
         # print(blur_sim_im.nonzero())
 
         org_im = self.image_trans_mat.dot(org_sim_im.ravel()).reshape(self.return_image_size)
@@ -251,13 +291,38 @@ class OpticalSystem:
             else:
                 return org_im.ravel(), blur_im.ravel()
 
+    def transmission_matrix(self):
+        path = dir_rename("./npz/" + self.sim_name + ".npz")
+        tm = self.blur_mat() * self.trans_mat_org()
+        sparse.save_npz(path / "tm.npz", tm)
+        print("save it!")
+
 
 if __name__ == '__main__':
-    dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (50, 50, 100),
-           "xyz_range": (100, 100, 100), "o_xyz": (0, 0, 300)}
+    v = 10
+    dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (v, v, 10),
+           "xyz_range": (200, 200, 500), "o_xyz": (0, 0, 300), "auto": True, "n": 1}
+    t = time.time()
     o = OpticalSystem(**dic)
-    o.plasma_data.voxel[-1, np.linalg.norm(o.plasma_data.voxel[:3] - [[30], [20], [300]], axis=0) < 10] = 10
-    # o.plasma_data.voxel[-1, 100] = 10
-    # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
+    # o.plasma_data.voxel[-1, np.linalg.norm(o.plasma_data.voxel[:3] - [[30], [20], [300]], axis=0) < 10] = 10
+    # o.plasma_data.voxel[-1, 160000 * 9:] = 10
+    # o.plasma_data.voxel[-1] = 10
+    # breakpoint()
 
-    o.simulate(show=True, image_save=True)
+    print("set: ", time.time() - t)
+    t = time.time()
+    # P = o.trans_mat_org()
+    # print("trans mat: ", time.time() - t)
+    # t = time.time()
+    # B = o.blur_mat()
+    # print("blur mat: ", time.time() - t)
+
+    o.transmission_matrix()
+    print("saved: ", time.time() - t)
+
+    # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
+    #
+    # o_im, b_im = o.simulate(show=True, image_save=False, return_image=False)
+    # print(b_im.nonzero())
+    breakpoint()
+    # print(o.light_vector.shape)

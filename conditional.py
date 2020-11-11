@@ -1,11 +1,4 @@
-import IP_sim
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
-from scipy import ndimage
-from scipy import sparse
-from tqdm import tqdm
-from pathlib import Path
+from IP_sim import *
 from argparse import ArgumentParser
 import json
 
@@ -18,23 +11,26 @@ def get_option():
     return argparser.parse_args()
 
 
-def probably_matrix(kw, save=True, parent="./npz/"):
-    W = IP_sim.OpticalSystem(**kw,auto=True)
-    path = IP_sim.dir_rename(parent + W.sim_name)
-    I = W.plasma_data.voxel.shape[1]
-    J = W.return_image_size[0] * W.return_image_size[1]
-    P = sparse.csr_matrix((0, J))
-    for i in tqdm(range(I)):
-        W.plasma_data.voxel[-1, i] = 1
-        H = W.simulate(fast_mode=True)
-        # print(f"P.shape={P.shape},H.shape={H.shape}")
-        P = sparse.vstack([P, sparse.csr_matrix(H)])
-        W.plasma_data.voxel[-1, i] = 0
+def probably_matrix(kw):
+    OpticalSystem(**kw)
 
-    if save:
-        sparse.save_npz(path, P)
-
-    return P
+# def probably_matrix(kw, save=True, parent="./npz/"):
+#     W = OpticalSystem(**kw,auto=True)
+#     path = dir_rename(parent + W.sim_name)
+#     I = W.plasma_data.voxel.shape[1]
+#     J = W.return_image_size[0] * W.return_image_size[1]
+#     P = sparse.csr_matrix((0, J))
+#     for i in tqdm(range(I)):
+#         W.plasma_data.voxel[-1, i] = 1
+#         H = W.simulate(fast_mode=True)
+#         # print(f"P.shape={P.shape},H.shape={H.shape}")
+#         P = sparse.vstack([P, sparse.csr_matrix(H)])
+#         W.plasma_data.voxel[-1, i] = 0
+#
+#     if save:
+#         sparse.save_npz(path, P)
+#
+#     return P
 
 
 if __name__ == '__main__':
@@ -50,10 +46,10 @@ if __name__ == '__main__':
             config_dic = json.load(f)
     else:
         config_dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (10, 10, 10),
-                      "xyz_range": (100, 100, 100), "o_xyz": (0, 0, 300)}
+                      "xyz_range": (200, 200, 500), "o_xyz": (0, 0, 300), "auto": True, "n": 1, "tm":True}
 
     while True:
-        print(f"{config_dic}\nIs it OK?",end="")
+        print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")
         if ok == "y":
             break
@@ -63,4 +59,4 @@ if __name__ == '__main__':
                 v_ = input("->")
                 config_dic[k] = v_ if v_ else v
 
-    P = probably_matrix(config_dic, save=False)
+    probably_matrix(config_dic)

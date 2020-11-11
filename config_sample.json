@@ -1,0 +1,15 @@
+{
+  "sim_name": null,
+  "mode": "pinhole",
+  "hole_list": null,
+  "f": 14.3,
+  "screen_size": [17.0, 17.0],
+  "hole_size": 0.5,
+  "aperture_z": 58,
+  "aperture_phi": 21,
+  "image_size": [128, 128],
+  "shape": [100, 100, 200],
+  "xyz_range": [200, 200, 500],
+  "o_xyz": [0, 0, 300],
+  "n": 10
+}
