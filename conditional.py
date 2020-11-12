@@ -1,3 +1,7 @@
+import os
+os.environ["OPENBLAS_NUM_THREADS"] = "64"
+os.environ["MKL_NUM_THREADS"] = "64"
+
 from IP_sim import *
 from argparse import ArgumentParser, RawTextHelpFormatter
 import json
@@ -31,7 +35,7 @@ if __name__ == '__main__':
         with open(args.file) as f:
             config_dic = json.load(f)
     else:
-        config_dic = {"sim_name": None,
+        config_dic = {"sim_name": "Test",
                       "mode": "pinhole",
                       "auto": True,
                       "tm": True,
@@ -55,16 +59,7 @@ if __name__ == '__main__':
         if ok == "y":
             break
         elif ok == "n":
-            for k, v in config_dic.items():
-                print(f"{k}:{v}", end="")
-                v_ = input("->")
-
-                if k in ("auto", "tm"):
-                    if v_ in ("True", "true", "t", "T"):
-                        v_ = True
-                    elif v_ in ("False", "false", "f", "F"):
-                        v_ = False
-
-                config_dic[k] = v if v_ == "" else v_
+            print("Quit.")
+            quit()
 
     probably_matrix(config_dic)
