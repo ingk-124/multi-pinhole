@@ -293,17 +293,20 @@ class OpticalSystem:
                 return org_im.ravel(), blur_im.ravel()
 
     def save_transmission_matrix(self, save_option=""):
-        path = dir_rename("./npz/" + self.sim_name)
+
         if save_option == "bo":
             B = self.blur_mat()
+            path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "blur_mat.npz", B)
             print("blur_mat.npz: saved!")
         elif save_option == "oo":
             T = self.trans_mat_org()
+            path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "trans_mat_org.npz", T)
             print("trans_mat_org.npz: saved!")
         else:
             B = self.blur_mat()
+            path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "blur_mat.npz", B)
             T = self.trans_mat_org()
             sparse.save_npz(path / "trans_mat_org.npz", T)
