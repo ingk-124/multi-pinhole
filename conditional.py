@@ -48,7 +48,7 @@ if __name__ == '__main__':
                       "image_size": (170, 170),
                       "n": 2}
 
-    config_dic["save_option"] = args.saveoption
+    config_dic["save_option"] = args.save_option
     while True:
         print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")
