@@ -1,37 +1,22 @@
 from IP_sim import *
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawTextHelpFormatter
 import json
 
 
 def get_option():
-    argparser = ArgumentParser()
+    argparser = ArgumentParser(formatter_class=RawTextHelpFormatter)
     argparser.add_argument('-f', '--file', type=str,
-                           default=None,
-                           help='Configure file (type=str) default=None')
+                           default=None, help='Configuration file. (default=None)')
+    argparser.add_argument('-s', '--save_option', type=str, default="",
+                           help='Save Option. \n'
+                                '"bo" (blur matrix only), \n'
+                                '"oo" (original trans matrix only), \n'
+                                '"" (blurred trans matrix) <- default')
     return argparser.parse_args()
 
 
 def probably_matrix(kw):
     OpticalSystem(**kw)
-
-
-# def probably_matrix(kw, save=True, parent="./npz/"):
-#     W = OpticalSystem(**kw,auto=True)
-#     path = dir_rename(parent + W.sim_name)
-#     I = W.plasma_data.voxel.shape[1]
-#     J = W.return_image_size[0] * W.return_image_size[1]
-#     P = sparse.csr_matrix((0, J))
-#     for i in tqdm(range(I)):
-#         W.plasma_data.voxel[-1, i] = 1
-#         H = W.simulate(fast_mode=True)
-#         # print(f"P.shape={P.shape},H.shape={H.shape}")
-#         P = sparse.vstack([P, sparse.csr_matrix(H)])
-#         W.plasma_data.voxel[-1, i] = 0
-#
-#     if save:
-#         sparse.save_npz(path, P)
-#
-#     return P
 
 
 if __name__ == '__main__':
@@ -50,6 +35,7 @@ if __name__ == '__main__':
                       "mode": "pinhole",
                       "auto": True,
                       "tm": True,
+                      "save_option": "",
                       "hole_list": None,
                       "f": 14.3,
                       "screen_size": (17.0, 17.0),
@@ -62,6 +48,7 @@ if __name__ == '__main__':
                       "image_size": (170, 170),
                       "n": 2}
 
+    config_dic["save_option"] = args.saveoption
     while True:
         print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")
@@ -71,6 +58,13 @@ if __name__ == '__main__':
             for k, v in config_dic.items():
                 print(f"{k}:{v}", end="")
                 v_ = input("->")
-                config_dic[k] = v_ if v_ else v
+
+                if k in ("auto", "tm"):
+                    if v_ in ("True", "true", "t", "T"):
+                        v_ = True
+                    elif v_ in ("False", "false", "f", "F"):
+                        v_ = False
+
+                config_dic[k] = v if v_ == "" else v_
 
     probably_matrix(config_dic)

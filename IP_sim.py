@@ -158,13 +158,14 @@ class OpticalSystem:
         index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
                       np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
 
-        # mat_Aのshape
+        # tm_orgのshape
         shape = (self.I, self.plasma_data.J)
         # holeごとに処理
         mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
         # maskを適応(要素積)
-        mat_A = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)], axis=0)
-        return mat_A
+        tm_org = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)],
+                        axis=0)
+        return tm_org
 
     def blur_mat(self):
         E = sparse.identity(self.I, dtype='i2', format='csr')
@@ -184,7 +185,7 @@ class OpticalSystem:
         # 正規化
         return kernel / kernel.sum()
 
-    def __init__(self, sim_name=None, mode="pinhole", auto=False, tm=False,
+    def __init__(self, sim_name=None, mode="pinhole", auto=False, tm=False, save_option="",
                  hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58, aperture_phi=21,
                  shape=(10, 10, 10), xyz_range=(100, 100, 100), o_xyz=(0, 0, 300), image_size=(170, 170), n=10):
 
@@ -251,7 +252,7 @@ class OpticalSystem:
             ndimage.convolve(m, self.kernel, mode='constant', cval=0).ravel())
 
         if tm:
-            self.transmission_matrix()
+            self.save_transmission_matrix(save_option)
 
     def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False):
         if self.__stop__:
@@ -291,11 +292,24 @@ class OpticalSystem:
             else:
                 return org_im.ravel(), blur_im.ravel()
 
-    def transmission_matrix(self):
-        path = dir_rename("./npz/" + self.sim_name + ".npz")
-        tm = self.blur_mat() * self.trans_mat_org()
-        sparse.save_npz(path / "tm.npz", tm)
-        print("save it!")
+    def save_transmission_matrix(self, save_option=""):
+        path = dir_rename("./npz/" + self.sim_name)
+        if save_option == "bo":
+            B = self.blur_mat()
+            sparse.save_npz(path / "blur_mat.npz", B)
+            print("blur_mat.npz: saved!")
+        elif save_option == "oo":
+            T = self.trans_mat_org()
+            sparse.save_npz(path / "trans_mat_org.npz", T)
+            print("trans_mat_org.npz: saved!")
+        else:
+            B = self.blur_mat()
+            sparse.save_npz(path / "blur_mat.npz", B)
+            T = self.trans_mat_org()
+            sparse.save_npz(path / "trans_mat_org.npz", T)
+            mat_A = B * T
+            sparse.save_npz(path / "mat_A.npz", mat_A)
+            print("mat_A.npz: saved!")
 
 
 if __name__ == '__main__':
@@ -317,8 +331,8 @@ if __name__ == '__main__':
     # B = o.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    o.transmission_matrix()
-    print("saved: ", time.time() - t)
+    o.save_transmission_matrix()
+    # print("saved: ", time.time() - t)
 
     # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
     #
