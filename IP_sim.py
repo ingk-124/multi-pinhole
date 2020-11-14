@@ -115,45 +115,32 @@ class OpticalSystem:
         if active_voxel.size:
             uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
             # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
-            r_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
-            luminosity = (active_voxel[-1] / r_list ** 2)[:, np.newaxis, :]
 
-            # if self.mode == "lens":
-            #     uv_ = uv - o.hole_xyz[:, :2, None]
-            #     uv = (np.dot(self.mat_P, active_voxel[:4]) /
-            #     np.linalg.norm(self.hole_xyz.reshape(-1,1,3)-active_voxel[:3])).reshape(self.hole_num, 2, -1)
-            #     # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
-            #     r_2_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
-            #     luminosity = (active_voxel[-1] / r_2_list**2)[:, np.newaxis, :]
-
+            if self.mode == "lens":
+                luminosity = np.ones_like(uv[:, 0, :])[:, np.newaxis, :]
+            else:
+                r_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
+                luminosity = (active_voxel[-1] / r_list ** 2)[:, np.newaxis, :]
             return np.append(uv, luminosity, axis=1)
         else:
             print('There is no light points!')
 
-    def mk_image_vec(self, data):
-        vec_list = []
-        for datum, mask in zip(data, self.mask_list):  # ピンホールごとに処理(data/mask)
-            vec_list.append(np.zeros_like(self.effective_area, dtype=float))
-            index = np.dot([1, self.sim_image_size[0]], np.floor(datum[:2] * self.ppmm)).astype(int)
-            index_set = np.unique(index)
-            luminosity = np.array(list(map(sum, [datum[-1, c] for c in [index == i for i in index_set]])))
-            # vec_list[-1][index[index<=self.effective_area.size]] = datum[-1,index<=self.effective_area.size]
-            flag = index_set <= self.effective_area.size
-            # flag = np.all([index_set <= self.effective_area.size, index_set >= 0], axis=0)
-            vec_list[-1][index_set[flag]] = luminosity[flag]
-            vec_list[-1] = vec_list[-1] * mask
-
-        image_vec = sum(vec_list)
+    def mk_image_vec(self):
+        image_vec = self.trans_mat_org(tm=False).sum(axis=1)
         return image_vec
 
-    def trans_mat_org(self):
+    def trans_mat_org(self, tm=True):
         if not self.mask_list:
             self.mk_mask()
-        light_vector = self.light_vector(tm=True)
+        light_vector = self.light_vector(tm=tm)
         # light_vector -> ピクセル(整数値)に変換 これがrow
         row_list = np.dot([1, self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
+
         # columnのインデックス(hole_num分)
-        columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
+        if tm:
+            columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
+        else:
+            columns = np.tile(np.arange(light_vector.shape[-1]).astype("i4"), (self.hole_num, 1))
         # holeごとに luminosity/row/column の順にまとめる
         index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
                       np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
@@ -260,14 +247,15 @@ class OpticalSystem:
 
         if not self.mask_list:
             self.mk_mask()
-        org_sim_im = self.mk_image_vec(self.light_vector()).reshape(self.sim_image_size)
+        org_sim_im = self.mk_image_vec().reshape(self.sim_image_size)
 
         # 畳み込み
         blur_sim_im = ndimage.convolve(org_sim_im, self.kernel, mode='constant', cval=0)
         # print(blur_sim_im.nonzero())
+        breakpoint()
 
-        org_im = self.image_trans_mat.dot(org_sim_im.ravel()).reshape(self.return_image_size)
-        blur_im = self.image_trans_mat.dot(blur_sim_im.ravel()).reshape(self.return_image_size)
+        org_im = self.image_trans_mat.dot(org_sim_im.ravel().T).reshape(self.return_image_size)
+        blur_im = self.image_trans_mat.dot(blur_sim_im.ravel().T).reshape(self.return_image_size)
 
         if show:
             plt.imshow(blur_sim_im)
@@ -317,15 +305,14 @@ class OpticalSystem:
 
 if __name__ == '__main__':
     v = 10
-    dic = {"sim_name": None, "mode": "pinhole", "image_size": (128, 128), "shape": (v, v, 10),
+    dic = {"sim_name": None, "mode": "lens", "image_size": (128, 128), "shape": (v, v, 10),
            "xyz_range": (200, 200, 500), "o_xyz": (0, 0, 300), "auto": True, "n": 1}
     t = time.time()
     o = OpticalSystem(**dic)
-    # o.plasma_data.voxel[-1, np.linalg.norm(o.plasma_data.voxel[:3] - [[30], [20], [300]], axis=0) < 10] = 10
+    # o.plasma_data.voxel[-1, np.linalg.norm(o.plasma_data.voxel[:3] - [[30], [20], [300]], axis=0) < 40] = 10
     # o.plasma_data.voxel[-1, 160000 * 9:] = 10
-    # o.plasma_data.voxel[-1] = 10
-    # breakpoint()
-
+    o.plasma_data.voxel[-1, 555] = 10
+    breakpoint()
     print("set: ", time.time() - t)
     t = time.time()
     # P = o.trans_mat_org()
@@ -334,12 +321,13 @@ if __name__ == '__main__':
     # B = o.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    o.save_transmission_matrix()
+    # o.save_transmission_matrix()
+    # o.trans_mat_org()
     # print("saved: ", time.time() - t)
 
     # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
     #
-    # o_im, b_im = o.simulate(show=True, image_save=False, return_image=False)
+    o_im, b_im = o.simulate(show=True, image_save=False, return_image=False)
     # print(b_im.nonzero())
     breakpoint()
     # print(o.light_vector.shape)
