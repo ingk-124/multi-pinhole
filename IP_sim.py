@@ -386,8 +386,9 @@ class OpticalSystem:
             path = dir_rename("./npz/" + self.sim_name)
             FB = self.plasma_data.mode_matrix(*self.parameter_max)
             mode_arr = np.array(self.plasma_data.parameters, dtype='O')
-            np.savez(path / "FourierBessel_mat.npz", fb=FB, mode=mode_arr)
-            print("FourierBessel_mat.npy: saved!")
+            sparse.save_npz(path / "FourierBessel_mat.npz", FB)
+            np.save(path / "mode_array.npy", mode_arr)
+            print("FourierBessel_mat.npz: saved!")
         else:
             B = self.blur_mat()
             path = dir_rename("./npz/" + self.sim_name)
