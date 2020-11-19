@@ -277,10 +277,10 @@ class OpticalSystem:
 
         # print(self.plasma_data.d_xyz[:2], d)
 
-        if np.any(self.plasma_data.d_xyz[:2] > d):
+        if np.any(self.plasma_data.d_xyz[[0,-1]] > d):
             print("Warning: Voxel size is inadequate. ",
-                  f"(Voxel size={np.round(self.plasma_data.d_xyz[:2], decimals=2)}, d={d:.2})")
-            print(f"Ideal shape: {(self.plasma_data.xyz_range[:2] / d).astype(int) + 1}")
+                  f"(Voxel size={np.round(self.plasma_data.d_xyz[[0,-1]], decimals=2)}, d={d:.2})")
+            print(f"Ideal shape: {(self.plasma_data.xyz_range[[0,-1]] / d).astype(int) + 1}")
             while True:
                 c = "y" if auto else input("continue? (y)/n: ")
                 if c == "n":
@@ -357,6 +357,8 @@ class OpticalSystem:
                 return org_im.ravel(), blur_im.ravel()
 
     def save_transmission_matrix(self, save_option=""):
+        if self.__stop__:
+            return 0
 
         if save_option == "bo":
             B = self.blur_mat()
@@ -388,7 +390,7 @@ class OpticalSystem:
 if __name__ == '__main__':
     v = 10
     dic = {"sim_name": None, "mode": "lens", "image_size": (128, 128), "shape": (v, 300, v),
-           "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": True, "n": 1,
+           "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
            "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]]}
     time_set = time.time()
     os = OpticalSystem(**dic)
