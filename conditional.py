@@ -1,4 +1,5 @@
 import os
+
 os.environ["OPENBLAS_NUM_THREADS"] = "64"
 os.environ["MKL_NUM_THREADS"] = "64"
 
@@ -21,6 +22,10 @@ def get_option():
 
 def probably_matrix(kw):
     OpticalSystem(**kw)
+
+
+def get_fb_mat(kw):
+    OpticalSystem(**kw).plasma_data.mode_matrix()
 
 
 if __name__ == '__main__':
@@ -48,11 +53,12 @@ if __name__ == '__main__':
                       "aperture_phi": 21,
                       "shape": (10, 10, 10),
                       "xyz_range": (100, 100, 100),
-                      "o_xyz": (0, 0, 300),
+                      "start_xyz": (0, 0, 300),
                       "image_size": (170, 170),
                       "n": 2}
 
     config_dic["save_option"] = args.save_option
+    # config_dic["save_option"] = "fb"
     while True:
         print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")

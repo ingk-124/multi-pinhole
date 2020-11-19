@@ -5,9 +5,11 @@ from pathlib import Path
 import re
 from scipy import ndimage
 from scipy import sparse
+from scipy.special import jv
 import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
+import itertools
 
 
 def dir_rename(dir_name):
@@ -47,40 +49,101 @@ def trans_mat3d(a, b, c, n):
     return M
 
 
+def j_mk(m_max, k_max):
+    _ = 4 * m_max + 2 * k_max + 5
+    x = np.linspace(0, _, _ * 128 + 1)
+    j_mat = []
+    for m in range(m_max):
+        y = jv(m, x)
+        dy = y[:-1] * y[1:]
+        j_mat.append(x[1:][dy < 0][:k_max])
+    return np.vstack(j_mat)
+
+
 class Plasma:  # 仮想プラズマ
 
-    def __init__(self, shape=None, xyz_range=None, o_xyz=None):
+    def __init__(self, shape=None, xyz_range=None, start_xyz=None, R=508, a=250):
         # shape: ボクセルのマス xyz_range: プラズマの範囲 o_xyz: 中心←いる？
         super().__init__()
         if shape is None:
             shape = [10, 10, 10]
         if xyz_range is None:
-            xyz_range = [100, 100, 100]
-        if o_xyz is None:
-            o_xyz = [0, 0, 300]
+            xyz_range = [500, 758, 500]
+        if start_xyz is None:
+            start_xyz = [0, xyz_range[1], 0]
 
+        self.shape = np.array(shape)
         self.xyz_range = np.array(xyz_range)
+        self.R = R
+        self.a = a
+
         self.d_xyz = self.xyz_range / shape  # size of voxel
-        self.o_xyz = o_xyz
+        self.offset = start_xyz - np.array([0, xyz_range[1], 0]) / 2
 
         self.J = int(np.prod(shape))
+        self.j_mat = None
+        self.parameters = None
 
-        # voxel_start = o_xyz - np.array(xyz_range) / 2
+        start = self.xyz_range * (1 - self.shape) / (2 * self.shape)
+        end = -start
 
-        voxel_start = o_xyz - self.xyz_range / 2 + self.d_xyz / 2
-        voxel_end = o_xyz + self.xyz_range / 2 + self.d_xyz / 2
+        x, y, z = [np.linspace(a, b, s) + o for a, b, s, o in zip(start, end, self.shape, self.offset)]
 
-        x, y, z = [np.linspace(start, end, step, endpoint=False) for start, end, step in
-                   zip(voxel_start, voxel_end, shape)]  # x -> y ->zの順
+        # voxel_start = o_xyz - self.xyz_range / 2 + self.d_xyz / 2
+        # voxel_end = o_xyz + self.xyz_range / 2 + self.d_xyz / 2
+        #
+        # x, y, z = [np.linspace(start, end, step, endpoint=False) for start, end, step in
+        #            zip(voxel_start, voxel_end, shape)]  # x -> y ->zの順
 
-        # xxx, yyy, zzz = np.meshgrid(x,y,z)
-        zzz, yyy, xxx = np.meshgrid(z, y, x, indexing="ij")
+        xxx, yyy, zzz = np.meshgrid(x, y, z, indexing="ij")
+        # zzz, yyy, xxx = np.meshgrid(z, y, x, indexing="ij")
+
         self.voxel = np.r_[
             "1,2,0", xxx.ravel(), yyy.ravel(), zzz.ravel(), np.ones(self.J), np.zeros(self.J)].T
+
         # self.voxel = np.array([np.append(self.d_xyz * (np.array([i, j, k]) + 0.5) + voxel_start, [1, 0])
         #                        for k in range(shape[2])
         #                        for j in range(shape[1])
         #                        for i in range(shape[0])]).T  # voxel_size * voxel_num -> x,y,z
+
+        # j_mat=np.vstack([j_mk(m) for m in range(25)])
+
+    def rtp(self):
+        r_xy = np.linalg.norm(self.voxel[:2], axis=0) - self.R
+        r = np.linalg.norm([r_xy, self.voxel[2]], axis=0) / self.a
+        theta = np.arctan2(self.voxel[2], r_xy)
+        phi = np.arctan2(*self.voxel[:2])
+
+        return r, theta, phi
+
+    def fb(self, m, k, tp, cs):
+        t, p = tp
+        q = p / t
+        psy = 2 * np.pi * q
+
+        def f_c(r, theta, phi):
+            luminosity = [jv(m, self.j_mat[m, k - 1] * r) * np.cos(m * (theta + q * phi + psy * _)) for _ in range(t)]
+
+            return sum(luminosity) * np.where(r > 1, 0, 1)
+
+        def f_s(r, theta, phi):
+            luminosity = [jv(m, self.j_mat[m, k - 1] * r) * np.sin(m * (theta + q * phi + psy * _)) for _ in range(t)]
+
+            return sum(luminosity) * np.where(r > 1, 0, 1)
+
+        return f_c if cs == "c" else f_s
+
+    def fb_modes(self, m_max=2, k_max=2, t_max=3, p_max=8):
+        tp = [_ for _ in itertools.product(range(1, t_max), range(1, p_max)) if np.gcd(*_) == 1]
+        self.j_mat = j_mk(m_max + 1, k_max + 1)
+        self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
+            itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
+        modes = list(map(self.fb, *list(zip(*self.parameters))))
+        return modes
+
+    def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
+        r, theta, phi = self.rtp()
+        return np.vstack([fb_mode(r, theta, phi) for fb_mode in self.fb_modes(m_max, k_max, t_max, p_max)]).T
 
 
 class OpticalSystem:
@@ -105,12 +168,12 @@ class OpticalSystem:
 
         return mask_list, effective_area
 
-    def light_vector(self, tm=False):  # 透視投影なのでxyの向きはそのまま、実際のピンホール画像は上下左右逆なので注意
+    def light_vector(self, tm=False):
 
         if tm:
-            active_voxel = np.r_["0,2,1", self.plasma_data.voxel[:-1], np.ones(self.plasma_data.J)]
+            active_voxel = self.mat_t.dot(np.r_["0,2,1", self.plasma_data.voxel[:-1], np.ones(self.plasma_data.J)])
         else:
-            active_voxel = self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0]
+            active_voxel = self.mat_t.dot(self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0])
 
         if active_voxel.size:
             uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
@@ -173,8 +236,10 @@ class OpticalSystem:
         return kernel / kernel.sum()
 
     def __init__(self, sim_name=None, mode="pinhole", auto=False, tm=False, save_option="",
-                 hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58, aperture_phi=21,
-                 shape=(10, 10, 10), xyz_range=(100, 100, 100), o_xyz=(0, 0, 300), image_size=(170, 170), n=10):
+                 hole_list=None, hole_z=948, f=14.3, aperture_z=58, aperture_phi=21,
+                 screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
+                 shape=(10, 10, 10), xyz_range=(500, 500, 750), start_xyz=(0, 0, 950),
+                 parameter_max=None):
 
         self.mode = mode
         self.sim_name = sim_name if sim_name else str(datetime.date.today())
@@ -187,6 +252,8 @@ class OpticalSystem:
                          [2.50, -4.33],
                          [-2.50, -4.33],
                          [-5.00, 0.00]]
+        if parameter_max is None:
+            parameter_max = [5, 5, 3, 8]
 
         self.f = f
         self.hole_xyz = np.array([[*h, 0.0] for h in hole_list])
@@ -195,17 +262,17 @@ class OpticalSystem:
         self.screen_size = np.asarray(screen_size)
 
         self.sim_image_size = (image_size[0] * n, image_size[1] * n)
-        # self.sim_image_size = image_size
         self.return_image_size = image_size
         self.image_trans_mat = trans_mat2d(*image_size, n)
         self.ppmm = self.sim_image_size[0] / screen_size[0]
         self.offset = self.screen_size / 2
-        self.plasma_data = Plasma(shape, xyz_range, o_xyz)
+        self.plasma_data = Plasma(shape, xyz_range, start_xyz)
         self.I = int(np.prod(self.sim_image_size))
+        self.parameter_max = parameter_max
 
         self.__stop__ = False
 
-        d = (o_xyz[-1] - xyz_range[-1] / 2) / (self.f * self.ppmm) * n
+        d = (start_xyz[-1] - xyz_range[-1] / 2) / (self.f * self.ppmm) * n
 
         # print(self.plasma_data.d_xyz[:2], d)
 
@@ -225,8 +292,16 @@ class OpticalSystem:
 
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
+        breakpoint()
 
-        self.mat_P = np.r_["1,2,0", [-f, 0] * self.hole_num,
+        self.mat_t = np.array([[1, 0, 0, 0, 0],
+                               [0, 0, -1, 0, 0],
+                               [0, -1, 0, hole_z, 0],
+                               [0, 0, 0, 1, 0],
+                               [0, 0, 0, 0, 1]])
+
+        self.mat_P = np.r_["1,2,0",
+                           [-f, 0] * self.hole_num,
                            [0, -f] * self.hole_num,
                            (self.hole_xyz[:, :2] + self.offset).ravel(),
                            (f * self.hole_xyz[:, :2]).ravel()]
@@ -292,6 +367,13 @@ class OpticalSystem:
             path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "trans_mat_org.npz", T)
             print("trans_mat_org.npz: saved!")
+        elif save_option == "fb":
+            path = dir_rename("./npz/" + self.sim_name)
+            FB = self.plasma_data.mode_matrix(*self.parameter_max)
+            mode_arr = np.array(self.plasma_data.parameters, dtype='O')
+            breakpoint()
+            np.savez_compressed(path / "FourierBessel_mat.npz", fb=FB, mode=mode_arr)
+            print("FourierBessel_mat.npy: saved!")
         else:
             B = self.blur_mat()
             path = dir_rename("./npz/" + self.sim_name)
@@ -305,16 +387,18 @@ class OpticalSystem:
 
 if __name__ == '__main__':
     v = 10
-    dic = {"sim_name": None, "mode": "lens", "image_size": (128, 128), "shape": (v, v, 10),
-           "xyz_range": (200, 200, 500), "o_xyz": (0, 0, 300), "auto": True, "n": 1}
-    t = time.time()
-    o = OpticalSystem(**dic)
-    # o.plasma_data.voxel[-1, np.linalg.norm(o.plasma_data.voxel[:3] - [[30], [20], [300]], axis=0) < 40] = 10
-    # o.plasma_data.voxel[-1, 160000 * 9:] = 10
-    o.plasma_data.voxel[-1, 555] = 10
+    dic = {"sim_name": None, "mode": "lens", "image_size": (128, 128), "shape": (v, 300, v),
+           "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": True, "n": 1,
+           "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]]}
+    time_set = time.time()
+    os = OpticalSystem(**dic)
+    # o.plasma_data.voxel[-1, :] = 0.1
+    os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[0], [300], [100]], axis=0) < 50] = 100
+    os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[-100], [300], [0]], axis=0) < 50] = 100
+    # o.plasma_data.voxel[-1, 555] = 10
     breakpoint()
-    print("set: ", time.time() - t)
-    t = time.time()
+    print("set: ", time.time() - time_set)
+    time_set = time.time()
     # P = o.trans_mat_org()
     # print("trans mat: ", time.time() - t)
     # t = time.time()
@@ -327,7 +411,12 @@ if __name__ == '__main__':
 
     # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
     #
-    o_im, b_im = o.simulate(show=True, image_save=False, return_image=False)
+    o_im, b_im = os.simulate(show=True, image_save=False, return_image=False)
     # print(b_im.nonzero())
     breakpoint()
     # print(o.light_vector.shape)
+
+    pl = Plasma()
+    mode_ = pl.fb_modes()
+    mat = pl.mode_matrix()
+    print(mat.shape)
