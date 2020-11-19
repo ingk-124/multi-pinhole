@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
 import itertools
+import multiprocessing as multi
+from multiprocessing import Pool
 
 
 def dir_rename(dir_name):
@@ -109,6 +111,8 @@ class Plasma:  # 仮想プラズマ
 
         # j_mat=np.vstack([j_mk(m) for m in range(25)])
 
+        self.r, self.theta, self.phi = self.rtp()
+
     def rtp(self):
         r_xy = np.linalg.norm(self.voxel[:2], axis=0) - self.R
         r = np.linalg.norm([r_xy, self.voxel[2]], axis=0) / self.a
@@ -117,34 +121,34 @@ class Plasma:  # 仮想プラズマ
 
         return r, theta, phi
 
-    def fb(self, m, k, tp, cs):
-        t, p = tp
+    def fb(self, para):
+        m, k, (t, p), cs = para
         q = p / t
         psy = 2 * np.pi * q
 
-        def f_c(r, theta, phi):
-            luminosity = [jv(m, self.j_mat[m, k - 1] * r) * np.cos(m * (theta + q * phi + psy * _)) for _ in range(t)]
-
-            return sum(luminosity) * np.where(r > 1, 0, 1)
-
-        def f_s(r, theta, phi):
-            luminosity = [jv(m, self.j_mat[m, k - 1] * r) * np.sin(m * (theta + q * phi + psy * _)) for _ in range(t)]
-
-            return sum(luminosity) * np.where(r > 1, 0, 1)
-
-        return f_c if cs == "c" else f_s
-
-    def fb_modes(self, m_max=2, k_max=2, t_max=3, p_max=8):
-        tp = [_ for _ in itertools.product(range(1, t_max), range(1, p_max)) if np.gcd(*_) == 1]
-        self.j_mat = j_mk(m_max + 1, k_max + 1)
-        self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
-            itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
-        modes = list(map(self.fb, *list(zip(*self.parameters))))
-        return modes
+        if cs == "c":
+            luminosity = sum(
+                [jv(m, self.j_mat[m, k - 1] * self.r) * np.cos(m * (self.theta + q * self.phi + psy * _)) for _ in
+                 range(t)])
+            return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
+        elif cs == "s":
+            luminosity = sum(
+                [jv(m, self.j_mat[m, k - 1] * self.r) * np.sin(m * (self.theta + q * self.phi + psy * _)) for _ in
+                 range(t)])
+            return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
 
     def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
-        r, theta, phi = self.rtp()
-        return np.vstack([fb_mode(r, theta, phi) for fb_mode in tqdm(self.fb_modes(m_max, k_max, t_max, p_max))]).T
+        tp = [_ for _ in itertools.product(range(1, t_max), range(1, p_max)) if np.gcd(*_) == 1]
+
+        self.j_mat = j_mk(m_max + 1, k_max + 1)
+
+        self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
+            itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
+        print(multi.cpu_count())
+        with Pool(multi.cpu_count()) as p:
+            result = sparse.vstack(p.map(self.fb, self.parameters))
+
+        return result
 
 
 class OpticalSystem:
@@ -277,10 +281,10 @@ class OpticalSystem:
 
         # print(self.plasma_data.d_xyz[:2], d)
 
-        if np.any(self.plasma_data.d_xyz[[0,-1]] > d):
+        if np.any(self.plasma_data.d_xyz[[0, -1]] > d):
             print("Warning: Voxel size is inadequate. ",
-                  f"(Voxel size={np.round(self.plasma_data.d_xyz[[0,-1]], decimals=2)}, d={d:.2})")
-            print(f"Ideal shape: {(self.plasma_data.xyz_range[[0,-1]] / d).astype(int) + 1}")
+                  f"(Voxel size={np.round(self.plasma_data.d_xyz[[0, -1]], decimals=2)}, d={d:.2})")
+            print(f"Ideal shape: {(self.plasma_data.xyz_range[[0, -1]] / d).astype(int) + 1}")
             while True:
                 c = "y" if auto else input("continue? (y)/n: ")
                 if c == "n":
@@ -393,10 +397,10 @@ if __name__ == '__main__':
            "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
            "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]]}
     time_set = time.time()
-    os = OpticalSystem(**dic)
+    # os = OpticalSystem(**dic)
     # o.plasma_data.voxel[-1, :] = 0.1
-    os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[0], [300], [100]], axis=0) < 50] = 100
-    os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[-100], [300], [0]], axis=0) < 50] = 100
+    # os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[0], [300], [100]], axis=0) < 50] = 100
+    # os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[-100], [300], [0]], axis=0) < 50] = 100
     # o.plasma_data.voxel[-1, 555] = 10
     # breakpoint()
     print("set: ", time.time() - time_set)
@@ -407,7 +411,7 @@ if __name__ == '__main__':
     # B = o.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    os.save_transmission_matrix()
+    # os.save_transmission_matrix()
     # o.trans_mat_org()
     # print("saved: ", time.time() - t)
 
@@ -419,6 +423,6 @@ if __name__ == '__main__':
     # print(o.light_vector.shape)
 
     pl = Plasma()
-    mode_ = pl.fb_modes()
+    # mode_ = pl.fb_modes()
     mat = pl.mode_matrix()
     print(mat.shape)
