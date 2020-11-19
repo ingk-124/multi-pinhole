@@ -143,6 +143,7 @@ class Plasma:  # 仮想プラズマ
 
     def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
         r, theta, phi = self.rtp()
+        breakpoint()
         return np.vstack([fb_mode(r, theta, phi) for fb_mode in self.fb_modes(m_max, k_max, t_max, p_max)]).T
 
 
@@ -238,7 +239,7 @@ class OpticalSystem:
     def __init__(self, sim_name=None, mode="pinhole", auto=False, tm=False, save_option="",
                  hole_list=None, hole_z=948, f=14.3, aperture_z=58, aperture_phi=21,
                  screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
-                 shape=(10, 10, 10), xyz_range=(500, 500, 750), start_xyz=(0, 0, 950),
+                 shape=None, xyz_range=None, start_xyz=None,
                  parameter_max=None):
 
         self.mode = mode
@@ -372,7 +373,7 @@ class OpticalSystem:
             FB = self.plasma_data.mode_matrix(*self.parameter_max)
             mode_arr = np.array(self.plasma_data.parameters, dtype='O')
             breakpoint()
-            np.savez_compressed(path / "FourierBessel_mat.npz", fb=FB, mode=mode_arr)
+            np.savez(path / "FourierBessel_mat.npz", fb=FB, mode=mode_arr)
             print("FourierBessel_mat.npy: saved!")
         else:
             B = self.blur_mat()
@@ -405,13 +406,13 @@ if __name__ == '__main__':
     # B = o.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    # o.save_transmission_matrix()
+    os.save_transmission_matrix()
     # o.trans_mat_org()
     # print("saved: ", time.time() - t)
 
     # print(o.plasma_data.voxel[:, o.plasma_data.voxel[-1, :] != 0])
     #
-    o_im, b_im = os.simulate(show=True, image_save=False, return_image=False)
+    # o_im, b_im = os.simulate(show=True, image_save=False, return_image=False)
     # print(b_im.nonzero())
     breakpoint()
     # print(o.light_vector.shape)

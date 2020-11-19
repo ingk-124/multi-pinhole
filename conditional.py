@@ -24,10 +24,6 @@ def probably_matrix(kw):
     OpticalSystem(**kw)
 
 
-def get_fb_mat(kw):
-    OpticalSystem(**kw).plasma_data.mode_matrix()
-
-
 if __name__ == '__main__':
     args = get_option()
 
@@ -52,13 +48,13 @@ if __name__ == '__main__':
                       "aperture_z": 58,
                       "aperture_phi": 21,
                       "shape": (10, 10, 10),
-                      "xyz_range": (100, 100, 100),
-                      "start_xyz": (0, 0, 300),
+                      "xyz_range": None,
+                      "start_xyz": None,
                       "image_size": (170, 170),
                       "n": 2}
 
-    config_dic["save_option"] = args.save_option
-    # config_dic["save_option"] = "fb"
+    # config_dic["save_option"] = args.save_option
+    config_dic["save_option"] = "fb"
     while True:
         print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")
