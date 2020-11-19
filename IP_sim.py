@@ -144,7 +144,6 @@ class Plasma:  # 仮想プラズマ
 
     def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
         r, theta, phi = self.rtp()
-        breakpoint()
         return np.vstack([fb_mode(r, theta, phi) for fb_mode in tqdm(self.fb_modes(m_max, k_max, t_max, p_max))]).T
 
 
@@ -294,7 +293,7 @@ class OpticalSystem:
 
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
-        breakpoint()
+        # breakpoint()
 
         self.mat_t = np.array([[1, 0, 0, 0, 0],
                                [0, 0, -1, 0, 0],
@@ -329,7 +328,7 @@ class OpticalSystem:
         # 畳み込み
         blur_sim_im = ndimage.convolve(org_sim_im, self.kernel, mode='constant', cval=0)
         # print(blur_sim_im.nonzero())
-        breakpoint()
+        # breakpoint()
 
         org_im = self.image_trans_mat.dot(org_sim_im.ravel().T).reshape(self.return_image_size)
         blur_im = self.image_trans_mat.dot(blur_sim_im.ravel().T).reshape(self.return_image_size)
@@ -373,7 +372,6 @@ class OpticalSystem:
             path = dir_rename("./npz/" + self.sim_name)
             FB = self.plasma_data.mode_matrix(*self.parameter_max)
             mode_arr = np.array(self.plasma_data.parameters, dtype='O')
-            breakpoint()
             np.savez(path / "FourierBessel_mat.npz", fb=FB, mode=mode_arr)
             print("FourierBessel_mat.npy: saved!")
         else:
@@ -398,7 +396,7 @@ if __name__ == '__main__':
     os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[0], [300], [100]], axis=0) < 50] = 100
     os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[-100], [300], [0]], axis=0) < 50] = 100
     # o.plasma_data.voxel[-1, 555] = 10
-    breakpoint()
+    # breakpoint()
     print("set: ", time.time() - time_set)
     time_set = time.time()
     # P = o.trans_mat_org()
@@ -415,7 +413,7 @@ if __name__ == '__main__':
     #
     # o_im, b_im = os.simulate(show=True, image_save=False, return_image=False)
     # print(b_im.nonzero())
-    breakpoint()
+    # breakpoint()
     # print(o.light_vector.shape)
 
     pl = Plasma()
