@@ -146,7 +146,8 @@ class Plasma:  # 仮想プラズマ
             itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
         print(multi.cpu_count())
         with Pool(multi.cpu_count()) as p:
-            result = sparse.vstack(p.map(self.fb, self.parameters))
+            pmap = p.map(self.fb, self.parameters)
+            result = sparse.vstack(list(tqdm(pmap, total=len(self.parameters))))
 
         return result
 
@@ -225,7 +226,11 @@ class OpticalSystem:
     def blur_mat(self):
         E = sparse.identity(self.I, dtype='i2', format='csr')
         E.data = self.effective_area.astype(float)
-        M = sparse.vstack([self.pinhole_blur(m.toarray().reshape(self.sim_image_size)) for m in tqdm(E)]).T
+        print(multi.cpu_count())
+        breakpoint()
+        with Pool(multi.cpu_count()) as p:
+            pmap = p.map(self.pinhole_blur, range(self.I))
+            M = sparse.vstack(list(tqdm(pmap, total=self.I))).T
 
         return self.image_trans_mat * M
 
@@ -315,11 +320,14 @@ class OpticalSystem:
         self.mask_list, self.effective_area = self.mk_mask()
 
         self.kernel = self.mk_kernel()
-        self.pinhole_blur = lambda m: sparse.coo_matrix(
-            ndimage.convolve(m, self.kernel, mode='constant', cval=0).ravel())
-
         if tm:
             self.save_transmission_matrix(save_option)
+
+    def pinhole_blur(self, i):
+        m = np.zeros(self.I)
+        m[i] = 1.0
+        result = ndimage.convolve(m.reshape(self.sim_image_size), self.kernel, mode='constant', cval=0).ravel()
+        return sparse.coo_matrix(result)
 
     def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False):
         if self.__stop__:
@@ -397,7 +405,7 @@ if __name__ == '__main__':
            "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
            "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]]}
     time_set = time.time()
-    # os = OpticalSystem(**dic)
+    os = OpticalSystem(**dic)
     # o.plasma_data.voxel[-1, :] = 0.1
     # os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[0], [300], [100]], axis=0) < 50] = 100
     # os.plasma_data.voxel[-1, np.linalg.norm(os.plasma_data.voxel[:3] - [[-100], [300], [0]], axis=0) < 50] = 100
@@ -408,7 +416,7 @@ if __name__ == '__main__':
     # P = o.trans_mat_org()
     # print("trans mat: ", time.time() - t)
     # t = time.time()
-    # B = o.blur_mat()
+    B = os.blur_mat()
     # print("blur mat: ", time.time() - t)
 
     # os.save_transmission_matrix()
@@ -422,7 +430,7 @@ if __name__ == '__main__':
     # breakpoint()
     # print(o.light_vector.shape)
 
-    pl = Plasma()
+    # pl = Plasma()
     # mode_ = pl.fb_modes()
-    mat = pl.mode_matrix()
-    print(mat.shape)
+    # mat = pl.mode_matrix()
+    # print(mat.shape)
