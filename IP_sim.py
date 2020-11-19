@@ -74,6 +74,7 @@ class Plasma:  # 仮想プラズマ
 
         self.shape = np.array(shape)
         self.xyz_range = np.array(xyz_range)
+        self.start_xyz = start_xyz
         self.R = R
         self.a = a
 
@@ -273,7 +274,7 @@ class OpticalSystem:
 
         self.__stop__ = False
 
-        d = (start_xyz[-1] - xyz_range[-1] / 2) / (self.f * self.ppmm) * n
+        d = (self.plasma_data.start_xyz[-1] - self.plasma_data.xyz_range[-1] / 2) / (self.f * self.ppmm) * n
 
         # print(self.plasma_data.d_xyz[:2], d)
 
