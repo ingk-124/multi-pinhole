@@ -273,7 +273,7 @@ class OpticalSystem:
 
         self.__stop__ = False
 
-        d = (self.plasma_data.start_xyz[-1] - self.plasma_data.xyz_range[-1] / 2) / (self.f * self.ppmm) * n
+        d = (hole_z - self.plasma_data.start_xyz[1]) * n / (self.f * self.ppmm)
 
         # print(self.plasma_data.d_xyz[:2], d)
 
