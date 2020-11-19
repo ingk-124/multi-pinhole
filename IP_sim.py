@@ -144,7 +144,7 @@ class Plasma:  # 仮想プラズマ
     def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
         r, theta, phi = self.rtp()
         breakpoint()
-        return np.vstack([fb_mode(r, theta, phi) for fb_mode in self.fb_modes(m_max, k_max, t_max, p_max)]).T
+        return np.vstack([fb_mode(r, theta, phi) for fb_mode in tqdm(self.fb_modes(m_max, k_max, t_max, p_max))]).T
 
 
 class OpticalSystem:
