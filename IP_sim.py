@@ -146,7 +146,7 @@ class Plasma:  # 仮想プラズマ
             itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
         print(multi.cpu_count())
         with Pool(multi.cpu_count()) as p:
-            pmap = p.map(self.fb, self.parameters)
+            pmap = p.imap(self.fb, self.parameters)
             result = sparse.vstack(list(tqdm(pmap, total=len(self.parameters))))
 
         return result
@@ -229,7 +229,7 @@ class OpticalSystem:
         print(multi.cpu_count())
         breakpoint()
         with Pool(multi.cpu_count()) as p:
-            pmap = p.map(self.pinhole_blur, range(self.I))
+            pmap = p.imap(self.pinhole_blur, range(self.I))
             M = sparse.vstack(list(tqdm(pmap, total=self.I))).T
 
         return self.image_trans_mat * M
@@ -416,7 +416,7 @@ if __name__ == '__main__':
     # P = o.trans_mat_org()
     # print("trans mat: ", time.time() - t)
     # t = time.time()
-    B = os.blur_mat()
+    # B = os.blur_mat()
     # print("blur mat: ", time.time() - t)
 
     # os.save_transmission_matrix()
@@ -430,7 +430,7 @@ if __name__ == '__main__':
     # breakpoint()
     # print(o.light_vector.shape)
 
-    # pl = Plasma()
+    pl = Plasma()
     # mode_ = pl.fb_modes()
-    # mat = pl.mode_matrix()
+    mat = pl.mode_matrix()
     # print(mat.shape)
