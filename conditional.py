@@ -24,7 +24,7 @@ def get_option():
 
 def probably_matrix(kw):
     optsys = OpticalSystem(**kw)
-    optsys.save_transmission_matrix()
+    # optsys.save_transmission_matrix()
 
 
 if __name__ == '__main__':
