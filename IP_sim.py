@@ -200,28 +200,31 @@ class OpticalSystem:
         return image_vec
 
     def trans_mat_org(self, tm=True):
-        if not self.mask_list:
-            self.mk_mask()
-        light_vector = self.light_vector(tm=tm)
-        # light_vector -> ピクセル(整数値)に変換 これがrow
-        row_list = np.dot([1, self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
+        try:
+            self.tm_org = sparse.load_npz(self.tm_file)
+        except FileNotFoundError:
+            if not self.mask_list:
+                self.mk_mask()
+            light_vector = self.light_vector(tm=tm)
+            # light_vector -> ピクセル(整数値)に変換 これがrow
+            row_list = np.dot([1, self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
 
-        # columnのインデックス(hole_num分)
-        if tm:
-            columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
-        else:
-            columns = np.tile(np.arange(light_vector.shape[-1]).astype("i4"), (self.hole_num, 1))
-        # holeごとに luminosity/row/column の順にまとめる
-        index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
-                      np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
+            # columnのインデックス(hole_num分)
+            if tm:
+                columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
+            else:
+                columns = np.tile(np.arange(light_vector.shape[-1]).astype("i4"), (self.hole_num, 1))
+            # holeごとに luminosity/row/column の順にまとめる
+            index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
+                          np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
 
-        # tm_orgのshape
-        shape = (self.I, self.plasma_data.J)
-        # holeごとに処理
-        mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
-        # maskを適応(要素積)
-        self.tm_org = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)],
-                        axis=0)
+            # tm_orgのshape
+            shape = (self.I, self.plasma_data.J)
+            # holeごとに処理
+            mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
+            # maskを適応(要素積)
+            self.tm_org = np.sum(
+                [image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)], axis=0)
 
     def blur_mat(self):
         E = sparse.identity(self.I, dtype='i2', format='csr')
@@ -256,7 +259,7 @@ class OpticalSystem:
             result = sparse.hstack(list(tqdm(pmap, total=len(self.plasma_data.parameters))))
         return result
 
-    def fb_image(self,p):
+    def fb_image(self, p):
         return self.tm_org * self.plasma_data.fb(p).T
 
     def mk_kernel(self):
@@ -274,7 +277,7 @@ class OpticalSystem:
                  hole_list=None, hole_z=948, f=14.3, aperture_z=58, aperture_phi=21,
                  screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
                  shape=None, xyz_range=None, start_xyz=None,
-                 parameter_max=None):
+                 parameter_max=None, tm_file=""):
 
         self.mode = mode
         self.sim_name = sim_name if sim_name else str(datetime.date.today())
@@ -345,10 +348,18 @@ class OpticalSystem:
         self.mask_list, self.effective_area = self.mk_mask()
 
         self.kernel = self.mk_kernel()
-        self.tm_org=None
-        self.bm=None
+        self.tm_org = None
+        self.bm = None
+        self.save_option = save_option
+        self.tm_file = tm_file
         if tm:
-            self.save_transmission_matrix(save_option)
+            self.save_transmission_matrix()
+
+    def print_member(self):
+        for k, v in self.__dict__.items():
+            if not k in ['image_trans_mat', 'mask_list', 'effective_area', 'kernel']:
+                print(f"{k}: ")
+                print(v)
 
     def pinhole_blur(self, i):
         m = np.zeros(self.I)
@@ -395,21 +406,21 @@ class OpticalSystem:
             else:
                 return org_im.ravel(), blur_im.ravel()
 
-    def save_transmission_matrix(self, save_option="", tm_file=""):
+    def save_transmission_matrix(self, tm_file=""):
         if self.__stop__:
             return 0
 
-        if save_option == "bo":
+        if self.save_option == "bo":
             self.blur_mat()
             path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "blur_mat.npz", self.bm)
             print("blur_mat.npz: saved!")
-        elif save_option == "oo":
+        elif self.save_option == "oo":
             self.trans_mat_org()
             path = dir_rename("./npz/" + self.sim_name)
             sparse.save_npz(path / "trans_mat_org.npz", self.tm_org)
             print("trans_mat_org.npz: saved!")
-        elif save_option == "fb":
+        elif self.save_option == "fb":
             path = dir_rename("./npz/" + self.sim_name)
             FB = self.fb_modes(tm_file=tm_file)
             mode_arr = np.array(self.plasma_data.parameters, dtype='O')

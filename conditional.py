@@ -1,11 +1,12 @@
 import os
 
-os.environ["OPENBLAS_NUM_THREADS"] = "64"
-os.environ["MKL_NUM_THREADS"] = "64"
+# os.environ["OPENBLAS_NUM_THREADS"] = "64"
+# os.environ["MKL_NUM_THREADS"] = "64"
 
 from IP_sim import *
 from argparse import ArgumentParser, RawTextHelpFormatter
 import json
+from pprint import pprint
 
 
 def get_option():
@@ -24,44 +25,52 @@ def get_option():
 
 
 def probably_matrix(kw):
-    OpticalSystem(**kw)
+    os = OpticalSystem(**kw)
+    os.print_member()
+    os.save_transmission_matrix()
 
 
 if __name__ == '__main__':
     args = get_option()
 
     # arguments
-    # sim_name=None, mode="pinhole", auto=False, tm=False,
-    # hole_list=None, f=14.3, screen_size=(17.0, 17.0), hole_size=0.5, aperture_z=58, aperture_phi=21,
-    # shape=(10, 10, 10), xyz_range=(100, 100, 100), o_xyz=(0, 0, 300), image_size=(170, 170), n=10
+    # sim_name=None, mode="pinhole", auto=False, tm=False, save_option="",
+    # hole_list=None, hole_z=948, f=14.3, aperture_z=58, aperture_phi=21,
+    # screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
+    # shape=None, xyz_range=None, start_xyz=None, parameter_max=None
+
+    arguments = {"sim_name": "Test",
+                 "mode": "pinhole",
+                 "auto": False,
+                 "tm": False,
+                 "save_option": "",
+                 "hole_list": None,
+                 "hole_z": 948,
+                 "f": 14.3,
+                 "aperture_z": 58,
+                 "aperture_phi": 21,
+                 "screen_size": (17.0, 17.0),
+                 "hole_size": 0.5,
+                 "image_size": (170, 170),
+                 "n": 2,
+                 "shape": (100, 100, 100),
+                 "xyz_range": None,
+                 "start_xyz": None,
+                 "parameter_max": None,
+                 "tm_file": ""}
 
     if args.file:
         with open(args.file) as f:
             config_dic = json.load(f)
-    else:
-        config_dic = {"sim_name": "Test",
-                      "mode": "pinhole",
-                      "auto": True,
-                      "tm": True,
-                      "save_option": "",
-                      "hole_list": None,
-                      "f": 14.3,
-                      "screen_size": (17.0, 17.0),
-                      "hole_size": 0.5,
-                      "aperture_z": 58,
-                      "aperture_phi": 21,
-                      "shape": (100, 100, 100),
-                      "xyz_range": None,
-                      "start_xyz": None,
-                      "image_size": (170, 170),
-                      "n": 2}
-    if args.save_option:
-        config_dic["save_option"] = args.save_option
-    else:
-        config_dic["save_option"] = "fb"
+        for k,v in config_dic.items():
+            arguments[k]=v
+
+    arguments["save_option"]=args.save_option if args.save_option else ""
+    arguments["tm_file"]=args.trans_mat if args.trans_mat else ""
 
     while True:
-        print(f"{config_dic}\nIs it OK?", end="")
+        pprint(arguments)
+        print("Is it OK?", end="")
         ok = input(" y/n: ")
         if ok == "y":
             break
@@ -69,4 +78,4 @@ if __name__ == '__main__':
             print("Quit.")
             quit()
 
-    probably_matrix(config_dic)
+    probably_matrix(arguments)
