@@ -16,7 +16,10 @@ def get_option():
                            help='Save Option. \n'
                                 '"bo" (blur matrix only), \n'
                                 '"oo" (original trans matrix only), \n'
+                                '"fb" (Fourier Bessel image), \n'
                                 '"" (blurred trans matrix) <- default')
+    argparser.add_argument('-t', '--trans_mat', type=str,
+                           default="", help='Transmission matrix file. (default="")')
     return argparser.parse_args()
 
 
@@ -47,14 +50,16 @@ if __name__ == '__main__':
                       "hole_size": 0.5,
                       "aperture_z": 58,
                       "aperture_phi": 21,
-                      "shape": (10, 10, 10),
+                      "shape": (100, 100, 100),
                       "xyz_range": None,
                       "start_xyz": None,
                       "image_size": (170, 170),
                       "n": 2}
+    if args.save_option:
+        config_dic["save_option"] = args.save_option
+    else:
+        config_dic["save_option"] = "fb"
 
-    config_dic["save_option"] = args.save_option
-    # config_dic["save_option"] = "fb"
     while True:
         print(f"{config_dic}\nIs it OK?", end="")
         ok = input(" y/n: ")

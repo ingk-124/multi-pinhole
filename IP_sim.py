@@ -137,13 +137,14 @@ class Plasma:  # 仮想プラズマ
                  range(t)])
             return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
 
-    def mode_matrix(self, m_max=5, k_max=5, t_max=3, p_max=8):
+    def parameter_list(self, m_max=5, k_max=5, t_max=3, p_max=8):
         tp = [_ for _ in itertools.product(range(1, t_max), range(1, p_max)) if np.gcd(*_) == 1]
-
-        self.j_mat = j_mk(m_max + 1, k_max + 1)
-
         self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
             itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
+        self.j_mat = j_mk(m_max + 1, k_max + 1)
+
+    def mode_matrix(self):
+
         print(multi.cpu_count())
         with Pool(multi.cpu_count()) as p:
             pmap = p.imap(self.fb, self.parameters)
@@ -219,9 +220,8 @@ class OpticalSystem:
         # holeごとに処理
         mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
         # maskを適応(要素積)
-        tm_org = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)],
+        self.tm_org = np.sum([image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)],
                         axis=0)
-        return tm_org
 
     def blur_mat(self):
         E = sparse.identity(self.I, dtype='i2', format='csr')
@@ -232,7 +232,32 @@ class OpticalSystem:
             pmap = p.imap(self.pinhole_blur, range(self.I))
             M = sparse.vstack(list(tqdm(pmap, total=self.I))).T
 
-        return self.image_trans_mat * M
+        self.bm = self.image_trans_mat * M
+
+    def fb_modes(self, tm_file="", T=None):
+        if T is None:
+            try:
+                T = sparse.load_npz(tm_file)
+            except FileNotFoundError:
+                while True:
+                    c = input("Calculate transmission matrix, OK? y/n: ")
+                    if c == "n":
+                        return 0
+                    elif c == "y":
+                        self.trans_mat_org()
+                        print("Finish.")
+                        break
+                    else:
+                        pass
+        self.plasma_data.parameter_list(*self.parameter_max)
+        print(multi.cpu_count())
+        with Pool(multi.cpu_count()) as pool:
+            pmap = pool.imap(self.fb_image, self.plasma_data.parameters)
+            result = sparse.hstack(list(tqdm(pmap, total=len(self.plasma_data.parameters))))
+        return result
+
+    def fb_image(self,p):
+        return self.tm_org * self.plasma_data.fb(p).T
 
     def mk_kernel(self):
         # widthはピンホールの半径(単位はピクセル)
@@ -320,6 +345,8 @@ class OpticalSystem:
         self.mask_list, self.effective_area = self.mk_mask()
 
         self.kernel = self.mk_kernel()
+        self.tm_org=None
+        self.bm=None
         if tm:
             self.save_transmission_matrix(save_option)
 
@@ -368,34 +395,34 @@ class OpticalSystem:
             else:
                 return org_im.ravel(), blur_im.ravel()
 
-    def save_transmission_matrix(self, save_option=""):
+    def save_transmission_matrix(self, save_option="", tm_file=""):
         if self.__stop__:
             return 0
 
         if save_option == "bo":
-            B = self.blur_mat()
+            self.blur_mat()
             path = dir_rename("./npz/" + self.sim_name)
-            sparse.save_npz(path / "blur_mat.npz", B)
+            sparse.save_npz(path / "blur_mat.npz", self.bm)
             print("blur_mat.npz: saved!")
         elif save_option == "oo":
-            T = self.trans_mat_org()
+            self.trans_mat_org()
             path = dir_rename("./npz/" + self.sim_name)
-            sparse.save_npz(path / "trans_mat_org.npz", T)
+            sparse.save_npz(path / "trans_mat_org.npz", self.tm_org)
             print("trans_mat_org.npz: saved!")
         elif save_option == "fb":
             path = dir_rename("./npz/" + self.sim_name)
-            FB = self.plasma_data.mode_matrix(*self.parameter_max)
+            FB = self.fb_modes(tm_file=tm_file)
             mode_arr = np.array(self.plasma_data.parameters, dtype='O')
             sparse.save_npz(path / "FourierBessel_mat.npz", FB)
             np.save(path / "mode_array.npy", mode_arr)
             print("FourierBessel_mat.npz: saved!")
         else:
-            B = self.blur_mat()
+            self.blur_mat()
             path = dir_rename("./npz/" + self.sim_name)
-            sparse.save_npz(path / "blur_mat.npz", B)
-            T = self.trans_mat_org()
-            sparse.save_npz(path / "trans_mat_org.npz", T)
-            mat_A = B * T
+            sparse.save_npz(path / "blur_mat.npz", self.bm)
+            self.trans_mat_org()
+            sparse.save_npz(path / "trans_mat_org.npz", self.bm)
+            mat_A = self.bm * self.tm_org
             sparse.save_npz(path / "mat_A.npz", mat_A)
             print("mat_A.npz: saved!")
 
@@ -420,7 +447,7 @@ if __name__ == '__main__':
     # B = os.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    # os.save_transmission_matrix()
+    os.fb_modes()
     # o.trans_mat_org()
     # print("saved: ", time.time() - t)
 
@@ -431,7 +458,7 @@ if __name__ == '__main__':
     # breakpoint()
     # print(o.light_vector.shape)
 
-    pl = Plasma()
+    # pl = Plasma()
     # mode_ = pl.fb_modes()
-    mat = pl.mode_matrix()
+    # mat = pl.mode_matrix()
     # print(mat.shape)
