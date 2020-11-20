@@ -228,7 +228,7 @@ class OpticalSystem:
         E = sparse.identity(self.I, dtype='i2', format='csr')
         E.data = self.effective_area.astype(float)
         print(multi.cpu_count())
-        breakpoint()
+        # breakpoint()
         with Pool(multi.cpu_count()) as p:
             pmap = p.imap(self.pinhole_blur, range(self.I))
             M = sparse.vstack(list(tqdm(pmap, total=self.I))).T
