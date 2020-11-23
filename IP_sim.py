@@ -248,12 +248,15 @@ class OpticalSystem:
         with open(self.path / "mode_list.txt", "w") as f:
             for i, m in enumerate(self.plasma_data.parameters):
                 f.write(f"{i:>{n}}: {tuple(m)}  ")
-                if (i + 1) % 4 == 0:
+                if (i+1) % 4 == 0:
                     f.write("\n")
 
     def fb_image(self, p):
+        directory = dir_rename(self.path / f"{p}")
         result = self.plasma_data.fb(p)
-        np.savez_compressed(self.path / f"{p}.npz", data=result.data, indices=result.indices, indptr=result.indptr)
+        np.save(directory/"data.npy", result.data)
+        np.save(directory/"indices.npy", result.indices)
+        np.save(directory/"indptr.npy", result.indptr)
 
     def mk_kernel(self):
         # widthはピンホールの半径(単位はピクセル)
