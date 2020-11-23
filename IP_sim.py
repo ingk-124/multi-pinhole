@@ -137,10 +137,10 @@ class Plasma:  # 仮想プラズマ
                  range(t)])
             return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
 
-    def parameter_list(self, m_max=5, k_max=5, t_max=3, p_max=8):
-        tp = [_ for _ in itertools.product(range(1, t_max), range(1, p_max)) if np.gcd(*_) == 1]
+    def parameter_list(self, m_max=5, k_max=5, tor_max=3, pol_max=8):
+        t = [_ for _ in itertools.product(range(1, tor_max + 1), range(0, pol_max + 1)) if np.gcd(*_) == 1]
         self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
-            itertools.product(range(1, m_max + 1), range(1, k_max + 1), tp, ["c", "s"]))
+            itertools.product(range(1, m_max + 1), range(1, k_max + 1), t, ["c", "s"]))
         self.j_mat = j_mk(m_max + 1, k_max + 1)
 
     def mode_matrix(self):
@@ -244,6 +244,12 @@ class OpticalSystem:
             _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         np.save(self.path / "mode_array.npy", mode_arr)
+        n = int(np.log10(len(self.plasma_data.parameters)) + 1)
+        with open(self.path / "mode_list.txt", "w") as f:
+            for i, m in enumerate(self.plasma_data.parameters):
+                f.write(f"{i:>{n}}: {tuple(m)}  ")
+                if (i+1) % 4 == 0:
+                    f.write("\n")
 
     def fb_image(self, p):
         sparse.save_npz(self.path / f"{p}.npz", self.plasma_data.fb(p))
@@ -416,9 +422,10 @@ class OpticalSystem:
 
 if __name__ == '__main__':
     v = 10
-    dic = {"sim_name": None, "mode": "lens", "image_size": (128, 128), "shape": (v, 300, v),
+    dic = {"sim_name": "Test", "mode": "lens", "image_size": (128, 128), "shape": (v, 300, v),
            "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
-           "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]]}
+           "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]],
+           "parameter_max": [1, 1, 1, 1]}
     time_set = time.time()
     os = OpticalSystem(**dic)
     # o.plasma_data.voxel[-1, :] = 0.1
