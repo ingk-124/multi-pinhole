@@ -254,9 +254,11 @@ class OpticalSystem:
     def fb_image(self, p):
         directory = dir_rename(self.path / f"{p}")
         result = self.plasma_data.fb(p)
+        print(sum([result.indptr.nbytes,result.indices.nbytes,result.data.nbytes]))
         np.save(directory/"data.npy", result.data)
         np.save(directory/"indices.npy", result.indices)
         np.save(directory/"indptr.npy", result.indptr)
+        del result
 
     def mk_kernel(self):
         # widthはピンホールの半径(単位はピクセル)
@@ -426,8 +428,8 @@ class OpticalSystem:
 
 if __name__ == '__main__':
     v = 10
-    dic = {"sim_name": "Test", "mode": "lens", "image_size": (128, 128), "shape": (v, 300, v),
-           "xyz_range": (200, 600, 200), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
+    dic = {"sim_name": "Test", "mode": "lens", "image_size": (128, 128), "shape": (333,511,333),
+           "xyz_range": (498, 765, 498), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
            "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]],
            "parameter_max": [1, 1, 1, 1]}
     time_set = time.time()
