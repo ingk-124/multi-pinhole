@@ -14,6 +14,9 @@ import multiprocessing as multi
 from multiprocessing import Pool
 
 
+from joblib import Parallel , delayed
+
+
 def dir_rename(dir_name):
     dir_path = Path(dir_name)
     parent = dir_path.parent
@@ -239,11 +242,12 @@ class OpticalSystem:
         self.plasma_data.parameter_list(*self.parameter_max)
         self.path = dir_rename("./fb_mode/" + self.sim_name)
         print(multi.cpu_count())
-        with Pool(multi.cpu_count()) as pool:
-            pmap = pool.imap(self.fb_image, self.plasma_data.parameters)
-            _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
+        # with Pool(multi.cpu_count()) as pool:
+        #     pmap = pool.imap(self.fb_image, self.plasma_data.parameters)
+        #     _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         # breakpoint()
+        Parallel(n_jobs=-1, prefer='threads')([delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
         with open(self.path / "mode_list.txt", "w") as f:
