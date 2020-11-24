@@ -245,8 +245,9 @@ class OpticalSystem:
         #     _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         # breakpoint()
-        Parallel(n_jobs=-1, verbose=10, prefer='threads')(
-            [delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
+        r,t,p=self.plasma_data.rtp()
+        Parallel(n_jobs=10, verbose=10, prefer='threads')(
+            [delayed(self.fb_image)(para,r,t,p) for para in self.plasma_data.parameters])
         # Parallel(n_jobs=-1, verbose=10)([delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
@@ -256,9 +257,9 @@ class OpticalSystem:
                 if (i + 1) % 4 == 0:
                     f.write("\n")
 
-    def fb_image(self, p):
+    def fb_image(self, p, r, theta, phi):
         # directory = dir_rename(self.path / f"{p}")
-        result = self.plasma_data.fb(p, *self.plasma_data.rtp())
+        result = self.plasma_data.fb(p, r, theta, phi)
         # print(sum([result.indptr.nbytes, result.indices.nbytes, result.data.nbytes]))
         # np.save(directory / "data.npy", result.data)
         # np.save(directory / "indices.npy", result.indices)
