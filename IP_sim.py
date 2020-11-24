@@ -246,7 +246,7 @@ class OpticalSystem:
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         # breakpoint()
         # Parallel(n_jobs=-1, prefer='threads')([delayed(self.fb_image)(p) for p in tqdm(self.plasma_data.parameters)])
-        Parallel(n_jobs=-1)([delayed(self.fb_image)(p) for p in tqdm(self.plasma_data.parameters)])
+        Parallel(n_jobs=-1, verbose=10)([delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
         with open(self.path / "mode_list.txt", "w") as f:
