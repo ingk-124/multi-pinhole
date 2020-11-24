@@ -12,9 +12,7 @@ from tqdm import tqdm
 import itertools
 import multiprocessing as multi
 from multiprocessing import Pool
-
-
-from joblib import Parallel , delayed
+from joblib import Parallel, delayed
 
 
 def dir_rename(dir_name):
@@ -247,7 +245,8 @@ class OpticalSystem:
         #     _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         # breakpoint()
-        Parallel(n_jobs=-1, prefer='threads')([delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
+        # Parallel(n_jobs=-1, prefer='threads')([delayed(self.fb_image)(p) for p in tqdm(self.plasma_data.parameters)])
+        Parallel(n_jobs=-1)([delayed(self.fb_image)(p) for p in tqdm(self.plasma_data.parameters)])
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
         with open(self.path / "mode_list.txt", "w") as f:
@@ -335,7 +334,6 @@ class OpticalSystem:
 
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
-        # breakpoint()
 
         self.mat_t = np.array([[1, 0, 0, 0, 0],
                                [0, 0, -1, 0, 0],
