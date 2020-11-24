@@ -111,7 +111,7 @@ class Plasma:  # 仮想プラズマ
 
         # j_mat=np.vstack([j_mk(m) for m in range(25)])
 
-        self.r, self.theta, self.phi = self.rtp()
+        # self.r, self.theta, self.phi = self.rtp()
 
     def rtp(self):
         r_xy = np.linalg.norm(self.voxel[:2], axis=0) - self.R
@@ -121,21 +121,21 @@ class Plasma:  # 仮想プラズマ
 
         return r, theta, phi
 
-    def fb(self, para):
+    def fb(self, para, r, theta, phi):
         m, k, (t, p), cs = para
         q = p / t
         psy = 2 * np.pi * q
 
         if cs == "c":
             luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * self.r) * np.cos(m * (self.theta + q * self.phi + psy * _)) for _ in
+                [jv(m, self.j_mat[m, k - 1] * r) * np.cos(m * (theta + q * phi + psy * _)) for _ in
                  range(t)])
-            return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
+            return sparse.csr_matrix(np.where(r > 1, 0, luminosity))
         elif cs == "s":
             luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * self.r) * np.sin(m * (self.theta + q * self.phi + psy * _)) for _ in
+                [jv(m, self.j_mat[m, k - 1] * r) * np.sin(m * (theta + q * phi + psy * _)) for _ in
                  range(t)])
-            return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
+            return sparse.csr_matrix(np.where(r > 1, 0, luminosity))
 
     def parameter_list(self, m_max=5, k_max=5, tor_max=3, pol_max=8):
         t = [_ for _ in itertools.product(range(1, tor_max + 1), range(0, pol_max + 1)) if np.gcd(*_) == 1]
@@ -243,22 +243,25 @@ class OpticalSystem:
             pmap = pool.imap(self.fb_image, self.plasma_data.parameters)
             _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
+        # breakpoint()
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
         with open(self.path / "mode_list.txt", "w") as f:
             for i, m in enumerate(self.plasma_data.parameters):
                 f.write(f"{i:>{n}}: {tuple(m)}  ")
-                if (i+1) % 4 == 0:
+                if (i + 1) % 4 == 0:
                     f.write("\n")
 
     def fb_image(self, p):
-        directory = dir_rename(self.path / f"{p}")
-        result = self.plasma_data.fb(p)
-        print(sum([result.indptr.nbytes,result.indices.nbytes,result.data.nbytes]))
-        np.save(directory/"data.npy", result.data)
-        np.save(directory/"indices.npy", result.indices)
-        np.save(directory/"indptr.npy", result.indptr)
+        # directory = dir_rename(self.path / f"{p}")
+        result = self.plasma_data.fb(p, *self.plasma_data.rtp())
+        # print(sum([result.indptr.nbytes, result.indices.nbytes, result.data.nbytes]))
+        # np.save(directory / "data.npy", result.data)
+        # np.save(directory / "indices.npy", result.indices)
+        # np.save(directory / "indptr.npy", result.indptr)
+        sparse.save_npz(self.path / f"{p}.npz", result)
         del result
+        return 0
 
     def mk_kernel(self):
         # widthはピンホールの半径(単位はピクセル)
@@ -428,10 +431,10 @@ class OpticalSystem:
 
 if __name__ == '__main__':
     v = 10
-    dic = {"sim_name": "Test", "mode": "lens", "image_size": (128, 128), "shape": (333,511,333),
+    dic = {"sim_name": "Test", "mode": "lens", "image_size": (128, 128), "shape": (10, 10, 10),
            "xyz_range": (498, 765, 498), "start_xyz": (0, 700, 0), "auto": False, "n": 1,
            "hole_list": [[5.0, 0], [-5.0, 0], [0, -5.0], [0, 5.0]],
-           "parameter_max": [1, 1, 1, 1]}
+           "parameter_max": [1, 1, 1, 1], "save_option": "fb"}
     time_set = time.time()
     os = OpticalSystem(**dic)
     # o.plasma_data.voxel[-1, :] = 0.1
@@ -447,7 +450,7 @@ if __name__ == '__main__':
     # B = os.blur_mat()
     # print("blur mat: ", time.time() - t)
 
-    os.fb_modes()
+    os.save_transmission_matrix()
     # o.trans_mat_org()
     # print("saved: ", time.time() - t)
 
