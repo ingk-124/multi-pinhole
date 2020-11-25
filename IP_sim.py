@@ -337,15 +337,15 @@ class OpticalSystem:
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
 
-        self.mat_t = np.array([[1, 0, 0, 0, 0],
-                               [0, 0, -1, 0, 0],
+        self.mat_t = np.array([[0, 0, 1, 0, 0],
+                               [-1, 0, 0, 0, 0],
                                [0, -1, 0, hole_z, 0],
                                [0, 0, 0, 1, 0],
                                [0, 0, 0, 0, 1]])
 
         self.mat_P = np.r_["1,2,0",
-                           [-f, 0] * self.hole_num,
-                           [0, -f] * self.hole_num,
+                           [f, 0] * self.hole_num,
+                           [0, f] * self.hole_num,
                            (self.hole_xyz[:, :2] + self.offset).ravel(),
                            (f * self.hole_xyz[:, :2]).ravel()]
 
