@@ -31,7 +31,7 @@ class Calculation:
             self.mode_dict[n] = mode
         return mode
 
-    def crosssection(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
+    def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
         c = "coolwarm"
         if isinstance(n_l, int):
             n_l = [n_l]
@@ -95,8 +95,60 @@ class Calculation:
 
         return fig
 
-    def cross_xy(self, n=0, z_=166, c="coolwarm"):
-        J = self.fb_img(n)
+    def cross_section_j(self, J=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
+                        ylim2=(-250, 250)):
+        if J is None:
+            J = self.fb_img(n)
+        c = "coolwarm"
+
+        x1, y1, x2, y2, y, z = [], [], [], [], [], []
+        for theta in np.linspace(0, -2 * np.pi, 360):
+            y.append(508 + 250 * np.cos(theta))
+            z.append(250 * np.sin(theta))
+        for phi in np.linspace(-np.pi / 2, np.pi / 2, 100):
+            y1.append(258 * np.cos(phi))
+            x1.append(258 * np.sin(phi))
+            y2.append(750 * np.cos(phi))
+            x2.append(750 * np.sin(phi))
+
+        fig, [ax1, ax2, ax3] = plt.subplots(3, 1, figsize=(5, 10))
+
+        ax1.set_aspect("equal")
+        ax2.set_aspect("equal")
+        ax3.set_aspect("equal")
+
+        ax1.set_xlim(*xlim1)
+        ax1.set_ylim(*ylim1)
+        ax1.set_xlabel("y[mm]", fontsize=14)
+        ax1.set_ylabel("z[mm]", fontsize=14)
+        ax1.plot(y, z, 'y')
+        ax1.imshow(J.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
+                   extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+        ax1.set_title(f"Cross section[Poloidal]", fontsize=16)
+
+        ax2.set_xlim(*xlim2)
+        ax2.set_ylim(*ylim2)
+        ax2.set_xlabel("y[mm]", fontsize=12)
+        ax2.set_ylabel("x[mm]", fontsize=12)
+        ax2.plot(y1, x1, 'y')
+        ax2.plot(y2, x2, 'y')
+        ax2.imshow(J.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
+                   extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+        ax2.set_title(f"Cross section[Toroidal]", fontsize=16)
+
+        im = (self.A * J).reshape(128, 128).toarray()
+        ax3.set_title(f"Image Simulation", fontsize=16)
+        ax3.set_aspect("equal")
+        sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3)
+
+        fig.suptitle("Fourier-Bessel Cross sections", fontsize=20)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        return fig
+
+    def cross_xy(self, J=None, n=0, z_=166, c="coolwarm"):
+        if J is None:
+            J = self.fb_img(n)
 
         x1, y1, x2, y2 = [], [], [], []
         for p in np.linspace(-np.pi, np.pi, 100):
@@ -117,8 +169,9 @@ class Calculation:
 
         return fig
 
-    def cross_yz(self, n=0, x_=142, c="coolwarm"):
-        J = self.fb_img(n)
+    def cross_yz(self, J=None, n=0, x_=142, c="coolwarm"):
+        if J is None:
+            J = self.fb_img(n)
 
         x, y = [], []
         for t in np.linspace(0, -2 * np.pi, 360):
@@ -135,8 +188,9 @@ class Calculation:
 
         return fig
 
-    def cross_zx(self, n=0, y_=0, c="coolwarm"):
-        J = self.fb_img(n)
+    def cross_zx(self, J=None, n=0, y_=0, c="coolwarm"):
+        if J is None:
+            J = self.fb_img(n)
 
         fig, ax = plt.subplots()
 
