@@ -94,6 +94,8 @@ class Calculation:
         fig.suptitle("Fourier-Bessel Cross sections", fontsize=20)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
 
+        fig.show()
+
     def mk_fb_matrix(self):
         load = Parallel(n_jobs=10, verbose=10, prefer='threads')(
             [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
