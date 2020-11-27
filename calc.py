@@ -27,11 +27,11 @@ class Calculation:
         try:
             mode = self.mode_dict[n]
         except KeyError:
-            mode = sparse.load_npz(self.fb_path + f"{tuple(self.mode_list[n])}.npz").T
+            mode = sparse.load_npz(self.fb_path / f"{tuple(self.mode_list[n])}.npz").T
             self.mode_dict[n] = mode
         return mode
 
-    def crosssection(self, n_l, x=166, z=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
+    def crosssection(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
         c = "coolwarm"
         if isinstance(n_l, int):
             n_l = [n_l]
@@ -59,6 +59,7 @@ class Calculation:
         print(axes.shape)
 
         for i, j in enumerate(j_l):
+            print(j)
             no = n_l[i]
             ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
@@ -71,7 +72,7 @@ class Calculation:
             ax1.set_xlabel("y[mm]", fontsize=14)
             ax1.set_ylabel("z[mm]", fontsize=14)
             ax1.plot(y, z, 'y')
-            ax1.imshow(j.reshape(333, -1).tocsr()[x].reshape(511, 333).toarray().T,
+            ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c)
             ax1.set_title(f"No.{no}: Cross section[Poloidal]", fontsize=16)
 
@@ -81,7 +82,7 @@ class Calculation:
             ax2.set_ylabel("x[mm]", fontsize=12)
             ax2.plot(y1, x1, 'y')
             ax2.plot(y2, x2, 'y')
-            ax2.imshow(j.reshape(-1, 333).tocsr()[:, z].reshape(333, 511).toarray(),
+            ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c)
             ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=16)
 
