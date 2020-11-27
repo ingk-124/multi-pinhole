@@ -140,7 +140,7 @@ class Plasma:  # 仮想プラズマ
 
     def parameter_list(self, m_max=5, k_max=5, tor_max=3, pol_max=8):
         t = [_ for _ in itertools.product(range(1, tor_max + 1), range(0, pol_max + 1)) if np.gcd(*_) == 1]
-        self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 1)], ["c"])) + list(
+        self.parameters = list(itertools.product([0], range(1, k_max + 1), [(1, 0)], ["c"])) + list(
             itertools.product(range(1, m_max + 1), range(1, k_max + 1), t, ["c", "s"]))
         self.j_mat = j_mk(m_max + 1, k_max + 1)
 
@@ -245,9 +245,9 @@ class OpticalSystem:
         #     _ = list(tqdm(pmap, total=len(self.plasma_data.parameters)))
         mode_arr = np.array(self.plasma_data.parameters, dtype='O')
         # breakpoint()
-        r,t,p=self.plasma_data.rtp()
+        r, t, p = self.plasma_data.rtp()
         Parallel(n_jobs=10, verbose=10, prefer='threads')(
-            [delayed(self.fb_image)(para,r,t,p) for para in self.plasma_data.parameters])
+            [delayed(self.fb_image)(para, r, t, p) for para in self.plasma_data.parameters])
         # Parallel(n_jobs=-1, verbose=10)([delayed(self.fb_image)(p) for p in self.plasma_data.parameters])
         np.save(self.path / "mode_array.npy", mode_arr)
         n = int(np.log10(len(self.plasma_data.parameters)) + 1)
