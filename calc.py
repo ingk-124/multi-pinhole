@@ -32,12 +32,7 @@ class Calculation:
         return mode
 
     def fb_img(self, n):
-        try:
-            mode = self.mode_dict[n]
-        except KeyError:
-            mode = sparse.load_npz(self.fb_path / f"{tuple(self.mode_list[n])}.npz").T
-            self.mode_dict[n] = mode
-        return self.A * mode
+        return self.A * self.fb_mode(n)
 
     def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
         c = "coolwarm"
@@ -209,12 +204,27 @@ class Calculation:
 
         return fig
 
-    def mk_fb_matrix(self):
-        load = Parallel(n_jobs=10, verbose=10, prefer='threads')(
+    def mk_fb_matrix(self, save=False):
+        load = Parallel(n_jobs=-1, verbose=10)(
             [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
         self.fb_matrix = sparse.hstack(load)
+        if save:
+            sparse.save_npz(self.fb_path/"fb_matrix.npz",self.fb_matrix)
+
+
+def option():
+    argparser = ArgumentParser(formatter_class=RawTextHelpFormatter)
+    argparser.add_argument('-b', '--blur', type=str,
+                           default=None, help='Blur mat directory. (default=None)')
+    argparser.add_argument('-t', '--trans', type=str,
+                           default=None, help='Trans mat directory. (default=None)')
+    argparser.add_argument('-f', '--fb', type=str,
+                           default=None, help='FB directory. (default=None)')
+    return argparser.parse_args()
 
 
 if __name__ == '__main__':
-    cal = Calculation()
-    breakpoint()
+    opt = option()
+    cal = Calculation(blur_mat=opt.blur, trans_mat=opt.trans, fb_path=opt.fb)
+    cal.mk_fb_matrix(save=True)
+
