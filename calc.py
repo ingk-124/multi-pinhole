@@ -10,7 +10,7 @@ class Calculation:
 
     def __init__(self, blur_mat=None, trans_mat=None, fb_path=None):
         self.fb_path = Path(f"./fb_mode/{fb_path}/")
-        self.mode_list=[]
+        self.mode_list = []
 
         if Path(f"./npz/{blur_mat}").exists() and Path(f"./npz/{trans_mat}").exists() and self.fb_path.exists():
             self.A = sparse.load_npz(f"./npz/{blur_mat}/blur_mat.npz") * sparse.load_npz(
@@ -27,7 +27,7 @@ class Calculation:
         try:
             mode = self.mode_dict[n]
         except KeyError:
-            mode = sparse.load_npz(self.mode_list + f"{tuple(self.mode_list[n])}.npz").T
+            mode = sparse.load_npz(self.fb_path + f"{tuple(self.mode_list[n])}.npz").T
             self.mode_dict[n] = mode
         return mode
 
