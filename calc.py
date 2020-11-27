@@ -10,6 +10,7 @@ class Calculation:
 
     def __init__(self, blur_mat=None, trans_mat=None, fb_path=None):
         self.fb_path = Path(f"./fb_mode/{fb_path}/")
+        self.mode_list=[]
 
         if Path(f"./npz/{blur_mat}").exists() and Path(f"./npz/{trans_mat}").exists() and self.fb_path.exists():
             self.A = sparse.load_npz(f"./npz/{blur_mat}/blur_mat.npz") * sparse.load_npz(
@@ -40,7 +41,7 @@ class Calculation:
             return 1
 
         pprint([self.mode_list[_] for _ in n_l])
-        j_l = [self.fb_path(n) for n in n_l]
+        j_l = [self.fb_img(n) for n in n_l]
 
         x1, y1, x2, y2, y, z = [], [], [], [], [], []
         for theta in np.linspace(0, -2 * np.pi, 360):
@@ -94,7 +95,7 @@ class Calculation:
 
     def mk_fb_matrix(self):
         load = Parallel(n_jobs=10, verbose=10, prefer='threads')(
-            [delayed(self.fb_image)(n) for n in range(len(self.mode_list))])
+            [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
         self.fb_matrix = sparse.hstack(load)
 
 
