@@ -59,7 +59,6 @@ class Calculation:
         print(axes.shape)
 
         for i, j in enumerate(j_l):
-            print(j)
             no = n_l[i]
             ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
