@@ -23,13 +23,21 @@ class Calculation:
 
         self.fb_matrix = None
 
-    def fb_img(self, n):
+    def fb_mode(self, n):
         try:
             mode = self.mode_dict[n]
         except KeyError:
             mode = sparse.load_npz(self.fb_path / f"{tuple(self.mode_list[n])}.npz").T
             self.mode_dict[n] = mode
         return mode
+
+    def fb_img(self, n):
+        try:
+            mode = self.mode_dict[n]
+        except KeyError:
+            mode = sparse.load_npz(self.fb_path / f"{tuple(self.mode_list[n])}.npz").T
+            self.mode_dict[n] = mode
+        return self.A * mode
 
     def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
         c = "coolwarm"
@@ -41,7 +49,7 @@ class Calculation:
             return 1
 
         pprint([self.mode_list[_] for _ in n_l])
-        j_l = [self.fb_img(n) for n in n_l]
+        j_l = [self.fb_mode(n) for n in n_l]
 
         x1, y1, x2, y2, y, z = [], [], [], [], [], []
         for theta in np.linspace(0, -2 * np.pi, 360):
@@ -98,7 +106,7 @@ class Calculation:
     def cross_section_j(self, J=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
                         ylim2=(-250, 250)):
         if J is None:
-            J = self.fb_img(n)
+            J = self.fb_mode(n)
         c = "coolwarm"
 
         x1, y1, x2, y2, y, z = [], [], [], [], [], []
@@ -148,7 +156,7 @@ class Calculation:
 
     def cross_xy(self, J=None, n=0, z_=166, c="coolwarm"):
         if J is None:
-            J = self.fb_img(n)
+            J = self.fb_mode(n)
 
         x1, y1, x2, y2 = [], [], [], []
         for p in np.linspace(-np.pi, np.pi, 100):
@@ -171,7 +179,7 @@ class Calculation:
 
     def cross_yz(self, J=None, n=0, x_=142, c="coolwarm"):
         if J is None:
-            J = self.fb_img(n)
+            J = self.fb_mode(n)
 
         x, y = [], []
         for t in np.linspace(0, -2 * np.pi, 360):
@@ -190,7 +198,7 @@ class Calculation:
 
     def cross_zx(self, J=None, n=0, y_=0, c="coolwarm"):
         if J is None:
-            J = self.fb_img(n)
+            J = self.fb_mode(n)
 
         fig, ax = plt.subplots()
 
