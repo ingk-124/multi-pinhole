@@ -20,8 +20,6 @@ class Calculation:
 
         self.mode_dict = {}
 
-        self.mode_list = []
-
         self.fb_matrix = None
 
     def fb_img(self, n):
