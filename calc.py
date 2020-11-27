@@ -93,7 +93,59 @@ class Calculation:
         fig.suptitle("Fourier-Bessel Cross sections", fontsize=20)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
 
-        fig.show()
+        return fig
+
+    def cross_xy(self, n=0, z_=166, c="coolwarm"):
+        J = self.fb_img(n)
+
+        x1, y1, x2, y2 = [], [], [], []
+        for p in np.linspace(-np.pi, np.pi, 100):
+            y1.append(258 * np.cos(p))
+            x1.append(258 * np.sin(p))
+            y2.append(750 * np.cos(p))
+            x2.append(750 * np.sin(p))
+
+        fig, ax = plt.subplots()
+        ax.plot(y1, x1, 'y')
+        ax.plot(y2, x2, 'y')
+
+        ax.set_ylim(-250, 250)
+        ax.set_xlim(-10, 800)
+
+        ax.imshow(J.toarray().reshape(333, 511, 333)[:, :, z_],
+                  extent=[0, 765, -249, 249], aspect='equal', cmap=c)
+
+        return fig
+
+    def cross_yz(self, n=0, x_=142, c="coolwarm"):
+        J = self.fb_img(n)
+
+        x, y = [], []
+        for t in np.linspace(0, -2 * np.pi, 360):
+            x.append(508 + 250 * np.cos(t))
+            y.append(250 * np.sin(t))
+
+        fig, ax = plt.subplots()
+        ax.plot(x, y, 'y')
+        ax.set_xlim(-10, 800)
+        ax.set_ylim(-250, 250)
+
+        ax.imshow(J.toarray().reshape(333, 511, 333)[x_].T,
+                  extent=[0, 765, -249, 249], aspect='equal', cmap=c)
+
+        return fig
+
+    def cross_zx(self, n=0, y_=0, c="coolwarm"):
+        J = self.fb_img(n)
+
+        fig, ax = plt.subplots()
+
+        ax.imshow(J.toarray().reshape(333, 511, 333)[:, y_, :].T,
+                  aspect='auto', cmap=c)
+
+        ax.set_aspect("equal")
+
+        return fig
 
     def mk_fb_matrix(self):
         load = Parallel(n_jobs=10, verbose=10, prefer='threads')(
@@ -102,5 +154,5 @@ class Calculation:
 
 
 if __name__ == '__main__':
-    c = Calculation()
+    cal = Calculation()
     breakpoint()
