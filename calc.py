@@ -63,7 +63,7 @@ class Calculation:
 
         for i, j in enumerate(j_l):
             no = n_l[i]
-            max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
+            max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
             ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
             ax1.set_aspect("equal")
@@ -90,7 +90,7 @@ class Calculation:
             ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=16)
 
             im = (self.A * j).reshape(128, 128).toarray()
-            max_v=abs(im.max()) if abs(im.max())>abs(im.min()) else abs(im.min())
+            max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
             ax3.set_title(f"No.{no}: Image Simulation", fontsize=16)
             ax3.set_aspect("equal")
             sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
@@ -117,7 +117,7 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
-        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig, [ax1, ax2, ax3] = plt.subplots(3, 1, figsize=(5, 10))
 
         ax1.set_aspect("equal")
@@ -144,7 +144,7 @@ class Calculation:
         ax2.set_title(f"Cross section[Toroidal]", fontsize=16)
 
         im = (self.A * j).reshape(128, 128).toarray()
-        max_v=abs(im.max()) if abs(im.max())>abs(im.min()) else abs(im.min())
+        max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
         ax3.set_title(f"Image Simulation", fontsize=16)
         ax3.set_aspect("equal")
         sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
@@ -165,7 +165,7 @@ class Calculation:
             y2.append(750 * np.cos(p))
             x2.append(750 * np.sin(p))
 
-        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig, ax = plt.subplots()
         ax.plot(y1, x1, 'y')
         ax.plot(y2, x2, 'y')
@@ -187,7 +187,7 @@ class Calculation:
             x.append(508 + 250 * np.cos(t))
             y.append(250 * np.sin(t))
 
-        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig, ax = plt.subplots()
         ax.plot(x, y, 'y')
         ax.set_xlim(-10, 800)
@@ -202,7 +202,7 @@ class Calculation:
         if j is None:
             j = self.fb_mode(n)
 
-        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig, ax = plt.subplots()
 
         ax.imshow(j.toarray().reshape(333, 511, 333)[:, y_, :].T,
@@ -213,14 +213,14 @@ class Calculation:
         return fig
 
     def mk_fb_matrix(self, save=False):
-        if Path(self.fb_path/"fb_matrix.npz").exists():
-            self.fb_matrix = sparse.load_npz(self.fb_path/"fb_matrix.npz")
+        if Path(self.fb_path / "fb_matrix.npz").exists():
+            self.fb_matrix = sparse.load_npz(self.fb_path / "fb_matrix.npz")
         else:
             load = Parallel(n_jobs=-1, verbose=10)(
                 [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
             self.fb_matrix = sparse.hstack(load)
             if save:
-                sparse.save_npz(self.fb_path/"fb_matrix.npz",self.fb_matrix)
+                sparse.save_npz(self.fb_path / "fb_matrix.npz", self.fb_matrix)
 
 
 def option():
@@ -238,4 +238,3 @@ if __name__ == '__main__':
     opt = option()
     cal = Calculation(blur_mat=opt.blur, trans_mat=opt.trans, fb_path=opt.fb)
     cal.mk_fb_matrix(save=True)
-
