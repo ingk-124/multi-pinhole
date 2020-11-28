@@ -123,19 +123,19 @@ class Plasma:  # 仮想プラズマ
         return r, theta, phi
 
     def fb(self, para, r, theta, phi):
-        m, k, (t, p), cs = para
-        q = p / t
-        psy = 2 * np.pi * q
+        m, k, (tor, pol), cs = para
+        t = pol / tor
+        psy = 2 * np.pi * t
 
         if cs == "c":
             luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * r) * np.cos(m * (theta + q * phi + psy * _)) for _ in
-                 range(t)])
+                [jv(m, self.j_mat[m, k - 1] * r) * np.cos(m * (theta + t * phi + psy * _)) for _ in
+                 range(tor)])
             return sparse.csr_matrix(np.where(r > 1, 0, luminosity))
         elif cs == "s":
             luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * r) * np.sin(m * (theta + q * phi + psy * _)) for _ in
-                 range(t)])
+                [jv(m, self.j_mat[m, k - 1] * r) * np.sin(m * (theta + t * phi + psy * _)) for _ in
+                 range(tor)])
             return sparse.csr_matrix(np.where(r > 1, 0, luminosity))
 
     def parameter_list(self, m_max=5, k_max=5, tor_max=3, pol_max=8):

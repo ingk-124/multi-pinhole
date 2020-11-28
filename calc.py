@@ -63,6 +63,7 @@ class Calculation:
 
         for i, j in enumerate(j_l):
             no = n_l[i]
+            max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
             ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
             ax1.set_aspect("equal")
@@ -75,7 +76,7 @@ class Calculation:
             ax1.set_ylabel("z[mm]", fontsize=14)
             ax1.plot(y, z, 'y')
             ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
-                       extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+                       extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax1.set_title(f"No.{no}: Cross section[Poloidal]", fontsize=16)
 
             ax2.set_xlim(*xlim2)
@@ -85,7 +86,7 @@ class Calculation:
             ax2.plot(y1, x1, 'y')
             ax2.plot(y2, x2, 'y')
             ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
-                       extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+                       extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=16)
 
             im = (self.A * j).reshape(128, 128).toarray()
@@ -99,10 +100,11 @@ class Calculation:
 
         return fig
 
-    def cross_section_j(self, J=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
+    def cross_section_j(self, j=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
                         ylim2=(-250, 250)):
-        if J is None:
-            J = self.fb_mode(n)
+        if j is None:
+            j = self.fb_mode(n)
+
         c = "coolwarm"
 
         x1, y1, x2, y2, y, z = [], [], [], [], [], []
@@ -115,6 +117,7 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
         fig, [ax1, ax2, ax3] = plt.subplots(3, 1, figsize=(5, 10))
 
         ax1.set_aspect("equal")
@@ -126,8 +129,8 @@ class Calculation:
         ax1.set_xlabel("y[mm]", fontsize=14)
         ax1.set_ylabel("z[mm]", fontsize=14)
         ax1.plot(y, z, 'y')
-        ax1.imshow(J.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
-                   extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+        ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
+                   extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
         ax1.set_title(f"Cross section[Poloidal]", fontsize=16)
 
         ax2.set_xlim(*xlim2)
@@ -136,11 +139,11 @@ class Calculation:
         ax2.set_ylabel("x[mm]", fontsize=12)
         ax2.plot(y1, x1, 'y')
         ax2.plot(y2, x2, 'y')
-        ax2.imshow(J.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
-                   extent=[0, 758, -250, 250], aspect='equal', cmap=c)
+        ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
+                   extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
         ax2.set_title(f"Cross section[Toroidal]", fontsize=16)
 
-        im = (self.A * J).reshape(128, 128).toarray()
+        im = (self.A * j).reshape(128, 128).toarray()
         max_v=abs(im.max()) if abs(im.max())>abs(im.min()) else abs(im.min())
         ax3.set_title(f"Image Simulation", fontsize=16)
         ax3.set_aspect("equal")
@@ -151,9 +154,9 @@ class Calculation:
 
         return fig
 
-    def cross_xy(self, J=None, n=0, z_=166, c="coolwarm"):
-        if J is None:
-            J = self.fb_mode(n)
+    def cross_xy(self, j=None, n=0, z_=166, c="coolwarm"):
+        if j is None:
+            j = self.fb_mode(n)
 
         x1, y1, x2, y2 = [], [], [], []
         for p in np.linspace(-np.pi, np.pi, 100):
@@ -162,6 +165,7 @@ class Calculation:
             y2.append(750 * np.cos(p))
             x2.append(750 * np.sin(p))
 
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
         fig, ax = plt.subplots()
         ax.plot(y1, x1, 'y')
         ax.plot(y2, x2, 'y')
@@ -169,38 +173,40 @@ class Calculation:
         ax.set_ylim(-250, 250)
         ax.set_xlim(-10, 800)
 
-        ax.imshow(J.toarray().reshape(333, 511, 333)[:, :, z_],
-                  extent=[0, 765, -249, 249], aspect='equal', cmap=c)
+        ax.imshow(j.toarray().reshape(333, 511, 333)[:, :, z_],
+                  extent=[0, 765, -249, 249], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
-    def cross_yz(self, J=None, n=0, x_=142, c="coolwarm"):
-        if J is None:
-            J = self.fb_mode(n)
+    def cross_yz(self, j=None, n=0, x_=142, c="coolwarm"):
+        if j is None:
+            j = self.fb_mode(n)
 
         x, y = [], []
         for t in np.linspace(0, -2 * np.pi, 360):
             x.append(508 + 250 * np.cos(t))
             y.append(250 * np.sin(t))
 
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
         fig, ax = plt.subplots()
         ax.plot(x, y, 'y')
         ax.set_xlim(-10, 800)
         ax.set_ylim(-250, 250)
 
-        ax.imshow(J.toarray().reshape(333, 511, 333)[x_].T,
-                  extent=[0, 765, -249, 249], aspect='equal', cmap=c)
+        ax.imshow(j.toarray().reshape(333, 511, 333)[x_].T,
+                  extent=[0, 765, -249, 249], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
-    def cross_zx(self, J=None, n=0, y_=0, c="coolwarm"):
-        if J is None:
-            J = self.fb_mode(n)
+    def cross_zx(self, j=None, n=0, y_=0, c="coolwarm"):
+        if j is None:
+            j = self.fb_mode(n)
 
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(im.min())
         fig, ax = plt.subplots()
 
-        ax.imshow(J.toarray().reshape(333, 511, 333)[:, y_, :].T,
-                  aspect='auto', cmap=c)
+        ax.imshow(j.toarray().reshape(333, 511, 333)[:, y_, :].T,
+                  aspect='auto', cmap=c, vmin=-max_j, vmax=max_j)
 
         ax.set_aspect("equal")
 
