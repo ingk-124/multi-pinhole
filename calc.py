@@ -207,11 +207,12 @@ class Calculation:
     def mk_fb_matrix(self, save=False):
         if Path(self.fb_path/"fb_matrix.npz").exists():
             self.fb_matrix = sparse.load_npz(self.fb_path/"fb_matrix.npz")
-        load = Parallel(n_jobs=-1, verbose=10)(
-            [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
-        self.fb_matrix = sparse.hstack(load)
-        if save:
-            sparse.save_npz(self.fb_path/"fb_matrix.npz",self.fb_matrix)
+        else:
+            load = Parallel(n_jobs=-1, verbose=10)(
+                [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
+            self.fb_matrix = sparse.hstack(load)
+            if save:
+                sparse.save_npz(self.fb_path/"fb_matrix.npz",self.fb_matrix)
 
 
 def option():
