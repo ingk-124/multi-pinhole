@@ -77,7 +77,7 @@ class Calculation:
             ax1.plot(y, z, 'y')
             ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-            ax1.set_title(f"No.{no}: Cross section[Poloidal]", fontsize=16)
+            ax1.set_title(f"No.{no}: Cross section[Poloidal]", fontsize=28)
 
             ax2.set_xlim(*xlim2)
             ax2.set_ylim(*ylim2)
@@ -87,16 +87,16 @@ class Calculation:
             ax2.plot(y2, x2, 'y')
             ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-            ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=16)
+            ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=28)
 
             im = (self.A * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
-            ax3.set_title(f"No.{no}: Image Simulation", fontsize=16)
+            ax3.set_title(f"No.{no}: Image Simulation", fontsize=28)
             ax3.set_aspect("equal")
             sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
 
-        fig.suptitle("Fourier-Bessel Cross sections", fontsize=20)
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        fig.suptitle("Fourier-Bessel Cross sections", fontsize=40)
+        fig.tight_layout(rect=[0, 0, 1, 0.9])
 
         return fig
 
