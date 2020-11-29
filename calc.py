@@ -16,6 +16,7 @@ class Calculation:
             self.A = sparse.load_npz(f"./npz/{blur_mat}/blur_mat.npz") * sparse.load_npz(
                 f"./npz/{trans_mat}/trans_mat_org.npz")
             self.mode_list = np.load(self.fb_path / "mode_array.npy", allow_pickle=True).tolist()
+
         else:
             raise NotExistPath("I can't find these path...")
 
@@ -34,7 +35,9 @@ class Calculation:
     def fb_img(self, n):
         return self.A * self.fb_mode(n)
 
-    def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250)):
+    def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250),
+                       figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
+                       pol_title="Poloidal", tor_title="Toroidal", image_title="Image"):
         c = "coolwarm"
         if isinstance(n_l, int):
             n_l = [n_l]
@@ -58,7 +61,7 @@ class Calculation:
 
         I = len(n_l)
 
-        fig, axes = plt.subplots(3, I, figsize=(5 * I, 10))
+        fig, axes = plt.subplots(3, I, figsize=(figsize[0] * I, figsize[1]))
         print(axes.shape)
 
         for i, j in enumerate(j_l):
@@ -77,33 +80,40 @@ class Calculation:
             ax1.plot(y, z, 'y')
             ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-            ax1.set_title(f"No.{no}: Cross section[Poloidal]", fontsize=28)
+            ax1.set_title(f"No.{no}: {pol_title}", fontsize=title_size)
 
             ax2.set_xlim(*xlim2)
             ax2.set_ylim(*ylim2)
-            ax2.set_xlabel("y[mm]", fontsize=12)
-            ax2.set_ylabel("x[mm]", fontsize=12)
+            ax2.set_xlabel("y[mm]", fontsize=14)
+            ax2.set_ylabel("x[mm]", fontsize=14)
             ax2.plot(y1, x1, 'y')
             ax2.plot(y2, x2, 'y')
             ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-            ax2.set_title(f"No.{no}: Cross section[Toroidal]", fontsize=28)
+            ax2.set_title(f"No.{no}: {tor_title}", fontsize=title_size)
 
             im = (self.A * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
-            ax3.set_title(f"No.{no}: Image Simulation", fontsize=28)
+            ax3.set_title(f"No.{no}: {image_title}", fontsize=title_size)
             ax3.set_aspect("equal")
             sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
 
-        fig.suptitle("Fourier-Bessel Cross sections", fontsize=40)
+        fig.suptitle(f"{suptitle}", fontsize=suptitle_size)
         fig.tight_layout(rect=[0, 0, 1, 0.9])
 
         return fig
 
-    def cross_section_j(self, j=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
-                        ylim2=(-250, 250)):
-        if j is None:
-            j = self.fb_mode(n)
+    def cross_section_j(self, j_l=None, n=0, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
+                        ylim2=(-250, 250), figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
+                        pol_title="Poloidal", tor_title="Toroidal", image_title="Image"):
+        if j_l is None:
+            j_l = self.fb_mode(n)
+        elif isinstance(j_l, list):
+            pass
+        else:
+            j_l = [j_l, ]
+
+        I = len(j_l)
 
         c = "coolwarm"
 
@@ -117,40 +127,44 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
-        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
-        fig, [ax1, ax2, ax3] = plt.subplots(3, 1, figsize=(5, 10))
+        fig, axes = plt.subplots(3, I, figsize=(figsize[0]*I, figsize[1]))
 
-        ax1.set_aspect("equal")
-        ax2.set_aspect("equal")
-        ax3.set_aspect("equal")
+        for i, j in enumerate(j_l):
 
-        ax1.set_xlim(*xlim1)
-        ax1.set_ylim(*ylim1)
-        ax1.set_xlabel("y[mm]", fontsize=14)
-        ax1.set_ylabel("z[mm]", fontsize=14)
-        ax1.plot(y, z, 'y')
-        ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
-                   extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-        ax1.set_title(f"Cross section[Poloidal]", fontsize=16)
+            max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
+            ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
-        ax2.set_xlim(*xlim2)
-        ax2.set_ylim(*ylim2)
-        ax2.set_xlabel("y[mm]", fontsize=12)
-        ax2.set_ylabel("x[mm]", fontsize=12)
-        ax2.plot(y1, x1, 'y')
-        ax2.plot(y2, x2, 'y')
-        ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
-                   extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-        ax2.set_title(f"Cross section[Toroidal]", fontsize=16)
+            ax1.set_aspect("equal")
+            ax2.set_aspect("equal")
+            ax3.set_aspect("equal")
 
-        im = (self.A * j).reshape(128, 128).toarray()
-        max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
-        ax3.set_title(f"Image Simulation", fontsize=16)
-        ax3.set_aspect("equal")
-        sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
+            ax1.set_xlim(*xlim1)
+            ax1.set_ylim(*ylim1)
+            ax1.set_xlabel("y[mm]", fontsize=14)
+            ax1.set_ylabel("z[mm]", fontsize=14)
+            ax1.plot(y, z, 'y')
+            ax1.imshow(j.reshape(333, -1).tocsr()[x_].reshape(511, 333).toarray().T,
+                       extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+            ax1.set_title(f"{pol_title}", fontsize=title_size)
 
-        fig.suptitle("Fourier-Bessel Cross sections", fontsize=20)
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
+            ax2.set_xlim(*xlim2)
+            ax2.set_ylim(*ylim2)
+            ax2.set_xlabel("y[mm]", fontsize=14)
+            ax2.set_ylabel("x[mm]", fontsize=14)
+            ax2.plot(y1, x1, 'y')
+            ax2.plot(y2, x2, 'y')
+            ax2.imshow(j.reshape(-1, 333).tocsr()[:, z_].reshape(333, 511).toarray(),
+                       extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+            ax2.set_title(f"{tor_title}", fontsize=title_size)
+
+            im = (self.A * j).reshape(128, 128).toarray()
+            max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
+            ax3.set_title(f"{image_title}", fontsize=title_size)
+            ax3.set_aspect("equal")
+            sns.heatmap(im, xticklabels=False, yticklabels=False, ax=ax3, cmap="RdBu_r", vmin=-max_v, vmax=max_v)
+
+        fig.suptitle(f"{suptitle}", fontsize=suptitle_size)
+        fig.tight_layout(rect=[0, 0, 1, 0.9])
 
         return fig
 
