@@ -185,12 +185,11 @@ class OpticalSystem:
 
         if active_voxel.size:
             uv = (np.dot(self.mat_P, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
-            # r_2_list = [np.sum((active_voxel[:3].T - h) ** 2, axis=1) for h in self.hole_xyz]
 
             if self.mode == "lens":
                 luminosity = np.ones_like(uv[:, 0, :])[:, np.newaxis, :]
             else:
-                r_list = np.linalg.norm(active_voxel[:3] - self.hole_xyz[:, :, np.newaxis], axis=-2)
+                r_list = np.linalg.norm(active_voxel[:3] - self.hole_XYZ[:, :, np.newaxis], axis=-2)
                 luminosity = (active_voxel[-1] / r_list ** 2)[:, np.newaxis, :]
             return np.append(uv, luminosity, axis=1)
         else:
@@ -207,7 +206,7 @@ class OpticalSystem:
         light_vector = self.light_vector(tm=tm)
         # light_vector -> ピクセル(整数値)に変換 これがrow
         row_list = np.dot([self.sim_image_size[0], 1], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
-
+        breakpoint()
         # columnのインデックス(hole_num分)
         if tm:
             columns = np.tile(np.arange(self.plasma_data.J).astype("i4"), (self.hole_num, 1))
@@ -224,6 +223,7 @@ class OpticalSystem:
         # maskを適応(要素積)
         self.tm_org = np.sum(
             [image_mat.multiply(mask[:, None]) for image_mat, mask in zip(mat_list, self.mask_list)], axis=0)
+        breakpoint()
 
     def blur_mat(self):
         E = sparse.identity(self.I, dtype='i2', format='csr')
@@ -300,7 +300,7 @@ class OpticalSystem:
             parameter_max = [5, 5, 3, 8]
 
         self.f = f
-        self.hole_xyz = np.array([[*h[::-1], 0.0] for h in hole_list])
+
         self.hole_num = len(hole_list)
         self.hole_size = hole_size
         self.screen_size = np.asarray(screen_size)
@@ -337,17 +337,20 @@ class OpticalSystem:
         self.aperture_z = aperture_z
         self.aperture_phi = aperture_phi
 
-        self.mat_t = np.array([[0, 0, 1, 0, 0],
-                               [-1, 0, 0, 0, 0],
-                               [0, -1, 0, hole_z, 0],
+        self.mat_t = np.array([[0, 0, -1, 0, 0],  # X=-z -> u
+                               [1, 0, 0, 0, 0],  # Y=x -> v
+                               [0, -1, 0, hole_z, 0],  # Z=-y+hole_z
                                [0, 0, 0, 1, 0],
                                [0, 0, 0, 0, 1]])
 
+        self.hole_XYZ = np.array([[-h[1], h[0], 0.0] for h in hole_list])
+        c_XY = -self.hole_XYZ[:, :2] + self.offset
+        r_XY = f * self.hole_XYZ[:, :2]
         self.mat_P = np.r_["1,2,0",
                            [f, 0] * self.hole_num,
                            [0, f] * self.hole_num,
-                           (self.hole_xyz[:, :2] + self.offset).ravel(),
-                           (f * self.hole_xyz[:, :2]).ravel()]
+                           c_XY.ravel(),
+                           r_XY.ravel()]
         self.center_points = None
         self.mask_list, self.effective_area = self.mk_mask()
 

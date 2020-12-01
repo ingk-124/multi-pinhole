@@ -92,7 +92,7 @@ class Calculation:
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax2.set_title(f"No.{no}: {tor_title}", fontsize=title_size)
 
-            im = (self.A * j).reshape(128, 128).toarray().T
+            im = (self.A * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
             ax3.set_title(f"No.{no}: {image_title}", fontsize=title_size)
             ax3.set_aspect("equal")
@@ -157,7 +157,7 @@ class Calculation:
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax2.set_title(f"{tor_title}", fontsize=title_size)
 
-            im = (self.A * j).reshape(128, 128).toarray().T
+            im = (self.A * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
             ax3.set_title(f"{image_title}", fontsize=title_size)
             ax3.set_aspect("equal")
