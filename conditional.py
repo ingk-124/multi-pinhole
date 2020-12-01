@@ -36,12 +36,12 @@ if __name__ == '__main__':
     # screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
     # shape=None, xyz_range=None, start_xyz=None, parameter_max=None
 
-    arguments = {"sim_name": "Test",
+    arguments = {"sim_name": "Test_test",
                  "mode": "pinhole",
                  "auto": False,
-                 "tm": False,
+                 "tm": True,
                  "save_option": "",
-                 "hole_list": None,
+                 "hole_list": [[0.0,5.0],[2.0,-2.0]],
                  "hole_z": 948,
                  "f": 14.3,
                  "aperture_z": 58,
@@ -50,7 +50,7 @@ if __name__ == '__main__':
                  "hole_size": 0.5,
                  "image_size": (170, 170),
                  "n": 2,
-                 "shape": (10, 10, 10),
+                 "shape": (50, 50, 50),
                  "xyz_range": None,
                  "start_xyz": None,
                  "parameter_max": [2, 2, 3, 3],
@@ -62,7 +62,7 @@ if __name__ == '__main__':
         for k, v in config_dic.items():
             arguments[k] = v
 
-    arguments["save_option"] = args.save_option if args.save_option else "fb"
+    arguments["save_option"] = args.save_option if args.save_option else "oo"
 
     while True:
         pprint(arguments)

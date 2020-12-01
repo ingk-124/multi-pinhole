@@ -206,7 +206,7 @@ class OpticalSystem:
             self.mk_mask()
         light_vector = self.light_vector(tm=tm)
         # light_vector -> ピクセル(整数値)に変換 これがrow
-        row_list = np.dot([self.sim_image_size[0], 1], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
+        row_list = np.dot([1,self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
 
         # columnのインデックス(hole_num分)
         if tm:
@@ -300,7 +300,7 @@ class OpticalSystem:
             parameter_max = [5, 5, 3, 8]
 
         self.f = f
-        self.hole_xyz = np.array([[*h, 0.0] for h in hole_list])
+        self.hole_xyz = np.array([[*h[::-1], 0.0] for h in hole_list])
         self.hole_num = len(hole_list)
         self.hole_size = hole_size
         self.screen_size = np.asarray(screen_size)
