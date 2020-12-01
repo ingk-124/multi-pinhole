@@ -206,7 +206,7 @@ class OpticalSystem:
             self.mk_mask()
         light_vector = self.light_vector(tm=tm)
         # light_vector -> ピクセル(整数値)に変換 これがrow
-        row_list = np.dot([1, self.sim_image_size[0]], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
+        row_list = np.dot([self.sim_image_size[0], 1], np.floor(light_vector[:, :2, :] * self.ppmm)).astype("i4")
 
         # columnのインデックス(hole_num分)
         if tm:
@@ -348,7 +348,6 @@ class OpticalSystem:
                            [0, f] * self.hole_num,
                            (self.hole_xyz[:, :2] + self.offset).ravel(),
                            (f * self.hole_xyz[:, :2]).ravel()]
-
         self.center_points = None
         self.mask_list, self.effective_area = self.mk_mask()
 
