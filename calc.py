@@ -1,4 +1,4 @@
-from conditional import *
+from shooting import *
 import seaborn as sns
 
 
@@ -8,32 +8,39 @@ class NotExistPath(Exception):
 
 class Calculation:
 
-    def __init__(self, blur_mat=None, trans_mat=None, fb_path=None):
-        self.fb_path = Path(f"./fb_mode/{fb_path}/")
+    def __init__(self, sim_name=None):
+        self.path = Path(f"./data/{sim_name}/")
         self.mode_list = []
+        self.P = None
 
-        if Path(f"./npz/{blur_mat}").exists() and Path(f"./npz/{trans_mat}").exists() and self.fb_path.exists():
-            self.A = sparse.load_npz(f"./npz/{blur_mat}/blur_mat.npz") * sparse.load_npz(
-                f"./npz/{trans_mat}/trans_mat_org.npz")
-            self.mode_list = np.load(self.fb_path / "mode_array.npy", allow_pickle=True).tolist()
-
+        if self.path.exists():
+            if (self.path / "mat_P.npz").exists():
+                self.P = sparse.load_npz(self.path / "mat_P.npz")
+            elif (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
+                self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
+                sparse.save_npz(self.path / "mat_P.npz", self.P)
+                self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
+            else:
+                print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
+                quit()
         else:
-            raise NotExistPath("I can't find these path...")
+            raise NotExistPath("I can't find the path :(")
 
         self.mode_dict = {}
 
         self.fb_matrix = None
 
-    def fb_mode(self, n):
+    def fb_mode(self, n, add_dict=False):
         try:
             mode = self.mode_dict[n]
         except KeyError:
-            mode = sparse.load_npz(self.fb_path / f"{tuple(self.mode_list[n])}.npz").T
-            self.mode_dict[n] = mode
+            mode = sparse.load_npz(self.path / f"fb_mode/mode_No{n}.npz.npz").T
+            if add_dict:
+                self.mode_dict[n] = mode
         return mode
 
     def fb_img(self, n):
-        return self.A * self.fb_mode(n)
+        return self.P * self.fb_mode(n)
 
     def cross_sections(self, n_l, x_=166, z_=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(-250, 250),
                        figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
@@ -127,10 +134,9 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
-        fig, axes = plt.subplots(3, I, figsize=(figsize[0]*I, figsize[1]))
+        fig, axes = plt.subplots(3, I, figsize=(figsize[0] * I, figsize[1]))
 
         for i, j in enumerate(j_l):
-
             max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
             ax1, ax2, ax3 = axes[:, i] if len(axes.shape) == 2 else axes
 
@@ -226,29 +232,23 @@ class Calculation:
 
         return fig
 
-    def mk_fb_matrix(self, save=False):
-        if Path(self.fb_path / "fb_matrix.npz").exists():
-            self.fb_matrix = sparse.load_npz(self.fb_path / "fb_matrix.npz")
+    def mk_fb_matrix(self):
+        if Path(self.path / "fb_matrix.npz").exists():
+            self.fb_matrix = sparse.load_npz(self.path / "fb_matrix.npz")
         else:
-            load = Parallel(n_jobs=-1, verbose=10)(
-                [delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
-            self.fb_matrix = sparse.hstack(load)
-            if save:
-                sparse.save_npz(self.fb_path / "fb_matrix.npz", self.fb_matrix)
+            load_img = Parallel(n_jobs=-1, verbose=10)([delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
+            self.fb_matrix = sparse.hstack(load_img)
+            sparse.save_npz(self.path / "fb_matrix.npz", self.fb_matrix)
 
 
 def option():
     argparser = ArgumentParser(formatter_class=RawTextHelpFormatter)
-    argparser.add_argument('-b', '--blur', type=str,
-                           default=None, help='Blur mat directory. (default=None)')
-    argparser.add_argument('-t', '--trans', type=str,
-                           default=None, help='Trans mat directory. (default=None)')
-    argparser.add_argument('-f', '--fb', type=str,
-                           default=None, help='FB directory. (default=None)')
+    argparser.add_argument('-s', '--sim_name', type=str,
+                           default=None, help='simulation name. (default=None)')
     return argparser.parse_args()
 
 
 if __name__ == '__main__':
     opt = option()
-    cal = Calculation(blur_mat=opt.blur, trans_mat=opt.trans, fb_path=opt.fb)
-    cal.mk_fb_matrix(save=True)
+    cal = Calculation(sim_name="Test_test")
+    cal.mk_fb_matrix()
