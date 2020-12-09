@@ -49,7 +49,7 @@ if __name__ == '__main__':
 
     if not arguments["save_option"]:
         arguments["save_option"] = args.save_option if args.save_option else input("save_option:")
-    breakpoint()
+    # breakpoint()
     while True:
         pprint(arguments)
         print("Is it OK?", end="")

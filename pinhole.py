@@ -92,11 +92,11 @@ class Plasma:  # 仮想プラズマ
         """
         super().__init__()
         if x_range is None:
-            x_range = [-250, 250]
+            x_range = [-250.0, 250.0]
         if y_range is None:
-            y_range = [0, 758]
+            y_range = [0.0, 758.0]
         if z_range is None:
-            z_range = [-250, 250]
+            z_range = [-250.0, 250.0]
         if shape is None:
             shape = [10, 10, 10]
 
@@ -174,7 +174,7 @@ class Plasma:  # 仮想プラズマ
 
 class OpticalSystem:
 
-    def sim_dir(self, ):
+    def sim_dir(self):
         main_path = Path("./data/" + self.sim_name)
         if main_path.exists():
             print(main_path, "exists.")

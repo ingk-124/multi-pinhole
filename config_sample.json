@@ -1,36 +1,73 @@
 {
-    "sim_name": null,
-    "mode": "pinhole",
-    "auto": true,
-    "tm": true,
-    "hole_list": null,
+    "sim_name": "Test",
+    "auto": false,
+    "tm": false,
+    "save_option": "",
+    "h_xy": [
+        [
+            0.0,
+            0.0
+        ],
+        [
+            -2.5,
+            4.33
+        ],
+        [
+            2.5,
+            4.33
+        ],
+        [
+            5.0,
+            0.0
+        ],
+        [
+            2.5,
+            -4.33
+        ],
+        [
+            -2.5,
+            -4.33
+        ],
+        [
+            -5.0,
+            0.0
+        ]
+    ],
+    "hole_z": 948,
     "f": 14.3,
+    "aperture_depth": 58,
+    "aperture_phi": 21,
     "screen_size": [
         17.0,
         17.0
     ],
     "hole_size": 0.5,
-    "aperture_z": 58,
-    "aperture_phi": 21,
     "image_size": [
         128,
         128
     ],
+    "n": 2,
     "shape": [
-        200,
-        200,
-        400
+        50,
+        50,
+        50
     ],
-    "xyz_range": [
-        200,
-        200,
-        500
+    "x_range": [
+        -250.0,
+        250.0
     ],
-    "start_xyz": [
-        0,
-        0,
-        300
+    "y_range": [
+        0.0,
+        758.0
     ],
-    "n": 10,
-    "parameter_max": [5,10,5,10]
+    "z_range": [
+        -250.0,
+        250.0
+    ],
+    "parameters_range": [
+        1,
+        2,
+        2,
+        1
+    ]
 }
