@@ -463,11 +463,11 @@ class OpticalSystem:
             blur_pil = Image.fromarray((blur_im * 255 / blur_im.max()).astype("uint8"))
 
             if image_save:
-                sim_path = rename("./data/" + self.sim_name + "/simulate")
-                org_pil.save(sim_path / "org_image.png")
-                Image.fromarray((org_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(sim_path / "org_big.png")
-                blur_pil.save(sim_path / "blur_image.png")
-                Image.fromarray((blur_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(sim_path / "blur_big.png")
+                im_path = rename(self.path + "/simulate")
+                org_pil.save(im_path / "org_image.png")
+                Image.fromarray((org_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "org_big.png")
+                blur_pil.save(im_path / "blur_image.png")
+                Image.fromarray((blur_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "blur_big.png")
 
             if return_image:
                 return org_im.ravel(), blur_im.ravel(), org_pil, blur_pil
