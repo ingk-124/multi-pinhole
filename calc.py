@@ -245,13 +245,15 @@ class Calculation:
             self.fb_matrix = sparse.load_npz(self.path / "fb_matrix.npz")
 
         else:
-            pool_num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-            with Pool(pool_num) as p:
-                pmap = p.imap(self.fb_img, range(len(self.mode_list)))
-                self.fb_matrix = sparse.vstack(list(tqdm(pmap, total=len(self.mode_list))))
+            num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
 
-            # load_img = Parallel(n_jobs=-1, verbose=10)([delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
-            # self.fb_matrix = sparse.hstack(load_img)
+            # with Pool(pool_num) as p:
+            #     pmap = p.imap(self.fb_img, range(len(self.mode_list)))
+            #     self.fb_matrix = sparse.vstack(list(tqdm(pmap, total=len(self.mode_list))))
+
+            load_img = Parallel(n_jobs=num, verbose=10)([delayed(self.fb_img)(n) for n in range(len(self.mode_list))])
+            self.fb_matrix = sparse.hstack(load_img)
+
             sparse.save_npz(self.path / "fb_matrix.npz", self.fb_matrix)
 
 
