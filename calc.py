@@ -256,5 +256,5 @@ def option():
 
 if __name__ == '__main__':
     opt = option()
-    cal = Calculation(sim_name="Test_test")
+    cal = Calculation(sim_name=opt.sim_name)
     cal.mk_fb_matrix()
