@@ -29,12 +29,17 @@ class Calculation:
         self.mode_dict = {}
 
         self.fb_matrix = None
+        dir_list = list(self.path.glob("fb_mode*"))
+        pprint(dir_list)
+        no = input("Input fb_mode directory No.") if len(dir_list) > 1 else ""
+
+        self.fb_dir = self.path / ("fb_mode" + f"({no})") if no else self.path / "fb_mode"
 
     def fb_mode(self, n, add_dict=False):
         try:
             mode = self.mode_dict[n]
         except KeyError:
-            mode = sparse.load_npz(self.path / f"fb_mode/mode_No{n}.npz.npz").T
+            mode = sparse.load_npz(self.fb_dir / f"/mode_No{n}.npz.npz").T
             if add_dict:
                 self.mode_dict[n] = mode
         return mode
@@ -66,9 +71,9 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
-        I = len(n_l)
+        w = len(n_l)
 
-        fig, axes = plt.subplots(3, I, figsize=(figsize[0] * I, figsize[1]))
+        fig, axes = plt.subplots(3, w, figsize=(figsize[0] * w, figsize[1]))
         print(axes.shape)
 
         for i, j in enumerate(j_l):
@@ -99,7 +104,7 @@ class Calculation:
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax2.set_title(f"No.{no}: {tor_title}", fontsize=title_size)
 
-            im = (self.A * j).reshape(128, 128).toarray()
+            im = (self.P * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
             ax3.set_title(f"No.{no}: {image_title}", fontsize=title_size)
             ax3.set_aspect("equal")
@@ -120,7 +125,7 @@ class Calculation:
         else:
             j_l = [j_l, ]
 
-        I = len(j_l)
+        w = len(j_l)
 
         c = "coolwarm"
 
@@ -134,7 +139,7 @@ class Calculation:
             y2.append(750 * np.cos(phi))
             x2.append(750 * np.sin(phi))
 
-        fig, axes = plt.subplots(3, I, figsize=(figsize[0] * I, figsize[1]))
+        fig, axes = plt.subplots(3, w, figsize=(figsize[0] * w, figsize[1]))
 
         for i, j in enumerate(j_l):
             max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
@@ -163,7 +168,7 @@ class Calculation:
                        extent=[0, 758, -250, 250], aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
             ax2.set_title(f"{tor_title}", fontsize=title_size)
 
-            im = (self.A * j).reshape(128, 128).toarray()
+            im = (self.P * j).reshape(128, 128).toarray()
             max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
             ax3.set_title(f"{image_title}", fontsize=title_size)
             ax3.set_aspect("equal")
