@@ -11,30 +11,30 @@ class Calculation:
 
     def __init__(self, sim_name=None):
         self.path = Path(f"./data/{sim_name}/")
+        if not self.path.exists():
+            raise NotExistPath("I can't find the path :(")
+
         self.mode_list = []
         self.P = None
 
-        if self.path.exists():
-            if (self.path / "mat_P.npz").exists():
-                self.P = sparse.load_npz(self.path / "mat_P.npz")
-            elif (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
-                self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
-                sparse.save_npz(self.path / "mat_P.npz", self.P)
-                self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
-            else:
-                print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
-                quit()
+        dir_list = list(self.path.glob("fb_mode*"))
+        pprint(dir_list)
+        no = input("Input fb_mode directory No.") if len(dir_list) > 1 else ""
+        self.fb_dir = self.path / ("fb_mode" + f"({no})") if no else self.path / "fb_mode"
+
+        if (self.path / "mat_P.npz").exists():
+            self.P = sparse.load_npz(self.path / "mat_P.npz")
+        elif (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
+            self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
+            sparse.save_npz(self.path / "mat_P.npz", self.P)
+            self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
         else:
-            raise NotExistPath("I can't find the path :(")
+            print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
+            quit()
 
         self.mode_dict = {}
 
         self.fb_matrix = None
-        dir_list = list(self.path.glob("fb_mode*"))
-        pprint(dir_list)
-        no = input("Input fb_mode directory No.") if len(dir_list) > 1 else ""
-
-        self.fb_dir = self.path / ("fb_mode" + f"({no})") if no else self.path / "fb_mode"
 
     def fb_mode(self, n, add_dict=False):
         try:
