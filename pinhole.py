@@ -234,16 +234,18 @@ class OpticalSystem:
     def light_vector(self, tm=False):
         if tm:
             voxel = np.r_["0,2,1", self.plasma_data.voxel[:-1], np.where(self.plasma_data.r <= 1, 1, 0)]
-            active_voxel = self.mat_Rt.dot(voxel[:, voxel[-1, :] != 0])
+            active_flag = voxel[-1, :] != 0
+            active_voxel = self.mat_Rt.dot(voxel[:, active_flag])
         else:
-            active_voxel = self.mat_Rt.dot(self.plasma_data.voxel[:, self.plasma_data.voxel[-1, :] != 0])
+            active_flag = self.plasma_data.voxel[-1, :] != 0
+            active_voxel = self.mat_Rt.dot(self.plasma_data.voxel[:, active_flag])
 
         if active_voxel.size:
             uv = (np.dot(self.mat_A, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
             r2_list = np.sum((active_voxel[None, :2] - self.h_xy[..., None]) ** 2, axis=1) + active_voxel[2] ** 2
             luminosity = (active_voxel[-1] / r2_list).reshape(self.hole_num, 1, -1)
             # breakpoint()
-            return np.append(uv, luminosity, axis=1)
+            return np.append(uv, luminosity, axis=1), active_flag
         else:
             print('There is no light points!')
 
@@ -252,15 +254,18 @@ class OpticalSystem:
         return image_vec
 
     def trans_mat_org(self, tm=True):
-        light_vector = self.light_vector(tm=tm)
+        lv, active_flag = self.light_vector(tm=tm)
+        lv[:, -1] = np.where(np.all(lv[:, :2] <= opti.sim_image_size[None, :, None], axis=-2) &
+                             np.all(lv[:, :2] >= 0, axis=-2), lv[:, -1], 0)
+
         # light_vector -> ピクセル(整数値)に変換 これがrow
-        row_list = np.dot([1, self.sim_image_size[1]], np.floor(light_vector[:, :2, :])).astype("i4")
+        row_list = np.dot([1, self.sim_image_size[1]], np.floor(lv[:, :2, :])).astype("i4")
 
         # columnのインデックス(hole_num分)
-        columns = np.tile(np.arange(row_list.shape[-1]).astype("i4"), (self.hole_num, 1))
+        columns = np.tile(np.arange(self.plasma_data.J)[active_flag].astype("i4"), (self.hole_num, 1))
         # holeごとに luminosity/row/column の順にまとめる
         index_list = [index[:, (index[1] >= 0) & (index[1] < self.image_vec_size)] for index in
-                      np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
+                      np.stack([lv[:, -1, :], row_list, columns], axis=1)]
 
         # trans_mat_orgのshape
         shape = (self.image_vec_size, self.plasma_data.J)
@@ -305,8 +310,8 @@ class OpticalSystem:
             f.write(f"{header}\n{'-' * len(header)}\n")
             for i, para in enumerate(self.plasma_data.parameters):
                 m, k, (tor, pol), tri = para
-                text = f"{str(i).center(n)}|{str(m).center(5)}{str(k).center(5)}{f'{pol}/{tor} '.rjust(7)}{tri.center(5)}|"
-                f.write(text)
+                t = f"{str(i).center(n)}|{str(m).center(5)}{str(k).center(5)}{f'{pol}/{tor} '.rjust(7)}{tri.center(5)}|"
+                f.write(t)
                 if (i + 1) % 4 == 0:
                     f.write("\n")
 
@@ -463,7 +468,7 @@ class OpticalSystem:
             blur_pil = Image.fromarray((blur_im * 255 / blur_im.max()).astype("uint8"))
 
             if image_save:
-                im_path = rename(self.path + "/simulate")
+                im_path = rename(self.path / "simulate")
                 org_pil.save(im_path / "org_image.png")
                 Image.fromarray((org_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "org_big.png")
                 blur_pil.save(im_path / "blur_image.png")
