@@ -240,7 +240,7 @@ class OpticalSystem:
 
         if active_voxel.size:
             uv = (np.dot(self.mat_A, active_voxel[:4]) / active_voxel[2]).reshape(self.hole_num, 2, -1)
-            r2_list = np.sum((active_voxel[None, :2] - self.h_xy[..., None]) ** 2, axis=1) + active_voxel[3] ** 2
+            r2_list = np.sum((active_voxel[None, :2] - self.h_xy[..., None]) ** 2, axis=1) + active_voxel[2] ** 2
             luminosity = (active_voxel[-1] / r2_list).reshape(self.hole_num, 1, -1)
             # breakpoint()
             return np.append(uv, luminosity, axis=1)
@@ -259,11 +259,11 @@ class OpticalSystem:
         # columnのインデックス(hole_num分)
         columns = np.tile(np.arange(row_list.shape[-1]).astype("i4"), (self.hole_num, 1))
         # holeごとに luminosity/row/column の順にまとめる
-        index_list = [index[:, (index[1] >= 0) & (index[1] < self.I)] for index in
+        index_list = [index[:, (index[1] >= 0) & (index[1] < self.image_vec_size)] for index in
                       np.stack([light_vector[:, -1, :], row_list, columns], axis=1)]
 
         # trans_mat_orgのshape
-        shape = (self.I, self.plasma_data.J)
+        shape = (self.image_vec_size, self.plasma_data.J)
         # holeごとに処理
         mat_list = [sparse.csc_matrix((data, (row, col)), shape=shape) for data, row, col in index_list]
         # maskを適応(要素積)
@@ -271,18 +271,18 @@ class OpticalSystem:
         # breakpoint()
 
     def blur_mat(self):
-        E = sparse.identity(self.I, dtype='i2', format='csr')
+        E = sparse.identity(self.image_vec_size, dtype='i2', format='csr')
         E.data = self.effective_area.astype(float)
         print(multi.cpu_count())
         # breakpoint()
         with Pool(multi.cpu_count()) as p:
-            pmap = p.imap(self.pinhole_blur, range(self.I))
-            M = sparse.vstack(list(tqdm(pmap, total=self.I))).T
+            pmap = p.imap(self.pinhole_blur, range(self.image_vec_size))
+            M = sparse.vstack(list(tqdm(pmap, total=self.image_vec_size))).T
 
         return self.image_trans_mat * M
 
     def pinhole_blur(self, i):
-        m = np.zeros(self.I)
+        m = np.zeros(self.image_vec_size)
         m[i] = 1.0
         result = ndimage.convolve(m.reshape(self.sim_image_size), self.kernel, mode='constant', cval=0).ravel()
         return sparse.coo_matrix(result)
@@ -393,7 +393,7 @@ class OpticalSystem:
         self.return_image_size = image_size
         self.image_trans_mat = trans_mat2d(*image_size, n)
         self.k_uv = self.sim_image_size / screen_size
-        self.I = int(np.prod(self.sim_image_size))
+        self.image_vec_size = int(np.prod(self.sim_image_size))
 
         # FB
         self.parameters_range = parameters_range
@@ -488,20 +488,22 @@ class OpticalSystem:
 
 
 if __name__ == '__main__':
-    dic = {"sim_name": "Test", "mode": "pinhole", "image_size": (128, 128), "shape": (40, 40, 40),
+    dic = {"sim_name": "Test", "image_size": (128, 128), "shape": (333, 511, 333),
            "auto": False, "n": 10, "aperture_phi": 21, "f": 14.3, "parameters_range": [1, 2, 2, 1],
            # "h_xy": [[0, 0], ],
-           "save_option": "fb"}
+           # "save_option": "fb"
+           }
     time_set = time.time()
-    os = OpticalSystem(**dic)
+    opti = OpticalSystem(**dic)
     j = np.zeros(dic["shape"])
     # j = np.ones(dic["shape"])
     # lena = np.asarray(Image.open("lena.jpg").convert("L").resize((dic["shape"][0], dic["shape"][2]))).astype(float)
     # j[:, 0, :] = lena
-    j[::3, 10, ::10] = 1
-
+    # j[::3, 10, ::10] = 1
+    j[80:120, 200:250, :] = 1
     # fig, ax = plt.subplots(1, 1, figsize=(5, 5))
     # ax.imshow(j[:, 10, :].T[::-1, ::-1])
     # plt.show()
 
-    os.plasma_data.voxel[-1] = j.ravel()
+    opti.plasma_data.voxel[-1] = j.ravel()
+    opti.simulate(fast_mode=False, image_save=False, return_image=False, show=True)
