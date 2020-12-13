@@ -445,7 +445,7 @@ class OpticalSystem:
         if tm and save_option:
             self.save_transmission_matrix()
 
-    def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False):
+    def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False, c="coolwram"):
         org_sim_im = self.mk_image_vec().reshape(self.sim_image_size)
 
         # 畳み込み
@@ -457,9 +457,9 @@ class OpticalSystem:
         blur_im = self.image_trans_mat.dot(blur_sim_im.ravel().T).reshape(self.return_image_size)
 
         if show:
-            plt.imshow(blur_sim_im)
+            plt.imshow(blur_sim_im, cmap=c)
             plt.show()
-            plt.imshow(blur_im)
+            plt.imshow(blur_im, cmap=c)
             plt.show()
         if fast_mode:
             return blur_im.ravel()
