@@ -77,8 +77,8 @@ class Calculation:
         for phi in np.linspace(-np.pi / 2, np.pi / 2, 100):
             y1.append(258 * np.cos(phi))
             x1.append(258 * np.sin(phi))
-            y2.append(750 * np.cos(phi))
-            x2.append(750 * np.sin(phi))
+            y2.append(758 * np.cos(phi))
+            x2.append(758 * np.sin(phi))
 
         w = len(n_l)
 
@@ -126,7 +126,7 @@ class Calculation:
 
         return fig
 
-    def cross_section_j(self, d_l=None, n=0, x=166, z=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
+    def cross_section_d(self, d_l=None, n=0, x=166, z=166, xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758),
                         ylim2=(-250, 250), figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
                         pol_title="Poloidal", tor_title="Toroidal", image_title="Image"):
         if d_l is None:
@@ -147,8 +147,8 @@ class Calculation:
         for phi in np.linspace(-np.pi / 2, np.pi / 2, 100):
             y1.append(258 * np.cos(phi))
             x1.append(258 * np.sin(phi))
-            y2.append(750 * np.cos(phi))
-            x2.append(750 * np.sin(phi))
+            y2.append(758 * np.cos(phi))
+            x2.append(758 * np.sin(phi))
 
         fig, axes = plt.subplots(3, w, figsize=(figsize[0] * w, figsize[1]))
 
@@ -200,8 +200,8 @@ class Calculation:
         for p in np.linspace(-np.pi, np.pi, 100):
             y1.append(258 * np.cos(p))
             x1.append(258 * np.sin(p))
-            y2.append(750 * np.cos(p))
-            x2.append(750 * np.sin(p))
+            y2.append(758 * np.cos(p))
+            x2.append(758 * np.sin(p))
 
         max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
         fig, ax = plt.subplots()
