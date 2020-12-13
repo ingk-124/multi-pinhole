@@ -255,7 +255,7 @@ class OpticalSystem:
 
     def trans_mat_org(self, tm=True):
         lv, active_flag = self.light_vector(tm=tm)
-        lv[:, -1] = np.where(np.all(lv[:, :2] <= opti.sim_image_size[None, :, None], axis=-2) &
+        lv[:, -1] = np.where(np.all(lv[:, :2] <= self.sim_image_size[None, :, None], axis=-2) &
                              np.all(lv[:, :2] >= 0, axis=-2), lv[:, -1], 0)
 
         # light_vector -> ピクセル(整数値)に変換 これがrow
