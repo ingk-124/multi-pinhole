@@ -127,7 +127,7 @@ class Calculation:
         return fig
 
     def cross_section_d(self, d_l=None, n=0, x=166, z=166, xlim1=(0, 758), ylim1=(250, -250), xlim2=(0, 758),
-                        ylim2=(-250, 250), figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
+                        ylim2=(250, -250), figsize=(5, 10), suptitle_size=40, title_size=25, suptitle="Cross sections",
                         pol_title="Poloidal", tor_title="Toroidal", image_title="Image"):
         if d_l is None:
             d_l = self.fb_mode(n)
