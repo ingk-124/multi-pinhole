@@ -237,7 +237,7 @@ class Calculation:
             load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.small_j)(n) for n in range(self.M)])
             self.F_mat = sparse.hstack(load_f)
 
-            sparse.save_npz(self.path / "F_mat.npz", self.fb_matrix)
+            sparse.save_npz(self.path / "F_mat.npz", self.F_mat)
             print("F_mat.npz: saved!")
 
     def mk_A(self):
