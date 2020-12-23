@@ -24,19 +24,9 @@ class Calculation:
         dir_list = list(self.path.glob("fb_mode*"))
         print(*dir_list, sep="\n")
         no = input("Input fb_mode directory No.") if len(dir_list) > 1 else ""
-        self.fb_dir = self.path / ("fb_mode" + f"({no})") if no else self.path / "fb_mode"
 
-        if (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
-            if (self.path / "mat_P.npz").exists():
-                self.P = sparse.load_npz(self.path / "mat_P.npz")
-            else:
-                self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
-                sparse.save_npz(self.path / "mat_P.npz", self.P)
-            self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
-        else:
-            print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
-            quit()
-        print("mat_P is OK.")
+        self.fb_dir = self.path / ("fb_mode" + f"({no})") if no else self.path / "fb_mode"
+        self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
         self.mode_dict = {}
 
         self.fb_matrix = None
@@ -214,6 +204,19 @@ class Calculation:
         ax.set_aspect("equal")
 
         return fig
+
+    def mk_P_matrix(self):
+        if (self.path / "mat_P.npz").exists():
+            self.P = sparse.load_npz(self.path / "mat_P.npz")
+            print("mat_P is OK.")
+        else:
+            if (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
+                self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
+                sparse.save_npz(self.path / "mat_P.npz", self.P)
+                print("mat_P.npz: saved!")
+            else:
+                print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
+                quit()
 
     def mk_fb_matrix(self):
 
