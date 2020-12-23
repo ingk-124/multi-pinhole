@@ -313,10 +313,12 @@ if __name__ == '__main__':
     dir_name = opt.sim_name if opt.sim_name else "Test_test"
     cl = Calculation(sim_name=dir_name)
     while True:
-        case = input("fb_matrix(fb)/F_matrix(F)/Quit(q): ")
+        case = input("fb_matrix(fb)/F_matrix(F)/G_matrix(G)/Quit(q): ")
         if case == "q":
             quit()
         elif case == "fb":
             cl.mk_fb_matrix()
         elif case == "F":
             cl.mk_F_matrix()
+        elif case == "G":
+            cl.mk_G()
