@@ -252,54 +252,6 @@ class Calculation:
         self.w = LA.norm(self.A_0, axis=0) / np.sqrt(self.A_0.shape[0])
         self.A = self.A_0 / self.w
 
-    def div_x(self, n):
-        return self.L_x * self.fb_mode(n)
-
-    def div_y(self, n):
-        return self.L_y * self.fb_mode(n)
-
-    def div_z(self, n):
-        return self.L_z * self.fb_mode(n)
-
-    def mk_G_x(self, num):
-        if Path(self.path / "G_x.npz").exists():
-            self.G_x = sparse.load_npz(self.path / "G_x.npz")
-            print("G_x is OK.")
-        else:
-            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
-            self.G_x = sparse.hstack(load)
-            sparse.save_npz(self.path / "G_x.npz", self.G_x)
-            print("G_x.npz: saved!")
-
-    def mk_G_y(self, num):
-        if Path(self.path / "G_y.npz").exists():
-            self.G_y = sparse.load_npz(self.path / "G_y.npz")
-            print("G_y is OK.")
-        else:
-            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
-            self.G_y = sparse.hstack(load)
-            sparse.save_npz(self.path / "G_y.npz", self.G_y)
-            print("G_y.npz: saved!")
-
-    def mk_G_z(self, num):
-        if Path(self.path / "G_z.npz").exists():
-            self.G_z = sparse.load_npz(self.path / "G_z.npz")
-            print("G_z is OK.")
-        else:
-            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
-            self.G_z = sparse.hstack(load)
-            sparse.save_npz(self.path / "G_z.npz", self.G_z)
-            print("G_z.npz: saved!")
-
-    def mk_G(self):
-        num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-        print("G_x")
-        self.mk_G_x(num=num)
-        print("G_y")
-        self.mk_G_y(num=num)
-        print("G_z")
-        self.mk_G_z(num=num)
-
 
 def option():
     # noinspection PyTypeChecker
@@ -321,5 +273,3 @@ if __name__ == '__main__':
             cl.mk_fb_matrix()
         elif case == "F":
             cl.mk_F_matrix()
-        elif case == "G":
-            cl.mk_G()
