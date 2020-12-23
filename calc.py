@@ -48,6 +48,7 @@ class Calculation:
         self.A_0 = None
         self.w = None
         self.A = None
+
         self.shape = (333, 511, 333)
         self.N = np.prod(self.shape)
         self.M = len(self.mode_list)
@@ -65,6 +66,10 @@ class Calculation:
         one[..., [0, -1]] = 0
 
         self.R = sparse.diags(one.ravel())
+        self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
+                                         shape=(self.N, self.N))
+        self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(self.N, self.N))
+        self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(self.N, self.N))
 
     def fb_mode(self, n, load_only=True, add_dict=False):
         if load_only:
@@ -248,17 +253,13 @@ class Calculation:
         self.A = self.A_0 / self.w
 
     def div_x(self, n):
-        L_x = sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
-                           shape=(self.N, self.N))
-        return self.R * L_x * self.fb_mode(n)
+        return self.L_x * self.fb_mode(n)
 
     def div_y(self, n):
-        L_y = sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(self.N, self.N))
-        return self.R * L_y * self.fb_mode(n)
+        return self.L_y * self.fb_mode(n)
 
     def div_z(self, n):
-        L_z = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(self.N, self.N))
-        return self.R * L_z * self.fb_mode(n)
+        return self.L_z * self.fb_mode(n)
 
     def mk_G_x(self, num):
         if Path(self.path / "G_x.npz").exists():
