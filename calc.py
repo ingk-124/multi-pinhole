@@ -46,8 +46,8 @@ class Calculation:
         self.x_lim = [-250, 250]
         self.y_lim = [-10, 800]
         self.z_lim = [-250, 250]
-
-        one = np.ones(self.shape)
+        self.small_shape = (67, 103, 67)
+        one = np.ones(self.small_shape)
         one[[0, -1], ...] = 0
         one[:, [0, -1], :] = 0
         one[..., [0, -1]] = 0
@@ -240,10 +240,11 @@ class Calculation:
             print("F_mat.npz: saved!")
 
     def mk_L_matrix(self):
+        d = np.prod(self.small_shape)
         self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
-                                         shape=(self.N, self.N))
-        self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(self.N, self.N))
-        self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(self.N, self.N))
+                                         shape=(d, d))
+        self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(d, d))
+        self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(d, d))
 
     def mk_A(self):
         self.mk_fb_matrix()
