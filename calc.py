@@ -53,10 +53,9 @@ class Calculation:
         one[..., [0, -1]] = 0
 
         self.R = sparse.diags(one.ravel())
-        self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
-                                         shape=(self.N, self.N))
-        self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(self.N, self.N))
-        self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(self.N, self.N))
+        self.L_x = None
+        self.L_y = None
+        self.L_z = None
 
     def fb_mode(self, n, load_only=True, add_dict=False):
         if load_only:
@@ -219,16 +218,13 @@ class Calculation:
                 quit()
 
     def mk_fb_matrix(self):
-
         if Path(self.path / "fb_matrix.npz").exists():
             self.fb_matrix = sparse.load_npz(self.path / "fb_matrix.npz")
             print("fb_matrix is OK.")
         else:
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-
             load_img = Parallel(n_jobs=num, verbose=10)([delayed(self.fb_img)(n) for n in range(self.M)])
             self.fb_matrix = sparse.hstack(load_img)
-
             sparse.save_npz(self.path / "fb_matrix.npz", self.fb_matrix)
             print("fb_matrix.npz: saved!")
 
@@ -238,12 +234,16 @@ class Calculation:
             print("F_mat is OK.")
         else:
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-
             load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.small_j)(n) for n in range(self.M)])
             self.F_mat = sparse.hstack(load_f)
-
             sparse.save_npz(self.path / "F_mat.npz", self.F_mat)
             print("F_mat.npz: saved!")
+
+    def mk_L_matrix(self):
+        self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
+                                         shape=(self.N, self.N))
+        self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(self.N, self.N))
+        self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(self.N, self.N))
 
     def mk_A(self):
         self.mk_fb_matrix()
