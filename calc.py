@@ -41,9 +41,6 @@ class Calculation:
 
         self.fb_matrix = None
         self.F_mat = None
-        self.G_x = None
-        self.G_y = None
-        self.G_z = None
         self.effective = None
         self.A_0 = None
         self.w = None
