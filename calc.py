@@ -266,7 +266,7 @@ class Calculation:
             self.G_x = sparse.load_npz(self.path / "G_x.npz")
             print("G_x is OK.")
         else:
-            load = Parallel(n_jobs=num, verbose=10)([delayed(self.div_x)(n) for n in range(self.M)])
+            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
             self.G_x = sparse.hstack(load)
             sparse.save_npz(self.path / "G_x.npz", self.G_x)
             print("G_x.npz: saved!")
@@ -276,7 +276,7 @@ class Calculation:
             self.G_y = sparse.load_npz(self.path / "G_y.npz")
             print("G_y is OK.")
         else:
-            load = Parallel(n_jobs=num, verbose=10)([delayed(self.div_x)(n) for n in range(self.M)])
+            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
             self.G_y = sparse.hstack(load)
             sparse.save_npz(self.path / "G_y.npz", self.G_y)
             print("G_y.npz: saved!")
@@ -286,7 +286,7 @@ class Calculation:
             self.G_z = sparse.load_npz(self.path / "G_z.npz")
             print("G_z is OK.")
         else:
-            load = Parallel(n_jobs=num, verbose=10)([delayed(self.div_x)(n) for n in range(self.M)])
+            load = Parallel(n_jobs=num, verbose=10, prefer='threads')([delayed(self.div_x)(n) for n in range(self.M)])
             self.G_z = sparse.hstack(load)
             sparse.save_npz(self.path / "G_z.npz", self.G_z)
             print("G_z.npz: saved!")
