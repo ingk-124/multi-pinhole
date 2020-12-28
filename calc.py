@@ -78,7 +78,7 @@ class Calculation:
     def cross_sections(self, d_l, x=None, z=None, figsize=(5, 10), space=0.05,
                        xlim1=None, ylim1=None, xlim2=None, ylim2=None, show_im=True):
         x = self.shape[0] // 2 + 1 if x is None else x
-        z = self.shape[1] // 2 + 1 if z is None else z
+        z = self.shape[2] // 2 + 1 if z is None else z
 
         if xlim1 is None:
             xlim1 = self.y_lim
