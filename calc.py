@@ -36,6 +36,7 @@ class Calculation:
         self.fb_matrix = None
         self.F_mat = None
         self.effective = None
+        self.view_area = None
         self.A_0 = None
         self.w = None
         self.A = None
@@ -115,8 +116,6 @@ class Calculation:
                 gs_n = gs[row, col].subgridspec(n, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
                 ax1 = fig.add_subplot(gs_n[0, :], xlim=xlim1, ylim=ylim1, aspect="equal")
                 ax2 = fig.add_subplot(gs_n[1, :], xlim=xlim2, ylim=ylim2, aspect="equal")
-                ax3 = fig.add_subplot(gs_n[2, 0])
-                cbar_ax = fig.add_subplot(gs_n[2, 1])
 
                 max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
 
@@ -136,6 +135,9 @@ class Calculation:
                            extent=extent2, cmap=c, vmin=-max_j, vmax=max_j)
 
                 if show_im:
+                    ax3 = fig.add_subplot(gs_n[2, 0])
+                    cbar_ax = fig.add_subplot(gs_n[2, 1])
+
                     im = (self.P * d).reshape(*self.image_size).toarray()
                     max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
                     sns.heatmap(im, xticklabels=False, yticklabels=False, square=True,
@@ -218,6 +220,7 @@ class Calculation:
             else:
                 print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
                 quit()
+        self.view_area = np.any(self.P.astype(bool), axis=0)
 
     def mk_fb_matrix(self):
         if Path(self.path / "fb_matrix.npz").exists():
@@ -274,21 +277,27 @@ def option():
     return argparser.parse_args()
 
 
+def load_file(file):
+    arg_dic = dict(sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None)
+    with open(file) as f:
+        config_dic = json.load(f)
+    for k in arg_dic.keys():
+        arg_dic[k] = config_dic.get(k)
+    return arg_dic
+
+
 if __name__ == '__main__':
     opt = option()
-    arguments = dict(sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None)
-
+    arguments = dict(sim_name=None)
     if opt.file:
-        with open(opt.file) as f:
-            config_dic = json.load(f)
-        for k in arguments.keys():
-            arguments[k] = config_dic.get(k)
+        arguments = load_file(opt.file)
 
     arguments["sim_name"] = arguments["sim_name"] if opt.sim_name is None else opt.sim_name
 
     cl = Calculation(**arguments)
+
     while True:
-        case = input("fb_matrix(fb)/F_matrix(F)/G_matrix(G)/Quit(q): ")
+        case = input("fb_matrix(fb)/F_matrix(F)/Quit(q): ")
         if case == "q":
             quit()
         elif case == "fb":
