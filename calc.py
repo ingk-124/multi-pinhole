@@ -227,6 +227,7 @@ class Calculation:
             self.fb_matrix = sparse.load_npz(self.path / "fb_matrix.npz")
             print("fb_matrix is OK.")
         else:
+            self.mk_P_matrix()
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
             load_img = Parallel(n_jobs=num, verbose=10)([delayed(self.fb_img)(n) for n in range(self.M)])
             self.fb_matrix = sparse.hstack(load_img)
