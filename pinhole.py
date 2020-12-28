@@ -143,23 +143,23 @@ class Plasma:  # 仮想プラズマ
         iota = pol / tor
         psy = 2 * np.pi * iota
 
-        if cs == "cos":
-            luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * self.r) * np.cos(m * (self.theta + iota * self.phi + psy * _)) for _ in
-                 range(tor)])
+        if cs == 0:
+            luminosity = jv(m, self.j_mat[m, k - 1] * self.r) * np.cos(m * (self.theta + iota * self.phi))
             return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
-        elif cs == "sin":
-            luminosity = sum(
-                [jv(m, self.j_mat[m, k - 1] * self.r) * np.sin(m * (self.theta + iota * self.phi + psy * _)) for _ in
-                 range(tor)])
+        elif cs == 1:
+            luminosity = jv(m, self.j_mat[m, k - 1] * self.r) * np.sin(m * (self.theta + iota * self.phi))
             return sparse.csr_matrix(np.where(self.r > 1, 0, luminosity))
         else:
-            raise MyError("argument cs is must be 'cos' or 'sin'.")
+            raise MyError("argument cs is must be 0(cos) or 1(sin).")
 
     def parameter_list(self, m=5, k=5, tor=3, pol=8):
-        iota = [_ for _ in itertools.product(range(1, tor + 1), range(-pol, pol + 1)) if np.gcd(*_) == 1]
-        self.parameters = list(itertools.product([0], range(1, k + 1), [(1, 0)], ["cos"])) + list(
-            itertools.product(range(1, m + 1), range(1, k + 1), iota, ["cos", "sin"]))
+        mt = [_ for _ in itertools.product(range(1, m + 1), range(1, tor + 1)) if not (_[0] % _[1])]
+
+        self.parameters = list(itertools.product([0], range(1, k + 1), [1], [0], [0])) + \
+                          [(m_, k_, t_, p_, cs_) for m_, k_, t_, p_, cs_ in
+                           itertools.product(range(1, m + 1), range(1, k + 1), range(1, tor + 1),
+                                             range(-1 * pol, pol + 1), [0, 1])
+                           if (not (m_ % t_) and np.gcd(p_, t_) == 1)]
         self.j_mat = j_mk(m + 1, k + 1)
 
     def mode_matrix(self):
