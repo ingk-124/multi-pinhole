@@ -139,7 +139,7 @@ class Plasma:  # 仮想プラズマ
         return r, theta, phi
 
     def fb(self, para):
-        m, k, (tor, pol), cs = para
+        m, k, tor, pol, cs = para
         iota = pol / tor
         psy = 2 * np.pi * iota
 
