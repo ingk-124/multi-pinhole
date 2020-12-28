@@ -12,14 +12,18 @@ class NotExistPath(Exception):
 
 class Calculation:
 
-    def __init__(self, sim_name=None):
+    def __init__(self, sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None):
         self.path = Path(f"./data/{sim_name}/")
         if not self.path.exists():
             raise NotExistPath("I can't find the path :(")
 
         self.mode_list = []
         self.P = None
-        self.shape = (333, 511, 333)
+        self.shape = (333, 511, 333) if shape is None else shape
+        self.x_range = np.array([-249, 249] if x_range is None else x_range)
+        self.y_range = np.array([0, 765] if y_range is None else y_range)
+        self.z_range = np.array([-249, 249] if z_range is None else z_range)
+        self.image_size = (128, 128) if image_size is None else image_size
 
         dir_list = list(self.path.glob("fb_mode*"))
         print(*dir_list, sep="\n")
@@ -36,26 +40,19 @@ class Calculation:
         self.w = None
         self.A = None
 
-        self.shape = (333, 511, 333)
-        self.N = np.prod(self.shape)
+        self.J = np.prod(self.shape)
         self.M = len(self.mode_list)
-        self.x_range = [-249, 249]
-        self.y_range = [0, 768]
-        self.z_range = [-249, 249]
 
-        self.x_lim = [-250, 250]
-        self.y_lim = [-10, 800]
-        self.z_lim = [-250, 250]
-        self.small_shape = (67, 103, 67)
-        one = np.ones(self.small_shape)
-        one[[0, -1], ...] = 0
-        one[:, [0, -1], :] = 0
-        one[..., [0, -1]] = 0
+        self.x_lim, self.y_lim, self.z_lim = [(a - a.sum() / 2) * 1.02 + a.sum() / 2 for a in
+                                              [self.x_range, self.y_range, self.z_range]]
 
-        self.R = sparse.diags(one.ravel())
+        self.small_shape = [d // 5 + 1 for d in self.shape]
+
+        self.R = None
         self.L_x = None
         self.L_y = None
         self.L_z = None
+        self.im_mat = None
 
     def fb_mode(self, n, load_only=True, add_dict=False):
         if load_only:
@@ -70,14 +67,27 @@ class Calculation:
                     self.mode_dict[n] = mode
             return mode
 
-    def small_j(self, n, r=5):
-        return sparse.csr_matrix(self.fb_mode(n).toarray().reshape(*self.shape)[::r, ::r, ::r].ravel()).T
+    def small_j(self, n, r=5, add_dict=False):
+        return sparse.csr_matrix(
+            self.fb_mode(n, add_dict).toarray().reshape(*self.shape)[r // 2::r, r // 2::r, r // 2::r].ravel()).T
 
-    def fb_img(self, n):
-        return self.P * self.fb_mode(n)
+    def fb_img(self, n, add_dict=True):
+        return self.P * self.fb_mode(n, add_dict)
 
-    def cross_sections(self, d_l, x=166, z=166, figsize=(5, 10), space=0.05,
-                       xlim1=(0, 758), ylim1=(-250, 250), xlim2=(0, 758), ylim2=(250, -250)):
+    def cross_sections(self, d_l, x=None, z=None, figsize=(5, 10), space=0.05,
+                       xlim1=None, ylim1=None, xlim2=None, ylim2=None, show_im=True):
+        x = self.shape[0] // 2 + 1 if x is None else x
+        z = self.shape[1] // 2 + 1 if z is None else z
+
+        if xlim1 is None:
+            xlim1 = self.y_lim
+        if ylim1 is None:
+            ylim1 = self.z_lim
+        if xlim2 is None:
+            xlim2 = self.y_lim
+        if ylim2 is None:
+            ylim2 = self.x_lim[::-1]
+
         c = "coolwarm"
         d_l = np.array(d_l, ndmin=2)
 
@@ -97,53 +107,50 @@ class Calculation:
         gs = fig.add_gridspec(rows, cols, wspace=0.3, hspace=space)
 
         widths = [9, 1]
-        heights = [1, 1, 1]
+        heights = [1, 1, 1] if show_im else [1, 1]
+        n = 3 if show_im else 2
         for row in range(rows):
             for col in range(cols):
                 d = d_l[row, col]
-                gs_n = gs[row, col].subgridspec(3, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
-                ax1 = fig.add_subplot(gs_n[0, :])
-                ax2 = fig.add_subplot(gs_n[1, :])
+                gs_n = gs[row, col].subgridspec(n, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
+                ax1 = fig.add_subplot(gs_n[0, :], xlim=xlim1, ylim=ylim1, aspect="equal")
+                ax2 = fig.add_subplot(gs_n[1, :], xlim=xlim2, ylim=ylim2, aspect="equal")
                 ax3 = fig.add_subplot(gs_n[2, 0])
                 cbar_ax = fig.add_subplot(gs_n[2, 1])
 
                 max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
-                ax1.set_aspect("equal")
-                ax2.set_aspect("equal")
 
-                ax1.set_xlim(*xlim1)
-                ax1.set_ylim(*ylim1)
                 ax1.set_xlabel("y[mm]", fontsize=14)
                 ax1.set_ylabel("z[mm]", fontsize=14)
                 ax1.plot(y_, z_, 'y')
                 extent1 = [*self.y_range, *self.z_range[::-1]]  # [0, 765, 249, -249]
                 ax1.imshow(d.toarray().reshape(*self.shape)[x, :, :].T,
-                           extent=extent1, aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+                           extent=extent1, cmap=c, vmin=-max_j, vmax=max_j)
 
-                ax2.set_xlim(*xlim2)
-                ax2.set_ylim(*ylim2)
                 ax2.set_xlabel("y[mm]", fontsize=14)
                 ax2.set_ylabel("x[mm]", fontsize=14)
                 ax2.plot(y1, x1, 'y')
                 ax2.plot(y2, x2, 'y')
                 extent2 = [*self.y_range, *self.x_range[::-1]]  # [0, 765, 249, -249]
                 ax2.imshow(d.toarray().reshape(*self.shape)[:, :, z],
-                           extent=extent2, aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+                           extent=extent2, cmap=c, vmin=-max_j, vmax=max_j)
 
-                im = (self.P * d).reshape(128, 128).toarray()
-                max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
-                sns.heatmap(im, xticklabels=False, yticklabels=False, square=True,
-                            ax=ax3, cmap="RdBu_r", cbar_ax=cbar_ax, vmin=-max_v, vmax=max_v)
-                cbar_ax.tick_params(axis='y', labelsize=10)
+                if show_im:
+                    im = (self.P * d).reshape(*self.image_size).toarray()
+                    max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
+                    sns.heatmap(im, xticklabels=False, yticklabels=False, square=True,
+                                ax=ax3, cmap="RdBu_r", cbar_ax=cbar_ax, vmin=-max_v, vmax=max_v)
+                    cbar_ax.tick_params(axis='y', labelsize=10)
 
-    def cross_sections_n(self, n_l):
+    def cross_sections_n(self, n_l, show_im=True):
         n_l = np.array(n_l, ndmin=2)
         pprint([self.mode_list[_] for _ in n_l.ravel()])
         d_l = np.frompyfunc(lambda n: self.fb_mode(n, load_only=False, add_dict=True), 1, 1)(n_l)
         print("loaded")
-        self.cross_sections(d_l=d_l.tolist())
+        self.cross_sections(d_l=d_l.tolist(), show_im=show_im)
 
-    def cross_xy(self, d=None, n=0, z=166, c="coolwarm"):
+    def cross_xy(self, d=None, n=0, z=None, c="coolwarm"):
+        z = self.shape[-1] // 2 + 1 if z is None else z
         if d is None:
             d = self.fb_mode(n)
 
@@ -155,19 +162,19 @@ class Calculation:
             x2.append(758 * np.sin(p))
 
         max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
-        fig, ax = plt.subplots()
+        fig = plt.figure()
+        ax = fig.add_subplot(111, xlim=self.y_lim, ylim=self.x_lim, aspect='equal')
         ax.plot(y1, x1, 'y')
         ax.plot(y2, x2, 'y')
 
-        ax.set_ylim(*self.x_lim[::-1])  # 250, -250
-        ax.set_xlim(*self.y_lim)  # -10, 1000
         extent = [*self.y_range, *self.x_range[::-1]]  # [0, 765, 249, -249]
         ax.imshow(d.toarray().reshape(*self.shape)[:, :, z],
-                  extent=extent, aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+                  extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
-    def cross_yz(self, d=None, n=0, x=142, c="coolwarm"):
+    def cross_yz(self, d=None, n=0, x=None, c="coolwarm"):
+        x = self.shape[0] // 2 + 1 if x is None else x
         if d is None:
             d = self.fb_mode(n)
 
@@ -177,13 +184,12 @@ class Calculation:
             y_.append(250 * np.sin(t))
 
         max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
-        fig, ax = plt.subplots()
+        fig = plt.figure()
+        ax = fig.add_subplot(111, xlim=self.y_lim, ylim=self.z_lim, aspect='equal')
         ax.plot(x_, y_, 'y')
-        ax.set_xlim(*self.y_lim)  # -10, 1000
-        ax.set_ylim(*self.z_lim)  # -250, 250
         extent = [*self.y_range, *self.z_range[::-1]]  # [0, 765, 249, -249]
         ax.imshow(d.toarray().reshape(*self.shape)[x, :, :].T,
-                  extent=extent, aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
+                  extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
@@ -192,15 +198,11 @@ class Calculation:
             d = self.fb_mode(n)
 
         max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
-        fig, ax = plt.subplots()
-
-        ax.set_xlim(*self.x_lim[::-1])  # 250, -250
-        ax.set_ylim(*self.z_lim)  # -250, 250
+        fig = plt.figure()
+        ax = fig.add_subplot(111, xlim=self.x_lim[::-1], ylim=self.z_lim, aspect='equal')
         extent = [*self.x_range, *self.z_range]  # [-249, 249, 249, -249]
         ax.imshow(d.toarray().reshape(*self.shape)[:, y, :].T,
-                  extent=extent, aspect='equal', cmap=c, vmin=-max_j, vmax=max_j)
-
-        ax.set_aspect("equal")
+                  extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
@@ -240,6 +242,13 @@ class Calculation:
             print("F_mat.npz: saved!")
 
     def mk_L_matrix(self):
+        one = np.ones(self.small_shape)
+        one[[0, -1], ...] = 0
+        one[:, [0, -1], :] = 0
+        one[..., [0, -1]] = 0
+
+        self.R = sparse.diags(one.ravel())
+
         d = np.prod(self.small_shape)
         self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
                                          shape=(d, d))
@@ -252,6 +261,7 @@ class Calculation:
         self.A_0 = self.fb_matrix.toarray()[self.effective]
         self.w = LA.norm(self.A_0, axis=0) / np.sqrt(self.A_0.shape[0])
         self.A = self.A_0 / self.w
+        self.im_mat = np.eye(len(self.effective))[self.effective].T
 
 
 def option():
@@ -259,13 +269,24 @@ def option():
     argparser = ArgumentParser(formatter_class=RawTextHelpFormatter)
     argparser.add_argument('-s', '--sim_name', type=str,
                            default=None, help='simulation name. (default=None)')
+    argparser.add_argument('-f', '--file', type=str,
+                           default=None, help='Configuration file. (default=None)')
     return argparser.parse_args()
 
 
 if __name__ == '__main__':
     opt = option()
-    dir_name = opt.sim_name if opt.sim_name else "Test_test"
-    cl = Calculation(sim_name=dir_name)
+    arguments = dict(sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None)
+
+    if opt.file:
+        with open(opt.file) as f:
+            config_dic = json.load(f)
+        for k in arguments.keys():
+            arguments[k] = config_dic.get(k)
+
+    arguments["sim_name"] = arguments["sim_name"] if opt.sim_name is None else opt.sim_name
+
+    cl = Calculation(**arguments)
     while True:
         case = input("fb_matrix(fb)/F_matrix(F)/G_matrix(G)/Quit(q): ")
         if case == "q":
