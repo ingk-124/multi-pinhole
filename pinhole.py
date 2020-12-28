@@ -309,7 +309,7 @@ class OpticalSystem:
             header = f"{'i'.center(n)}|{'m'.center(5)}{'k'.center(5)}{'iota'.center(7)}{'tri'.center(5)}|" * 4
             f.write(f"{header}\n{'-' * len(header)}\n")
             for i, para in enumerate(self.plasma_data.parameters):
-                m, k, (tor, pol), tri = para
+                m, k, tor, pol, tri = para
                 tri_ = "sin" if tri else "cos"
                 t = f"{str(i).center(n)}|{str(m).center(5)}{str(k).center(5)}{f'{pol}/{tor} '.rjust(7)}{tri_.center(5)}|"
                 f.write(t)
