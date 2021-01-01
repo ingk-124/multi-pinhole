@@ -331,7 +331,7 @@ if __name__ == '__main__':
         case = input("A_0_matrix(A0)/F_matrix(F)/Quit(q): ")
         if case == "q":
             quit()
-        elif case == "fb":
+        elif case == "A0":
             cl.mk_A_0_matrix()
         elif case == "F":
             cl.mk_F_matrix()
