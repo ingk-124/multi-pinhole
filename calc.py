@@ -96,7 +96,7 @@ class Calculation:
         return sparse.csr_matrix(j_big[s::r, s::r, s::r].ravel()).T
 
     def small_n(self, n, r=5, s=1, add_dict=False):
-        return self.small_j(self.fb_mode(n, add_dict).toarray().reshape(*self.shape)[s::r, s::r, s::r].ravel())
+        return self.small_j(self.fb_mode(n, add_dict))
 
     def big_j(self, j_small, r=5):
         if isinstance(j_small, sparse.spmatrix):
