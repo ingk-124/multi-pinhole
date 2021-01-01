@@ -141,7 +141,6 @@ class Plasma:  # 仮想プラズマ
     def fb(self, para):
         m, k, tor, pol, cs = para
         iota = pol / tor
-        psy = 2 * np.pi * iota
 
         if cs == 0:
             luminosity = jv(m, self.j_mat[m, k - 1] * self.r) * np.cos(m * (self.theta + iota * self.phi))
@@ -153,7 +152,6 @@ class Plasma:  # 仮想プラズマ
             raise MyError("argument cs is must be 0(cos) or 1(sin).")
 
     def parameter_list(self, m=5, k=5, tor=3, pol=8):
-        mt = [_ for _ in itertools.product(range(1, m + 1), range(1, tor + 1)) if not (_[0] % _[1])]
 
         self.parameters = list(itertools.product([0], range(1, k + 1), [1], [0], [0])) + \
                           [(m_, k_, t_, p_, cs_) for m_, k_, t_, p_, cs_ in
@@ -176,28 +174,26 @@ class OpticalSystem:
 
     def sim_dir(self):
         main_path = Path("./data/" + self.sim_name)
-        if main_path.exists():
-            print(main_path, "exists.")
-            _ = list(map(print, [p for p in main_path.parent.glob("*") if
-                                 re.search(main_path.stem + r"(\Z|\(\d*\))", p.stem)]))
 
+        if main_path.exists() and (not self.read_only):
+            print(main_path, "exists.")
             while True:
-                c = input("Add(a)/Overwrite(w)/New(n)/Quit(q): ")
+                c = input("Add(a)/Overwrite(w)/ReadOnly(r)/Quit(q): ")
                 if c == "q":
                     quit()
+                elif c == "a":
+                    self.over_write = False
+                    self.read_only = False
                 elif c == "w":
                     self.over_write = True
-                    return main_path
-                elif c == "a":
-                    return main_path
-                elif c == "n":
-                    new_path = rename(main_path)
-                    return new_path
+                elif c == "r":
+                    self.read_only = True
                 else:
-                    print("You can input only a/w/n/q.")
+                    print("You can input only a/w/r/q.")
+        elif self.read_only and (not main_path.exists()):
+            print("Warning: ", main_path, "does not exist.")
 
-        else:
-            return main_path
+        return main_path
 
     def mk_mask(self):
         # maskの中心点を計算 単位はpixel
@@ -309,10 +305,10 @@ class OpticalSystem:
             header = f"{'i'.center(n)}|{'m'.center(5)}{'k'.center(5)}{'iota'.center(7)}{'tri'.center(5)}|" * 4
             f.write(f"{header}\n{'-' * len(header)}\n")
             for i, para in enumerate(self.plasma_data.parameters):
-                m, k, tor, pol, tri = para
+                m, k, t, p, tri = para
                 tri_ = "sin" if tri else "cos"
-                t = f"{str(i).center(n)}|{str(m).center(5)}{str(k).center(5)}{f'{pol}/{tor} '.rjust(7)}{tri_.center(5)}|"
-                f.write(t)
+                text = f"{str(i).center(n)}|{str(m).center(5)}{str(k).center(5)}{f'{p}/{t} '.rjust(7)}{tri_.center(5)}|"
+                f.write(text)
                 if (i + 1) % 4 == 0:
                     f.write("\n")
 
@@ -325,7 +321,7 @@ class OpticalSystem:
     def __init__(self, sim_name=None, auto=False, tm=False, save_option="", thread_num=-1,
                  h_xy=None, hole_z=948, f=14.3, aperture_depth=58, aperture_phi=20,
                  screen_size=(17.0, 17.0), hole_size=0.5, image_size=(170, 170), n=10,
-                 shape=None, x_range=None, y_range=None, z_range=None, parameters_range=None):
+                 shape=None, x_range=None, y_range=None, z_range=None, parameters_range=None, read_only=False):
         """
 
         Parameters
@@ -353,6 +349,7 @@ class OpticalSystem:
 
         self.sim_name = sim_name if sim_name else str(datetime.date.today())
         self.over_write = False
+        self.read_only = read_only
         self.save_option = save_option
         self.path = self.sim_dir()
         self.fb_path = rename(self.path / "fb_mode/")
@@ -481,6 +478,8 @@ class OpticalSystem:
                 return org_im.ravel(), blur_im.ravel()
 
     def save_transmission_matrix(self):
+        if self.read_only:
+            return
         self.path.mkdir(parents=True, exist_ok=True)
         if "t" in self.save_option:
             sparse.save_npz(rename(self.path / "trans_mat_org.npz", self.over_write), self.trans_mat_org())

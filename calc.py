@@ -1,6 +1,7 @@
 from shooting import *
 import seaborn as sns
 from scipy import linalg as LA
+from scipy.sparse import linalg as sLA
 
 sns.set(context="notebook", style='ticks', rc={'xtick.direction': 'in', 'ytick.direction': 'in', })
 
@@ -10,20 +11,37 @@ class NotExistPath(Exception):
     pass
 
 
+def load_file(file):
+    with open(file) as f:
+        json_dic = json.load(f)
+    return json_dic
+
+
 class Calculation:
 
-    def __init__(self, sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None):
+    def __init__(self, config_file):
+
+        kwargs = load_file(config_file)
+
+        sim_name = kwargs.get("sim_name")
+        shape = kwargs.get("shape")
+        x_range = kwargs.get("x_range")
+        y_range = kwargs.get("y_range")
+        z_range = kwargs.get("z_range")
+        image_size = kwargs.get("image_size")
+
         self.path = Path(f"./data/{sim_name}/")
         if not self.path.exists():
             raise NotExistPath("I can't find the path :(")
 
-        self.mode_list = []
-        self.P = None
         self.shape = (333, 511, 333) if shape is None else shape
         self.x_range = np.array([-249, 249] if x_range is None else x_range)
         self.y_range = np.array([0, 765] if y_range is None else y_range)
         self.z_range = np.array([-249, 249] if z_range is None else z_range)
         self.image_size = (128, 128) if image_size is None else image_size
+
+        self.mode_list = []
+        self.P = None
 
         dir_list = list(self.path.glob("fb_mode*"))
         print(*dir_list, sep="\n")
@@ -33,27 +51,29 @@ class Calculation:
         self.mode_list = np.load(self.path / "mode_array.npy", allow_pickle=True)
         self.mode_dict = {}
 
-        self.fb_matrix = None
-        self.F_mat = None
-        self.effective = None
-        self.view_area = None
         self.A_0 = None
-        self.w = None
+        self.F = None
+        self.view_area = None
+        self.W = None
         self.A = None
+        self.rank = None
 
         self.J = np.prod(self.shape)
         self.M = len(self.mode_list)
+        self.N = np.prod(self.image_size)
 
         self.x_lim, self.y_lim, self.z_lim = [(a - a.sum() / 2) * 1.02 + a.sum() / 2 for a in
                                               [self.x_range, self.y_range, self.z_range]]
 
         self.small_shape = [d // 5 + 1 for d in self.shape]
 
+        self.opti = OpticalSystem(**kwargs, read_only=True)
+        self.inside = np.where(self.opti.plasma_data.r < 1, 1, 0)
+
         self.R = None
         self.L_x = None
         self.L_y = None
         self.L_z = None
-        self.im_mat = None
 
     def fb_mode(self, n, load_only=True, add_dict=False):
         if load_only:
@@ -68,9 +88,27 @@ class Calculation:
                     self.mode_dict[n] = mode
             return mode
 
-    def small_j(self, n, r=5, add_dict=False):
-        return sparse.csr_matrix(
-            self.fb_mode(n, add_dict).toarray().reshape(*self.shape)[r // 2::r, r // 2::r, r // 2::r].ravel()).T
+    def small_j(self, j_big, r=5, s=1):
+        if isinstance(j_big, sparse.spmatrix):
+            j_big = j_big.toarray().reshape(self.shape)
+        else:
+            j_big = j_big.reshape(self.shape)
+        return sparse.csr_matrix(j_big[s::r, s::r, s::r].ravel()).T
+
+    def small_n(self, n, r=5, s=1, add_dict=False):
+        return self.small_j(self.fb_mode(n, add_dict).toarray().reshape(*self.shape)[s::r, s::r, s::r].ravel())
+
+    def big_j(self, j_small, r=5):
+        if isinstance(j_small, sparse.spmatrix):
+            j_small = j_small.toarray().reshape(self.small_shape)
+        else:
+            j_small = j_small.reshape(self.small_shape)
+        j_big = np.zeros(self.shape)
+        for a in range(self.small_shape[0]):
+            for b in range(self.small_shape[1]):
+                for c in range(self.small_shape[2]):
+                    j_big[r * a:r * a + r, r * b:r * b + r, r * c:r * c + r] = j_small[a, b, c]
+        return sparse.csr_matrix(j_big.ravel()).T
 
     def fb_img(self, n, add_dict=True):
         return self.P * self.fb_mode(n, add_dict)
@@ -112,7 +150,7 @@ class Calculation:
         n = 3 if show_im else 2
         for row in range(rows):
             for col in range(cols):
-                d = d_l[row, col]
+                d = d_l[row, col].toarray() if isinstance(d_l[row, col], sparse.spmatrix) else d_l[row, col]
                 gs_n = gs[row, col].subgridspec(n, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
                 ax1 = fig.add_subplot(gs_n[0, :], xlim=xlim1, ylim=ylim1, aspect="equal")
                 ax2 = fig.add_subplot(gs_n[1, :], xlim=xlim2, ylim=ylim2, aspect="equal")
@@ -123,7 +161,7 @@ class Calculation:
                 ax1.set_ylabel("z[mm]", fontsize=14)
                 ax1.plot(y_, z_, 'y')
                 extent1 = [*self.y_range, *self.z_range[::-1]]  # [0, 765, 249, -249]
-                ax1.imshow(d.toarray().reshape(*self.shape)[x, :, :].T,
+                ax1.imshow(d.reshape(*self.shape)[x, :, :].T,
                            extent=extent1, cmap=c, vmin=-max_j, vmax=max_j)
 
                 ax2.set_xlabel("y[mm]", fontsize=14)
@@ -131,7 +169,7 @@ class Calculation:
                 ax2.plot(y1, x1, 'y')
                 ax2.plot(y2, x2, 'y')
                 extent2 = [*self.y_range, *self.x_range[::-1]]  # [0, 765, 249, -249]
-                ax2.imshow(d.toarray().reshape(*self.shape)[:, :, z],
+                ax2.imshow(d.reshape(*self.shape)[:, :, z],
                            extent=extent2, cmap=c, vmin=-max_j, vmax=max_j)
 
                 if show_im:
@@ -209,49 +247,50 @@ class Calculation:
         return fig
 
     def mk_P_matrix(self):
-        if (self.path / "mat_P.npz").exists():
-            self.P = sparse.load_npz(self.path / "mat_P.npz")
-            print("mat_P is OK.")
+        if (self.path / "P_matrix.npz").exists():
+            self.P = sparse.load_npz(self.path / "P_matrix.npz")
+            print("P_matrix is OK.")
         else:
             if (self.path / "blur_mat.npz").exists() and (self.path / "trans_mat_org.npz").exists():
                 self.P = sparse.load_npz(self.path / "blur_mat.npz") * sparse.load_npz(self.path / "trans_mat_org.npz")
-                sparse.save_npz(self.path / "mat_P.npz", self.P)
-                print("mat_P.npz: saved!")
+                sparse.save_npz(self.path / "P_matrix.npz", self.P)
+                print("P_matrix.npz: saved!")
             else:
                 print("Please set both blur_mat.npz and trans_mat_org.npz at the directory.")
                 quit()
         self.view_area = np.any(self.P.astype(bool), axis=0)
 
-    def mk_fb_matrix(self):
-        if Path(self.path / "fb_matrix.npz").exists():
-            self.fb_matrix = sparse.load_npz(self.path / "fb_matrix.npz")
-            print("fb_matrix is OK.")
+    def mk_A_0_matrix(self):
+        if Path(self.path / "A_0_matrix.npz").exists():
+            self.A_0 = sparse.load_npz(self.path / "A_0_matrix.npz")
+            print("A_0_matrix is OK.")
         else:
             self.mk_P_matrix()
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
             load_img = Parallel(n_jobs=num, verbose=10)([delayed(self.fb_img)(n) for n in range(self.M)])
-            self.fb_matrix = sparse.hstack(load_img)
-            sparse.save_npz(self.path / "fb_matrix.npz", self.fb_matrix)
-            print("fb_matrix.npz: saved!")
+            self.A_0 = sparse.hstack(load_img)
+            sparse.save_npz(self.path / "A_0_matrix.npz", self.A_0)
+            print("A_0_matrix.npz: saved!")
 
     def mk_F_matrix(self):
-        if Path(self.path / "F_mat.npz").exists():
-            self.F_mat = sparse.load_npz(self.path / "F_mat.npz")
-            print("F_mat is OK.")
+        if Path(self.path / "F_matrix.npz").exists():
+            self.F = sparse.load_npz(self.path / "F_matrix.npz")
+            print("F_matrix is OK.")
         else:
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-            load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.small_j)(n) for n in range(self.M)])
-            self.F_mat = sparse.hstack(load_f)
-            sparse.save_npz(self.path / "F_mat.npz", self.F_mat)
-            print("F_mat.npz: saved!")
+            load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.small_n)(n) for n in range(self.M)])
+            self.F = sparse.hstack(load_f)
+            sparse.save_npz(self.path / "F_matrix.npz", self.F)
+            print("F_matrix.npz: saved!")
 
     def mk_L_matrix(self):
+
         one = np.ones(self.small_shape)
         one[[0, -1], ...] = 0
         one[:, [0, -1], :] = 0
         one[..., [0, -1]] = 0
 
-        self.R = sparse.diags(one.ravel())
+        self.R = sparse.diags(one.ravel() * (self.small_j(self.inside).toarray()))
 
         d = np.prod(self.small_shape)
         self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
@@ -260,12 +299,18 @@ class Calculation:
         self.L_z = self.R * sparse.diags([1, -2, 1], [-1, 0, 1], shape=(d, d))
 
     def mk_A(self):
-        self.mk_fb_matrix()
-        self.effective = np.array(self.fb_matrix.sum(axis=1)).astype(bool).T[0]
-        self.A_0 = self.fb_matrix.toarray()[self.effective]
-        self.w = LA.norm(self.A_0, axis=0) / np.sqrt(self.A_0.shape[0])
-        self.A = self.A_0 / self.w
-        self.im_mat = np.eye(len(self.effective))[self.effective].T
+        if self.A_0 is None:
+            self.mk_A_0_matrix()
+        self.rank = np.linalg.matrix_rank(self.A_0.toarray())
+        self.W = sparse.diags(sLA.norm(self.A_0, axis=0))
+        self.A = self.A_0 * self.W
+
+    def load_all(self):
+        self.mk_P_matrix()
+        self.mk_A_0_matrix()
+        self.mk_F_matrix()
+        self.mk_L_matrix()
+        self.mk_A()
 
 
 def option():
@@ -278,30 +323,15 @@ def option():
     return argparser.parse_args()
 
 
-def load_file(file):
-    arg_dic = dict(sim_name=None, shape=None, x_range=None, y_range=None, z_range=None, image_size=None)
-    with open(file) as f:
-        config_dic = json.load(f)
-    for k in arg_dic.keys():
-        arg_dic[k] = config_dic.get(k)
-    return arg_dic
-
-
 if __name__ == '__main__':
     opt = option()
-    arguments = dict(sim_name=None)
-    if opt.file:
-        arguments = load_file(opt.file)
-
-    arguments["sim_name"] = arguments["sim_name"] if opt.sim_name is None else opt.sim_name
-
-    cl = Calculation(**arguments)
+    cl = Calculation(opt.file)
 
     while True:
-        case = input("fb_matrix(fb)/F_matrix(F)/Quit(q): ")
+        case = input("A_0_matrix(A0)/F_matrix(F)/Quit(q): ")
         if case == "q":
             quit()
         elif case == "fb":
-            cl.mk_fb_matrix()
+            cl.mk_A_0_matrix()
         elif case == "F":
             cl.mk_F_matrix()
