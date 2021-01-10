@@ -46,11 +46,16 @@
         128,
         128
     ],
-    "n": 2,
-    "shape": [
+    "image_expansion": 2,
+    "coarse_shape": [
         50,
         50,
         50
+    ],
+    "voxel_expansion": [
+        4,
+        4,
+        4
     ],
     "x_range": [
         -250.0,

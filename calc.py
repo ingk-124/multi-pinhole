@@ -24,7 +24,7 @@ class Calculation:
         kwargs = load_file(config_file)
 
         sim_name = kwargs.get("sim_name")
-        shape = kwargs.get("shape")
+        shape = kwargs.get("coarse_shape")
         x_range = kwargs.get("x_range")
         y_range = kwargs.get("y_range")
         z_range = kwargs.get("z_range")
@@ -34,7 +34,7 @@ class Calculation:
         if not self.path.exists():
             raise NotExistPath("I can't find the path :(")
 
-        self.shape = (333, 511, 333) if shape is None else shape
+        self.shape = (100, 150, 100) if shape is None else shape
         self.x_range = np.array([-249, 249] if x_range is None else x_range)
         self.y_range = np.array([0, 765] if y_range is None else y_range)
         self.z_range = np.array([-249, 249] if z_range is None else z_range)
@@ -65,10 +65,8 @@ class Calculation:
         self.x_lim, self.y_lim, self.z_lim = [(a - a.sum() / 2) * 1.02 + a.sum() / 2 for a in
                                               [self.x_range, self.y_range, self.z_range]]
 
-        self.small_shape = [d // 5 + 1 for d in self.shape]
-
         self.opti = OpticalSystem(**kwargs, read_only=True)
-        self.inside = np.where(self.opti.plasma_data.r < 1, 1, 0)
+        self.inside = np.where(self.opti.coarse_object.r < 1, 1, 0)
 
         self.R = None
         self.L_x = None
@@ -87,28 +85,6 @@ class Calculation:
                 if add_dict:
                     self.mode_dict[n] = mode
             return mode
-
-    def small_j(self, j_big, r=5, s=1):
-        if isinstance(j_big, sparse.spmatrix):
-            j_big = j_big.toarray().reshape(self.shape)
-        else:
-            j_big = j_big.reshape(self.shape)
-        return sparse.csr_matrix(j_big[s::r, s::r, s::r].ravel()).T
-
-    def small_n(self, n, r=5, s=1, add_dict=False):
-        return self.small_j(self.fb_mode(n, add_dict))
-
-    def big_j(self, j_small, r=5):
-        if isinstance(j_small, sparse.spmatrix):
-            j_small = j_small.toarray().reshape(self.small_shape)
-        else:
-            j_small = j_small.reshape(self.small_shape)
-        j_big = np.zeros(self.shape)
-        for a in range(self.small_shape[0]):
-            for b in range(self.small_shape[1]):
-                for c in range(self.small_shape[2]):
-                    j_big[r * a:r * a + r, r * b:r * b + r, r * c:r * c + r] = j_small[a, b, c]
-        return sparse.csr_matrix(j_big.ravel()).T
 
     def fb_img(self, n, add_dict=True):
         return self.P * self.fb_mode(n, add_dict)
@@ -278,21 +254,21 @@ class Calculation:
             print("F_matrix is OK.")
         else:
             num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
-            load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.small_n)(n) for n in range(self.M)])
+            load_f = Parallel(n_jobs=num, verbose=10)([delayed(self.fb_mode)(n) for n in range(self.M)])
             self.F = sparse.hstack(load_f)
             sparse.save_npz(self.path / "F_matrix.npz", self.F)
             print("F_matrix.npz: saved!")
 
     def mk_L_matrix(self):
 
-        one = np.ones(self.small_shape)
+        one = np.ones(self.shape)
         one[[0, -1], ...] = 0
         one[:, [0, -1], :] = 0
         one[..., [0, -1]] = 0
 
-        self.R = sparse.diags(one.ravel() * (self.small_j(self.inside).toarray()))
+        self.R = sparse.diags(one.ravel() * self.inside)
 
-        d = np.prod(self.small_shape)
+        d = np.prod(self.shape)
         self.L_x = self.R * sparse.diags([1, -2, 1], [-self.shape[1] * self.shape[2], 0, self.shape[1] * self.shape[2]],
                                          shape=(d, d))
         self.L_y = self.R * sparse.diags([1, -2, 1], [-self.shape[2], 0, self.shape[2]], shape=(d, d))

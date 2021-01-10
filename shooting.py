@@ -38,7 +38,8 @@ if __name__ == '__main__':
 
     arguments = {"sim_name": "Test_test", "auto": False, "tm": True, "save_option": "",
                  "h_xy": None, "hole_z": 948, "f": 14.3, "aperture_depth": 58, "aperture_phi": 21,
-                 "screen_size": (17.0, 17.0), "hole_size": 0.5, "image_size": (80, 80), "n": 2, "shape": (50, 50, 50),
+                 "screen_size": (17.0, 17.0), "hole_size": 0.5, "image_size": (80, 80), "image_expansion": 2,
+                 "coarse_shape": (100, 150, 100), "voxel_expansion": (2, 2, 2),
                  "x_range": None, "y_range": None, "z_range": None, "parameters_range": [1, 2, 2, 1]}
 
     if args.file:
