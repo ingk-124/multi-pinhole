@@ -1,12 +1,12 @@
 import numpy as np
-from PIL import Image
+# from PIL import Image
 import datetime
 from pathlib import Path
 import re
 from scipy import ndimage
 from scipy import sparse
 from scipy.special import jv
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
 import itertools
@@ -58,15 +58,16 @@ def expand_3d(small_shape, dl):
     big_shape = [(s - 1) * d + 1 for s, d in zip(small_shape, dl)]
     C = int(np.prod(small_shape))
     R = int(np.prod(big_shape))
-    expand_mat = sparse.lil_matrix((R, C))
     print(f"expand_mat is {R}x{C}")
-    for row in tqdm(range(R)):
-        l = row // (big_shape[2] * big_shape[1])
-        m = row // big_shape[2] % big_shape[1]
-        n = row % big_shape[2]
-        a, i = divmod(l, dl[0])
-        b, j = divmod(m, dl[1])
-        c, k = divmod(n, dl[2])
+
+    def return_row(row):
+        row_vec = sparse.lil_matrix((1, C))
+        i_b = row // (big_shape[2] * big_shape[1])
+        j_b = row // big_shape[2] % big_shape[1]
+        k_b = row % big_shape[2]
+        a, i = divmod(i_b, dl[0])
+        b, j = divmod(j_b, dl[1])
+        c, k = divmod(k_b, dl[2])
         for p in range(8):
             p0 = p // 4
             p1 = p // 2 % 2
@@ -75,7 +76,12 @@ def expand_3d(small_shape, dl):
             v = (dl[0] - i if p0 == 0 else i) * (dl[1] - j if p1 == 0 else j) * (dl[2] - k if p2 == 0 else k) / np.prod(
                 dl)
             if col < C:
-                expand_mat[row, col] = v
+                row_vec[0, col] = v
+        return row_vec
+
+    num = int(input(f"multi-process num(max={multi.cpu_count()}): "))
+    expand_mat = sparse.vstack(Parallel(n_jobs=num, verbose=5)([delayed(return_row)(row) for row in range(R)]))
+
     return expand_mat
 
 
@@ -352,11 +358,11 @@ class OpticalSystem:
                 if (i + 1) % 4 == 0:
                     f.write("\n")
 
-    def fb_save(self, i, para):
-        result = self.coarse_object.fb(para)
-        sparse.save_npz(self.fb_path / f"mode_No{i}.npz", result)
-        del result
-        return 0
+    # def fb_save(self, i, para):
+    #     result = self.coarse_object.fb(para)
+    #     sparse.save_npz(self.fb_path / f"mode_No{i}.npz", result)
+    #     del result
+    #     return 0
 
     def __init__(self, sim_name=None, auto=False, tm=False, save_option="", thread_num=-1,
                  h_xy=None, hole_z=948, f=14.3, aperture_depth=58, aperture_phi=20,
@@ -491,39 +497,39 @@ class OpticalSystem:
         if tm and save_option:
             self.save_transmission_matrix()
 
-    def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False, c="coolwram"):
-        org_sim_im = self.mk_image_vec().reshape(self.sim_image_size)
-
-        # 畳み込み
-        blur_sim_im = ndimage.convolve(org_sim_im, self.kernel, mode='constant', cval=0)
-        # print(blur_sim_im.nonzero())
-        # breakpoint()
-
-        org_im = self.image_trans_mat.dot(org_sim_im.ravel().T).reshape(self.return_image_size)
-        blur_im = self.image_trans_mat.dot(blur_sim_im.ravel().T).reshape(self.return_image_size)
-
-        if show:
-            plt.imshow(blur_sim_im, cmap=c)
-            plt.show()
-            plt.imshow(blur_im, cmap=c)
-            plt.show()
-        if fast_mode:
-            return blur_im.ravel()
-        else:
-            org_pil = Image.fromarray((org_im * 255 / org_im.max()).astype("uint8"))
-            blur_pil = Image.fromarray((blur_im * 255 / blur_im.max()).astype("uint8"))
-
-            if image_save:
-                im_path = rename(self.path / "simulate")
-                org_pil.save(im_path / "org_image.png")
-                Image.fromarray((org_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "org_big.png")
-                blur_pil.save(im_path / "blur_image.png")
-                Image.fromarray((blur_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "blur_big.png")
-
-            if return_image:
-                return org_im.ravel(), blur_im.ravel(), org_pil, blur_pil
-            else:
-                return org_im.ravel(), blur_im.ravel()
+    # def simulate(self, fast_mode=False, image_save=True, return_image=True, show=False, c="coolwram"):
+    #     org_sim_im = self.mk_image_vec().reshape(self.sim_image_size)
+    #
+    #     # 畳み込み
+    #     blur_sim_im = ndimage.convolve(org_sim_im, self.kernel, mode='constant', cval=0)
+    #     # print(blur_sim_im.nonzero())
+    #     # breakpoint()
+    #
+    #     org_im = self.image_trans_mat.dot(org_sim_im.ravel().T).reshape(self.return_image_size)
+    #     blur_im = self.image_trans_mat.dot(blur_sim_im.ravel().T).reshape(self.return_image_size)
+    #
+    #     if show:
+    #         plt.imshow(blur_sim_im, cmap=c)
+    #         plt.show()
+    #         plt.imshow(blur_im, cmap=c)
+    #         plt.show()
+    #     if fast_mode:
+    #         return blur_im.ravel()
+    #     else:
+    #         org_pil = Image.fromarray((org_im * 255 / org_im.max()).astype("uint8"))
+    #         blur_pil = Image.fromarray((blur_im * 255 / blur_im.max()).astype("uint8"))
+    #
+    #         if image_save:
+    #             im_path = rename(self.path / "simulate")
+    #             org_pil.save(im_path / "org_image.png")
+    #             Image.fromarray((org_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "org_big.png")
+    #             blur_pil.save(im_path / "blur_image.png")
+    #             Image.fromarray((blur_sim_im * 255 / org_sim_im.max()).astype("uint8")).save(im_path / "blur_big.png")
+    #
+    #         if return_image:
+    #             return org_im.ravel(), blur_im.ravel(), org_pil, blur_pil
+    #         else:
+    #             return org_im.ravel(), blur_im.ravel()
 
     def save_transmission_matrix(self):
         if self.read_only:
