@@ -59,7 +59,8 @@ def expand_3d(small_shape, dl):
     C = int(np.prod(small_shape))
     R = int(np.prod(big_shape))
     expand_mat = sparse.lil_matrix((R, C))
-    for row in range(R):
+    print(f"expand_mat is {R}x{C}")
+    for row in tqdm(range(R)):
         l = row // (big_shape[2] * big_shape[1])
         m = row // big_shape[2] % big_shape[1]
         n = row % big_shape[2]
@@ -285,7 +286,9 @@ class OpticalSystem:
             print('There is no light points!')
 
     def trans_mat_org(self):
+        print("light_vector start")
         lv, active_flag = self.light_vector()
+        print("light_vector finish")
         lv[:, -1] = np.where(np.all(lv[:, :2] <= self.sim_image_size[None, :, None], axis=-2) &
                              np.all(lv[:, :2] >= 0, axis=-2), lv[:, -1], 0)
 
