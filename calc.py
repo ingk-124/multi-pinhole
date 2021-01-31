@@ -90,7 +90,7 @@ class Calculation:
     def fb_img(self, n, add_dict=True):
         return self.P * self.fb_mode(n, add_dict)
 
-    def cross_sections(self, d_l, x=None, z=None, figsize=(5, 10), space=0.05,
+    def cross_sections(self, j_l, x=None, z=None, figsize=(5, 10), space=0.05,
                        xlim1=None, ylim1=None, xlim2=None, ylim2=None, show_im=True):
         x = self.shape[0] // 2 + 1 if x is None else x
         z = self.shape[2] // 2 + 1 if z is None else z
@@ -105,7 +105,7 @@ class Calculation:
             ylim2 = self.x_lim[::-1]
 
         c = "coolwarm"
-        d_l = np.array(d_l, ndmin=2)
+        j_l = np.array(j_l, ndmin=2)
 
         x1, y1, x2, y2, y_, z_ = [], [], [], [], [], []
         for theta in np.linspace(0, -2 * np.pi, 360):
@@ -117,7 +117,7 @@ class Calculation:
             y2.append(758 * np.cos(phi))
             x2.append(758 * np.sin(phi))
 
-        rows, cols = d_l.shape
+        rows, cols = j_l.shape
 
         fig = plt.figure(constrained_layout=False, figsize=(figsize[0] * cols, figsize[1] * rows))
         gs = fig.add_gridspec(rows, cols, wspace=0.3, hspace=space)
@@ -127,18 +127,18 @@ class Calculation:
         n = 3 if show_im else 2
         for row in range(rows):
             for col in range(cols):
-                d = d_l[row, col].toarray() if isinstance(d_l[row, col], sparse.spmatrix) else d_l[row, col]
+                j = j_l[row, col].toarray() if isinstance(j_l[row, col], sparse.spmatrix) else j_l[row, col]
                 gs_n = gs[row, col].subgridspec(n, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
                 ax1 = fig.add_subplot(gs_n[0, :], xlim=xlim1, ylim=ylim1, aspect="equal")
                 ax2 = fig.add_subplot(gs_n[1, :], xlim=xlim2, ylim=ylim2, aspect="equal")
 
-                max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
+                max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
 
                 ax1.set_xlabel("y[mm]", fontsize=14)
                 ax1.set_ylabel("z[mm]", fontsize=14)
                 ax1.plot(y_, z_, 'y')
                 extent1 = [*self.y_range, *self.z_range[::-1]]  # [0, 765, 249, -249]
-                ax1.imshow(d.reshape(*self.shape)[x, :, :].T,
+                ax1.imshow(j.reshape(*self.shape)[x, :, :].T,
                            extent=extent1, cmap=c, vmin=-max_j, vmax=max_j)
 
                 ax2.set_xlabel("y[mm]", fontsize=14)
@@ -146,14 +146,14 @@ class Calculation:
                 ax2.plot(y1, x1, 'y')
                 ax2.plot(y2, x2, 'y')
                 extent2 = [*self.y_range, *self.x_range[::-1]]  # [0, 765, 249, -249]
-                ax2.imshow(d.reshape(*self.shape)[:, :, z],
+                ax2.imshow(j.reshape(*self.shape)[:, :, z],
                            extent=extent2, cmap=c, vmin=-max_j, vmax=max_j)
 
                 if show_im:
                     ax3 = fig.add_subplot(gs_n[2, 0])
                     cbar_ax = fig.add_subplot(gs_n[2, 1])
 
-                    im = (self.P * d).reshape(*self.image_size).toarray()
+                    im = (self.P * j).reshape(*self.image_size)
                     max_v = abs(im.max()) if abs(im.max()) > abs(im.min()) else abs(im.min())
                     sns.heatmap(im, xticklabels=False, yticklabels=False, square=True,
                                 ax=ax3, cmap="RdBu_r", cbar_ax=cbar_ax, vmin=-max_v, vmax=max_v)
@@ -162,14 +162,14 @@ class Calculation:
     def cross_sections_n(self, n_l, show_im=True):
         n_l = np.array(n_l, ndmin=2)
         pprint([self.mode_list[_] for _ in n_l.ravel()])
-        d_l = np.frompyfunc(lambda n: self.fb_mode(n, load_only=False, add_dict=True), 1, 1)(n_l)
+        j_l = np.frompyfunc(lambda n: self.fb_mode(n, load_only=False, add_dict=True), 1, 1)(n_l)
         print("loaded")
-        self.cross_sections(d_l=d_l.tolist(), show_im=show_im)
+        self.cross_sections(j_l=j_l.tolist(), show_im=show_im)
 
-    def cross_xy(self, d=None, n=0, z=None, c="coolwarm"):
+    def cross_xy(self, j=None, n=0, z=None, c="coolwarm"):
         z = self.shape[-1] // 2 + 1 if z is None else z
-        if d is None:
-            d = self.fb_mode(n)
+        if j is None:
+            j = self.fb_mode(n)
 
         x1, y1, x2, y2 = [], [], [], []
         for p in np.linspace(-np.pi, np.pi, 100):
@@ -178,47 +178,47 @@ class Calculation:
             y2.append(758 * np.cos(p))
             x2.append(758 * np.sin(p))
 
-        max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig = plt.figure()
         ax = fig.add_subplot(111, xlim=self.y_lim, ylim=self.x_lim, aspect='equal')
         ax.plot(y1, x1, 'y')
         ax.plot(y2, x2, 'y')
 
         extent = [*self.y_range, *self.x_range[::-1]]  # [0, 765, 249, -249]
-        ax.imshow(d.toarray().reshape(*self.shape)[:, :, z],
+        ax.imshow(j.toarray().reshape(*self.shape)[:, :, z],
                   extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
-    def cross_yz(self, d=None, n=0, x=None, c="coolwarm"):
+    def cross_yz(self, j=None, n=0, x=None, c="coolwarm"):
         x = self.shape[0] // 2 + 1 if x is None else x
-        if d is None:
-            d = self.fb_mode(n)
+        if j is None:
+            j = self.fb_mode(n)
 
         x_, y_ = [], []
         for t in np.linspace(0, -2 * np.pi, 360):
             x_.append(508 + 250 * np.cos(t))
             y_.append(250 * np.sin(t))
 
-        max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig = plt.figure()
         ax = fig.add_subplot(111, xlim=self.y_lim, ylim=self.z_lim, aspect='equal')
         ax.plot(x_, y_, 'y')
         extent = [*self.y_range, *self.z_range[::-1]]  # [0, 765, 249, -249]
-        ax.imshow(d.toarray().reshape(*self.shape)[x, :, :].T,
+        ax.imshow(j.toarray().reshape(*self.shape)[x, :, :].T,
                   extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
 
-    def cross_zx(self, d=None, n=0, y=0, c="coolwarm"):
-        if d is None:
-            d = self.fb_mode(n)
+    def cross_zx(self, j=None, n=0, y=0, c="coolwarm"):
+        if j is None:
+            j = self.fb_mode(n)
 
-        max_j = abs(d.max()) if abs(d.max()) > abs(d.min()) else abs(d.min())
+        max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
         fig = plt.figure()
         ax = fig.add_subplot(111, xlim=self.x_lim[::-1], ylim=self.z_lim, aspect='equal')
         extent = [*self.x_range, *self.z_range]  # [-249, 249, 249, -249]
-        ax.imshow(d.toarray().reshape(*self.shape)[:, y, :].T,
+        ax.imshow(j.toarray().reshape(*self.shape)[:, y, :].T,
                   extent=extent, cmap=c, vmin=-max_j, vmax=max_j)
 
         return fig
