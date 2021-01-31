@@ -66,6 +66,7 @@ class Calculation:
                                               [self.x_range, self.y_range, self.z_range]]
 
         self.opti = OpticalSystem(**kwargs, read_only=True)
+        self.opti.coarse_object.set_rtp()
         self.inside = np.where(self.opti.coarse_object.r < 1, 1, 0)
 
         self.R = None
