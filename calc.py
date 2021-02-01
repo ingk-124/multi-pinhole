@@ -90,7 +90,7 @@ class Calculation:
     def fb_img(self, n, add_dict=True):
         return self.P * self.fb_mode(n, add_dict)
 
-    def cross_sections(self, j_l, x=None, z=None, figsize=(5, 10), space=0.05,
+    def cross_sections(self, j_l, x=None, z=None, figsize=(5, 10), space=0.05, titles=None, titlesize=23,
                        xlim1=None, ylim1=None, xlim2=None, ylim2=None, show_im=True):
         x = self.shape[0] // 2 + 1 if x is None else x
         z = self.shape[2] // 2 + 1 if z is None else z
@@ -106,6 +106,8 @@ class Calculation:
 
         c = "coolwarm"
         j_l = np.array(j_l, ndmin=2)
+        titles = np.array(titles, ndim=2)
+        print_title = (j_l.shape == titles.shape)
 
         x1, y1, x2, y2, y_, z_ = [], [], [], [], [], []
         for theta in np.linspace(0, -2 * np.pi, 360):
@@ -131,6 +133,12 @@ class Calculation:
                 gs_n = gs[row, col].subgridspec(n, 2, width_ratios=widths, height_ratios=heights, hspace=0.4)
                 ax1 = fig.add_subplot(gs_n[0, :], xlim=xlim1, ylim=ylim1, aspect="equal")
                 ax2 = fig.add_subplot(gs_n[1, :], xlim=xlim2, ylim=ylim2, aspect="equal")
+                if print_title:
+                    ax1.set_title(titles[row, col] + " Poloidal", fontsize=titlesize)
+                    ax2.set_title(titles[row, col] + " Toroidal", fontsize=titlesize)
+                else:
+                    ax1.set_title("Poloidal", fontsize=titlesize)
+                    ax2.set_title("Toroidal", fontsize=titlesize)
 
                 max_j = abs(j.max()) if abs(j.max()) > abs(j.min()) else abs(j.min())
 
@@ -159,12 +167,13 @@ class Calculation:
                                 ax=ax3, cmap="RdBu_r", cbar_ax=cbar_ax, vmin=-max_v, vmax=max_v)
                     cbar_ax.tick_params(axis='y', labelsize=10)
 
-    def cross_sections_n(self, n_l, show_im=True):
+    def cross_sections_n(self, n_l, show_im=True, titlesize=23):
         n_l = np.array(n_l, ndmin=2)
         pprint([self.mode_list[_] for _ in n_l.ravel()])
         j_l = np.frompyfunc(lambda n: self.fb_mode(n, load_only=False, add_dict=True), 1, 1)(n_l)
         print("loaded")
-        self.cross_sections(j_l=j_l.tolist(), show_im=show_im)
+        titles = [[f"No.{i}" for i in v] for v in n_l]
+        self.cross_sections(j_l=j_l.tolist(), show_im=show_im, titles=titles, titlesize=titlesize)
 
     def cross_xy(self, j=None, n=0, z=None, c="coolwarm"):
         z = self.shape[-1] // 2 + 1 if z is None else z
