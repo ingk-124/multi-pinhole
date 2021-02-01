@@ -288,8 +288,8 @@ class Calculation:
         if self.A_0 is None:
             self.mk_A_0_matrix()
         self.rank = np.linalg.matrix_rank(self.A_0.toarray())
-        self.W = sparse.diags(sLA.norm(self.A_0, axis=0))
-        self.A = self.A_0 * self.W
+        self.W = sLA.norm(self.A_0, axis=0)
+        self.A = self.A_0 * sparse.diags(1 / self.W)
 
     def load_all(self):
         self.mk_P_matrix()
