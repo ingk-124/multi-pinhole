@@ -106,7 +106,7 @@ class Calculation:
 
         c = "coolwarm"
         j_l = np.array(j_l, ndmin=2)
-        titles = np.array(titles, ndim=2)
+        titles = np.array(titles, ndmin=2)
         print_title = (j_l.shape == titles.shape)
 
         x1, y1, x2, y2, y_, z_ = [], [], [], [], [], []
