@@ -167,13 +167,16 @@ class Calculation:
                                 ax=ax3, cmap="RdBu_r", cbar_ax=cbar_ax, vmin=-max_v, vmax=max_v)
                     cbar_ax.tick_params(axis='y', labelsize=10)
 
-    def cross_sections_n(self, n_l, show_im=True, titlesize=23):
+    def cross_sections_n(self, n_l, x=None, z=None, figsize=(5, 10), space=0.05, titlesize=23,
+                         xlim1=None, ylim1=None, xlim2=None, ylim2=None, show_im=True):
         n_l = np.array(n_l, ndmin=2)
         pprint([self.mode_list[_] for _ in n_l.ravel()])
         j_l = np.frompyfunc(lambda n: self.fb_mode(n, load_only=False, add_dict=True), 1, 1)(n_l)
         print("loaded")
         titles = [[f"No.{i}" for i in v] for v in n_l]
-        self.cross_sections(j_l=j_l.tolist(), show_im=show_im, titles=titles, titlesize=titlesize)
+        self.cross_sections(j_l=j_l.tolist(), x=x, z=z, figsize=figsize, space=space,
+                            titles=titles, titlesize=titlesize,
+                            xlim1=xlim1, ylim1=ylim1, xlim2=xlim2, ylim2=ylim2, show_im=show_im)
 
     def cross_xy(self, j=None, n=0, z=None, c="coolwarm"):
         z = self.shape[-1] // 2 + 1 if z is None else z
