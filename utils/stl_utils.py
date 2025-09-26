@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation
 from stl import mesh
 from tqdm.auto import trange
 
-from utils.my_stdio import my_print
+from utils.my_stdio import *
 
 pio.renderers.default = "firefox"
 
@@ -31,40 +31,68 @@ Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
 MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[List[Number]], Tuple[Tuple[Number]]]
 
 
+# MARK: - STL utilities
 def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict = None) -> Tuple[str, Vector2DLike]:
     """Check the shape and size of the object.
 
     Parameters
     ----------
-    shape : str (circle, ellipse, rectangle)
-        The shape of the object.
+    shape : str
+        one of {'circle','ellipse','rectangle','square'}
     size : Union[Number, Vector2DLike]
-        The size of the object.
+        - circle/square: scalar or 2要素（2要素は等しい必要あり）
+        - ellipse/rectangle: scalar（→両辺同じに展開）または2要素
     ok_shapes : dict, optional
-        The acceptable shapes, by default {'circle':1, 'ellipse':2,'rectangle':2}
+        kept for backward-compat (unused for validation logic)
 
     Returns
     -------
-    Tuple[str, Vector2DLike]
-        The shape and size of the object.
+    Tuple[str, np.ndarray]
+        (shape, np.array([height, width]))
     """
+    # 許可形状
+    allowed = {'circle', 'ellipse', 'rectangle', 'square'}
     if ok_shapes is None:
-        ok_shapes = {'circle': 1, 'ellipse': 2, 'rectangle': 2}
+        ok_shapes = {'circle': 1, 'ellipse': 2, 'rectangle': 2, 'square': 1}
+    if shape not in allowed:
+        raise ValueError(f"shape must be one of {sorted(allowed)}")
 
-    if shape not in ok_shapes.keys():
-        raise ValueError(f"shape must be one of {ok_shapes.keys()}")
-
+    # size を 1D 配列化
     if isinstance(size, Number):
-        size = [size, ] * ok_shapes[shape]
-    elif type(size) in [np.ndarray, list, tuple] and len(set(size)) == ok_shapes[shape]:
-        pass
+        arr = np.array([float(size)], dtype=float)
     else:
-        raise ValueError(f"size must be a number or a list of length {ok_shapes[shape]} (shape={shape})")
+        arr = np.array(size, dtype=float).ravel()
 
-    if shape == 'circle':
-        size = [size[0], size[0]]
+    # 形状ごとの許容と展開
+    if shape in ('circle', 'square'):
+        if arr.size == 1:
+            s = float(arr[0])
+            size_hw = np.array([s, s], dtype=float)
+        elif arr.size == 2:
+            # 2要素の場合は等しいことを要求（厳密一致だと浮動小数で落ちるので isclose）
+            if not np.isclose(arr[0], arr[1]):
+                raise ValueError(f"{shape} expects equal sides: got {arr.tolist()}")
+            s = float(arr[0])
+            size_hw = np.array([s, s], dtype=float)
+        else:
+            raise ValueError(f"{shape} size must be a number or a 2-element sequence")
+    elif shape in ('ellipse', 'rectangle'):
+        if arr.size == 1:
+            s = float(arr[0])
+            size_hw = np.array([s, s], dtype=float)  # 正方形/正円相当も許容
+        elif arr.size == 2:
+            size_hw = arr.astype(float, copy=False)
+        else:
+            raise ValueError(f"{shape} size must be a number or a 2-element sequence")
+    else:
+        # 念のため（上の allowed で弾いているので通常ここには来ない）
+        raise ValueError(f"Unsupported shape: {shape}")
 
-    return shape, np.array(size)
+    # 数値チェック（正・有限）
+    if not np.all(np.isfinite(size_hw)) or np.any(size_hw <= 0):
+        raise ValueError(f"size must be positive finite numbers: got {size_hw.tolist()}")
+
+    return shape, size_hw
 
 
 def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolution: Union[Number, Vector2DLike],
@@ -187,14 +215,16 @@ def copy_model(model: mesh.Mesh, translate: np.ndarray = (0, 0, 0), rotation_mat
     return model
 
 
-def check_intersection(triangle: np.ndarray, start: np.ndarray, end_points: np.ndarray) -> np.ndarray:
+# MARK: - Visibility calculation utilities
+def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points: np.ndarray,
+                       behind_start_included: float | bool = False, eps: float = 1e-6) -> np.ndarray:
     """Check if a line segment intersects with a mesh.
 
     This function checks if a line segment intersects with a triangle using the Möller–Trumbore intersection algorithm.
     The line segment is defined by the start point and end point. The triangle is defined by three vectors.
 
     The line segment is checked to intersect with the triangle by solving the following equation:
-    e_1 = b - a, e_2 = c - a, d = end - start, n = e_1 x e_2, r = start - a
+    e_1 = b - a, e_2 = c - a, d = end - start, r = start - a
     Line eq. defined by the line segment: R(t) = start + t * d
     Plane eq. defined by the triangle: T(u, v) = a + u * e_1 + v * e_2
     Intersection eq.: R(t) = T(u, v)
@@ -202,48 +232,94 @@ def check_intersection(triangle: np.ndarray, start: np.ndarray, end_points: np.n
                     <=> t * (-d) + u * e_1 + v * e_2 = r
                     <=> (-d, e_1, e_2) * (t, u, v)^T = r  ... (1)
 
-    If n dot d = 0, the line segment is parallel to the triangle, not intersecting with the triangle.
-    If n dot d != 0, solve the equation (1) for t, u, v and check the following conditions:
-        1. 0 < t <= 1
-        2. u >= 0, v >= 0, u + v <= 1
+    Here, t, u, v are expressed as:
+    u = r dot (d x e_2) / det = r dot n_2 / det
+    v = d dot (r x e_1) / det = r dot (e_1 x d) / det = r dot n_1 / det
+    t = e_2 dot (r x e_1) / det = r dot (e_1 x e_2) / det = r dot n_0 / det
+    where n_0 = e_1 x e_2, n_1 = e_1 x d, n_2 = d x e_2, det = -d dot n_0.
+
+    If n_0 dot d = 0, the line segment is parallel to the triangle, not intersecting with the triangle.
+    If n_0 dot d != 0, solve the equation (1) for t, u, v and check the following conditions:
+        1. u >= 0, v >= 0, u + v <= 1
+        2. 0 < t <= 1
+    If behind the start point is included, the condition 2 is changed to t <= 1. (i.e., for aperture)
     If all the conditions are satisfied, the line segment intersects with the triangle.
 
     Parameters
     ----------
     triangle : numpy.ndarray (shape: (3, 3))
         Three vectors of a triangle.
-    start : numpy.ndarray (shape: (3, ))
+    start_point : numpy.ndarray (shape: (3, ))
         Start point of the line segment.
-    end_points : numpy.ndarray (shape: (n, 3))
-        End points of the line segment. n is the number of line segments.
+    end_points : numpy.ndarray (shape: (N, 3))
+        End points of the line segment. N is the number of line segments.
+    behind_start_included : float or bool, optional
+        Whether to include the part behind the start point, by default False.
+        If bool, True means include all part behind the start point.
+        If float, include the part behind the start point up to the distance of the float value.
+    eps : float, optional
+        The tolerance for numerical errors, by default 1e-6.
 
     Returns
     -------
-    condition : numpy.ndarray (shape: (n, ))
+    condition : numpy.ndarray (shape: (N, ))
         The condition whether the line segment intersects with the triangle.
     """
+
     if end_points.shape[0] == 0:
         return np.array([], dtype=bool)
 
-    PARALLEL_THRESHOLD = 1e-6
+    N = end_points.shape[0]
+
+    # basic vectors
     a, b, c = triangle  # three vectors of a triangle (a, b, c: (3,))
     e_1, e_2 = b - a, c - a  # two edges of a triangle (e_1, e_2: (3,))
-    d_ = np.subtract(end_points, start)  # direction of the line segment (d: (n, 3))
-    n = np.cross(e_1, e_2)  # normal vector of the triangle (n: (3,))
-    r = np.subtract(start, a)  # vector from the start point to a (r: (3,))
+    d_ = np.subtract(end_points, start_point)  # direction of the line segment (d: (N, 3))
+    r = np.subtract(start_point, a)  # vector from the start point to a (r: (3,))
+    n_0 = np.cross(e_1, e_2)  # normal vector of the triangle (n_0: (3,))
+    det = -np.einsum('ij,j->i', d_, n_0)  # (N,) array
 
-    # solve the equation and check the conditions
-    def tuv(d_):
-        if np.abs(np.dot(n, d_)) > PARALLEL_THRESHOLD:
-            t, u, v = np.linalg.solve(np.array([-d_, e_1, e_2]).T, r)
-            if (0 < t <= 1) and (u >= 0) and (v >= 0) and (u + v <= 1):
-                return True
-        return False
+    dtype = det.dtype
+    eps = dtype.type(eps)
 
-    return np.apply_along_axis(func1d=tuv, axis=1, arr=d_)  # (n, ) boolean array
+    non_parallel = np.abs(det) > eps  # (N,) boolean array (non-parallel condition)
+
+    if not np.any(non_parallel):
+        return np.zeros_like(N, dtype=bool)
+
+    inv_det = np.zeros_like(det)
+    inv_det[non_parallel] = 1.0 / det[non_parallel]
+
+    n_2 = np.cross(d_, e_2)  # (N, 3)
+    u = np.einsum('i,ji,j->j', r, n_2, inv_det)  # (N,) array
+    ok = non_parallel & (u >= -eps)  # (N,) boolean array (u condition)
+    if not np.any(ok):
+        return np.zeros_like(N, dtype=bool)
+
+    n_1 = np.cross(e_1, d_)  # (N, 3)
+    v = np.einsum('i,ji,j->j', r, n_1, inv_det)  # (N,) array
+    ok &= (v >= -eps) & (u + v <= 1 + eps)  # (N,) boolean array (v condition)
+    if not np.any(ok):
+        return np.zeros_like(N, dtype=bool)
+
+    # t = np.einsum('ij,j->i', r, n_0) * inv_det  # (N,) array
+    t = np.einsum('i,i,j->j', r, n_0, inv_det)  # (N,) array
+
+    if isinstance(behind_start_included, bool):
+        t_min = np.full(N, -np.inf if behind_start_included else 0, dtype=dtype)
+    elif isinstance(behind_start_included, Number):
+        # d_norm = np.linalg.norm(d_, axis=1)
+        z = d_[..., 2]
+        f = dtype.type(behind_start_included)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_min = np.where(z > eps, f / z, np.inf).astype(dtype, copy=False)
+    else:
+        raise ValueError("behind_start_included must be bool or float (default: False)")
+    ok &= (t > t_min - eps) & (t <= 1 + eps)  # (N,) boolean array (t condition)
+    return ok
 
 
-def delta_cone(mesh_obj: mesh.Mesh, start: np.ndarray) -> np.ndarray:
+def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
     """
     Calculate the condition whether the grid points are inside the cone defined by the mesh and the origin.
 
@@ -258,7 +334,7 @@ def delta_cone(mesh_obj: mesh.Mesh, start: np.ndarray) -> np.ndarray:
     ----------
     mesh_obj : mesh.Mesh object
         STL mesh object with M triangles.
-    start : numpy.ndarray of shape (3, )
+    start_point : numpy.ndarray of shape (3, )
         The origin of the light.
 
     Returns
@@ -275,11 +351,11 @@ def delta_cone(mesh_obj: mesh.Mesh, start: np.ndarray) -> np.ndarray:
     """
 
     # check if the start point is on the plane defined by the mesh
-    zero_volume = ~np.isclose(0., np.einsum('ij,ij->i', mesh_obj.normals, start - mesh_obj.v0))  # (M,)
+    zero_volume = ~np.isclose(0., np.einsum('ij,ij->i', mesh_obj.normals, start_point - mesh_obj.v0))  # (M,)
 
     # origin: np.ndarray of shape (3, )
     # vector oa, ob, oc: np.ndarray of shape (M,3) (from origin to a, b, c)
-    oa, ob, oc = mesh_obj.v0 - start, mesh_obj.v1 - start, mesh_obj.v2 - start
+    oa, ob, oc = mesh_obj.v0 - start_point, mesh_obj.v1 - start_point, mesh_obj.v2 - start_point
     # vectors p: np.ndarray of shape (N, 3) (from origin to grid points)
     # p = grid_points - start
 
@@ -314,10 +390,188 @@ def delta_cone(mesh_obj: mesh.Mesh, start: np.ndarray) -> np.ndarray:
     return n_oab, n_obc, n_oca, zero_volume
 
 
-def check_distance(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarray,
-                   inside_cone: sparse.csr_matrix) -> np.ndarray:
+def delta_cone_prepare(triangles: np.ndarray, start_point: np.ndarray, eps: float = 1e-6):
     """
-    Check if the grid points are farther than all vertices of the mesh.
+    Prepare the parameters for delta_cone function.
+
+    Calculate the normal vectors of the planes oab, obc, oca.
+    The normal vectors are used to check if the grid points are inside the cone defined by the mesh and the origin.
+
+    Parameters
+    ----------
+    triangles : numpy.ndarray of shape (M, 3, 3)
+        Three 3D vectors of triangles.
+    start_point : numpy.ndarray of shape (3, )
+        The origin of the light.
+    eps : float, optional
+        The tolerance for zero volume check, by default 1e-6.
+    dtype : data-type, optional
+        The data type of the output, by default np.float32.
+
+    Returns
+    -------
+    Planes : numpy.ndarray
+        The normal vectors of the planes oab, obc, oca. (M, 3, 3)
+    valid : numpy.ndarray
+        The condition whether the triangle has non-zero volume. (M, )
+    """
+    dtype = triangles.dtype
+    eps = dtype.type(eps)
+
+    a = triangles[:, 0, :] - start_point  # (M, 3)
+    b = triangles[:, 1, :] - start_point  # (M, 3)
+    c = triangles[:, 2, :] - start_point  # (M, 3)
+
+    # ignore zero volume triangles
+    volume = np.einsum('ij,ij->i', a, np.cross(b, c))  # (M,)
+    # valid = np.linalg.norm(tri_n, axis=1) > eps  # (M,)
+    valid = np.abs(volume) > eps  # (M,)
+    # calculate normal vectors of planes oab, obc, oca with correct sign (the third point side is positive)
+    n_oab = np.cross(a, b)  # (M, 3)
+    s = np.sign(np.einsum('ij,ij->i', c, n_oab))  # (M,)
+    n_oab *= s[:, None]  # (M, 3)
+
+    n_obc = np.cross(b, c)  # (M, 3)
+    s = np.sign(np.einsum('ij,ij->i', a, n_obc))  # (M,)
+    n_obc *= s[:, None]  # (M, 3)
+
+    n_oca = np.cross(c, a)  # (M, 3)
+    s = np.sign(np.einsum('ij,ij->i', b, n_oca))  # (M,)
+    n_oca *= s[:, None]  # (M, 3)
+
+    planes = np.stack([n_oab, n_obc, n_oca], axis=1)  # (M, 3, 3) (triangles, n_*, xyz)
+    return planes, valid
+
+
+def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points: np.ndarray,
+                     eps: float = 1e-6, allow_behind: bool = False,
+                     batch_size: int = 65536, verbose: int = 0
+                     ) -> sparse.csr_matrix:
+    """
+    Apply the delta_cone function to the grid points.
+
+    Parameters
+    ----------
+    triangles : numpy.ndarray of shape (M, 3, 3)
+        Three 3D vectors of triangles.
+    start_point : numpy.ndarray of shape (3, )
+        The origin of the light.
+    end_points : numpy.ndarray of shape (N, 3)
+        The grid points to be checked.
+    eps : float, optional
+        The tolerance for zero volume check, by default 1e-6.
+    allow_behind : bool, optional
+        Whether to include the part behind the start point, by default False.
+    batch_size : int, optional
+        The batch size for processing the grid points, by default 65536.
+    verbose : int, optional
+        The verbosity level, by default 0.
+
+    Returns
+    -------
+    condition : scipy.sparse.csr_matrix (shape: (M, N))
+        The condition whether the grid points are inside the cone defined by the mesh and the origin.
+        condition[i, j] is True if points[j] is inside the cone of mesh_obj.vectors[i].
+    """
+    dtype = triangles.dtype
+    eps = dtype.type(eps)
+    N = end_points.shape[0]
+    M = triangles.shape[0]
+
+    if N == 0 or M == 0:
+        return sparse.csr_matrix((M, N), dtype=bool)
+
+    # preparation
+    planes, valid = delta_cone_prepare(triangles, start_point, eps=eps)
+    valid_idx = np.where(valid)[0]
+    n_0 = planes[:, 0, :]  # (M, 3)
+    n_1 = planes[:, 1, :]  # (M, 3)
+    n_2 = planes[:, 2, :]  # (M, 3)
+
+    # all mesh are zero volume -> return empty
+    if not np.any(valid):
+        return sparse.csr_matrix((M, N), dtype=bool), valid
+
+    rows = []
+    cols = []
+
+    max_mem = 750 * 1024 * 1024  # 750 MB
+    item_size = np.dtype(dtype).itemsize
+    max_batch = int(max_mem // (valid.sum() * item_size))
+    batch_size = min(batch_size, max(1, max_batch))
+    end_points = end_points - start_point  # (N, 3)
+
+    # X: points
+    # P: planes
+    # X @ n_oab.T >= 0 -> X exists above the plane oab (same side as c)
+    for s in my_range(0, N, batch_size, verbose=verbose):
+        t = min(s + batch_size, N)
+        # D = np.einsum('bj,mij->bmi', end_points[s:t],
+        #               planes[valid])  # (batch_size, M_valid, 3)
+        # ok_front = (D >= -eps).all(axis=2)
+        # ok_back = (D <= eps).all(axis=2)  # behind -> all of X@n_*.T <= 0
+
+        D_0 = end_points[s:t] @ n_0[valid_idx].T  # (batch_size, M_valid)
+        ok_0 = D_0 >= -eps
+        del D_0
+        D_1 = end_points[s:t] @ n_1[valid_idx].T  # (batch_size, M_valid)
+        ok_1 = D_1 >= -eps
+        del D_1
+        D_2 = end_points[s:t] @ n_2[valid_idx].T  # (batch_size, M_valid)
+        ok_2 = D_2 >= -eps
+        del D_2
+
+        if allow_behind:
+            ok_front = ok_0 & ok_1 & ok_2
+            ok_back = (~ok_0) & (~ok_1) & (~ok_2)
+            inside = ok_front | ok_back
+        else:
+            ok_front = ok_0 & ok_1 & ok_2
+            inside = ok_front
+
+        c, r = np.nonzero(inside)  # c: grid point index, r: triangle index
+        rows.append(valid_idx[r])  # valid_idx[r]: original triangle index
+        cols.append(c + s)  # c + s: original grid point index
+
+    rows = np.concatenate(rows)
+    cols = np.concatenate(cols)
+    data = np.ones_like(rows, dtype=bool)
+    return sparse.csr_matrix((data, (rows, cols)), shape=(M, N), dtype=bool), valid
+
+
+def delta_cone_apply_test():
+    triangles = np.array([[[-1, -1, 1], [-1, 2, 1], [2, -1, 1]], ], dtype=np.float32)
+    start_point = np.array([0, 0, 0], dtype=np.float32)
+    points = np.meshgrid(np.linspace(-2, 2, 25),
+                         np.linspace(-2, 2, 25),
+                         np.linspace(-2, 2, 25), indexing='ij')
+    points = np.array(points).reshape(3, -1).T.astype(np.float32)
+
+    cone, valid = delta_cone_apply(triangles, start_point, points, allow_behind=True, verbose=1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter3d(x=triangles[0, :, 0], y=triangles[0, :, 1], z=triangles[0, :, 2],
+                               mode='lines+markers', name='Triangle 1', line=dict(color='blue')))
+    fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[1],
+                               mode='markers', name='start', marker=dict(color='black')))
+    fig.add_trace(go.Scatter3d(x=points[..., 0], y=points[..., 1], z=points[..., 2],
+                               mode='markers', name='start', marker=dict(color='black', size=1)))
+    for i in range(triangles.shape[0]):
+        inside_points = points[cone.getrow(i).nonzero()[1]]
+        fig.add_trace(go.Scatter3d(x=inside_points[:, 0], y=inside_points[:, 1], z=inside_points[:, 2],
+                                   mode='markers', name=f'Inside Points {i + 1}', marker=dict(size=5)))
+    fig.show()
+    return fig
+
+
+def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
+                  behind_start_included: float | bool = False, dtype: type = np.float32,
+                  batch_points: int = 65536) -> np.ndarray:
+    """
+    Visibility check using delta_cone and Möller–Trumbore intersection algorithm.
+    This function provides a visibility of the grid points from the start point.
+    Conditions:
+    C_1. Whether the grid points are inside the cone defined by the mesh and the origin.
+    C_2. Whether the line segment between the start point and the grid point intersects with the mesh.
 
     Parameters
     ----------
@@ -327,29 +581,101 @@ def check_distance(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarr
         The start point of the ray.
     grid_points : numpy.ndarray (shape: (N, 3))
         The grid points to be checked.
-    inside_cone : sparse.csr_matrix (shape: (N, M))
-        The condition whether the grid points are inside the cone defined by the mesh and the origin.
+    verbose : int, optional, default 0
+        The verbosity level.
+    behind_start_included : float or bool, optional, default False
+        Whether to include the part behind the start point, by default False.
+        If bool, True means include all part behind the start point.
+        If float, include the part behind the start point up to the distance of the float value.
+    dtype : data-type, optional, default np.float32
+        The data type for calculations.
+    batch_points : int, optional
+        The batch size for processing the grid points, by default 65536.
 
     Returns
     -------
-    farther_points
+    visible : numpy.ndarray (shape: (N,)) (dtype=bool)
+        The condition of the grid points. If the n-th grid point is visible from the start point, the value at n is True.
+
+    Notes
+    -----
+    This function first checks if the grid points are inside the cone defined by the mesh and the origin using delta_cone_apply.
+    The points outside the cone are considered to be visible from the start point with the current mesh.
+    Then, for the points inside the cone, it checks if the line segment between the start point and the grid point intersects with the mesh using check_intersection.
+    Once a grid point is found to be intersecting with any mesh, it is considered to be invisible from the start point.
+    That is, C_1 and C_2 for each mesh are ORed and the result is ANDed for all meshes.
     """
 
-    # calculate bounding sphere
-    r_mesh_max = np.linalg.norm(mesh_obj.vectors - start, axis=-1).max(axis=-1, initial=0)  # (M, 3, 3) -> (M, 3)
-    r_grid = np.linalg.norm(grid_points - start, axis=-1)  # (N, 3) -> (N, )
+    N = grid_points.shape[0]
+    M = mesh_obj.vectors.shape[0]
+    if N == 0:
+        return np.zeros(0, dtype=bool)
+    if M == 0:
+        return np.ones(N, dtype=bool)
 
-    # check if the grid is farther than the bounding sphere for each mesh
-    # farther_points = np.array([*np.frompyfunc(lambda x: x > r_mesh_max, 1, 1)(r_grid)])  # (N, M) <- too large
-    # rewrite the above line using sparse matrix
-    farther_points = sparse.hstack([sparse.csr_matrix(r_grid > _max).T for _max in r_mesh_max])  # (N, M)
+    triangles = mesh_obj.vectors.astype(dtype, copy=False)  # (M, 3, 3)
+    start = start.astype(dtype, copy=False)  # (3,)
+    grid_points = grid_points.astype(dtype, copy=False)  # (N, 3)
+    my_print(f"{N=}, {M=}", show=verbose > 0)
 
-    # return farther_points
-    return r_mesh_max
+    allow_behind = isinstance(behind_start_included, Number) or behind_start_included is True
+    my_print("delta_cone_apply start", show=verbose > 0)
+    start_time = time.time()
+    cand, valid = delta_cone_apply(triangles, start, grid_points,
+                                   allow_behind=allow_behind,
+                                   batch_size=batch_points, eps=1e-6, verbose=verbose)  # (M, N)
+    my_print(f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0)
+    visible = np.ones(N, dtype=bool)
+
+    for i in my_range(M, verbose=verbose):
+        if valid[i]:
+            inside_grid_points = cand.getrow(i).nonzero()[1]  # 点 i が三角形 j のコーン内にあるインデックス
+            if inside_grid_points.size > 0:
+                intersected = check_intersection(triangles[i], start, grid_points[inside_grid_points],
+                                                 behind_start_included=behind_start_included, eps=1e-6)
+                visible[inside_grid_points[intersected]] = False
+
+    return visible
 
 
-def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarray,
-                  verbose: int = 0) -> np.ndarray:
+def check_visible_test():
+    vertices = np.array([[-1, -1, 1], [-1, 2, 1], [2, -1, 1]], dtype=np.float32)
+    faces = np.array([[0, 2, 1]])
+    model = make_stl(vertices, faces)
+    triangles = model.vectors
+    start_point = np.array([0, 0, 0.5], dtype=np.float32)
+    points = np.meshgrid(np.linspace(-2, 2, 25),
+                         np.linspace(-2, 2, 25),
+                         np.linspace(-2, 2, 25), indexing='ij')
+    points = np.array(points).reshape(3, -1).T.astype(np.float32)
+    cone, valid = delta_cone_apply(triangles, start_point, points, allow_behind=True, verbose=1)
+    visible = check_visible(model,
+                            start_point, points, verbose=1)
+    visible2 = check_visible(model,
+                             start_point, points, verbose=1, behind_start_included=True)
+    # 1 x 3 figures
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[1],
+                               mode='markers', name='start', marker=dict(color='black')))
+    fig.add_trace(go.Scatter3d(x=points[..., 0], y=points[..., 1], z=points[..., 2],
+                               mode='markers', name='start', marker=dict(color='black', size=1)))
+    inside_points = points[cone.getrow(0).nonzero()[1]]
+    fig.add_trace(go.Scatter3d(x=inside_points[:, 0], y=inside_points[:, 1], z=inside_points[:, 2],
+                               mode='markers', name=f'Inside Points 1', marker=dict(size=2)))
+    invisible_points = points[~visible]
+    fig.add_trace(go.Scatter3d(x=invisible_points[:, 0], y=invisible_points[:, 1], z=invisible_points[:, 2],
+                               mode='markers', name=f'Invisible Points (no mesh)', marker=dict(size=4, color='red')))
+    invisible_points2 = points[~visible2]
+    fig.add_trace(go.Scatter3d(x=invisible_points2[:, 0], y=invisible_points2[:, 1], z=invisible_points2[:, 2],
+                               mode='markers', name=f'Invisible Points (with mesh)',
+                               marker=dict(size=3, color='green')))
+    fig.show()
+    return fig
+
+
+def check_visible_old(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarray,
+                      verbose: int = 0, behind_start_included: bool = False) -> np.ndarray:
     """
     Check if the grid points are visible from the start point.
 
@@ -373,6 +699,9 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarra
         The grid points to be checked.
     verbose : int, optional, default 0
         The verbosity level.
+    behind_start_included : bool, optional, default False
+        Whether to include the part behind the start point, by default False.
+        If True, the grid points behind the start point are considered to be invisible from the start point.
 
     Returns
     -------
@@ -412,7 +741,8 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarra
         check_list = (p @ n_oab[m] >= 0) & (p @ n_obc[m] >= 0) & (p @ n_oca[m] >= 0) & zero_volume[m] & ~shadow
         # If any grid is inside the bounding sphere of m-th mesh, check intersection
         # if np.any(check_list):
-        intersection[check_list] += check_intersection(mesh_obj.vectors[m], start, grid_points[check_list])
+        intersection[check_list] += check_intersection(mesh_obj.vectors[m], start, grid_points[check_list],
+                                                       behind_start_included)
     time.sleep(0.05)
     my_print("intersection check done", show=verbose > 0)
 
@@ -422,6 +752,7 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarra
     return visible
 
 
+# MARK: STL visualization utilities
 def stl2mesh3d(stl_mesh: mesh.Mesh):
     """
     Convert a stl mesh to a Plotly mesh3d object.
@@ -698,6 +1029,7 @@ def show_stl(model, ax=None, fsz=10, elev=30, azim=30, facecolors="lightblue", e
     return ax
 
 
+# MARK: STL generation utilities
 def make_stl(vertices: np.ndarray, faces: np.ndarray) -> mesh.Mesh:
     """
     Make stl data from vertices and faces
@@ -837,32 +1169,88 @@ def make_2D_surface(points: np.ndarray, condition: Callable) -> mesh.Mesh:
 
 
 if __name__ == '__main__':
-    vertices = np.array([[1, 10, -10],
-                         [1, -10, 10],
-                         [1, -10, -10]]) + [5, 3, 13]
+    # delta_cone_apply_test()
+    check_visible_test()
+
+    vertices = np.array([[5, 3, -3],
+                         [5, -3, 3],
+                         [5, -3, -3]])
     faces = np.array([[0, 2, 1]])
     model = make_stl(vertices, faces)
 
-    eye_position = np.array([20, 0, 0])
-    points = np.stack(np.meshgrid(np.linspace(-15, 5, 51),
-                                  np.linspace(-10, 10, 51),
-                                  6, indexing="ij")).reshape((3, -1)).T
-    res = check_visible(model, eye_position, points)
-    axes = plt.subplots(2, 3, subplot_kw=dict(projection='3d', proj_type='ortho'),
-                        figsize=(10, 5))[1].ravel()
-    for i, [ax, cond, title] in enumerate(
-            zip(axes, res, ["inside_cone", "farther_points", "shadow", "check_list", "intersection", "visible"])):
-        # print(cond.squeeze().astype(int))
-        ax.set_title(title)
-        ax.scatter(*eye_position, color="g", s=100, marker="*")
-        ax.scatter(*points[cond.squeeze()].T, c="r", s=10, label="true")
-        ax.scatter(*points[~cond.squeeze()].T, c="b", s=10, label="false")
-        ax.legend()
-        show_stl(model, modify_axes=True, ax=ax, elev=30, azim=60)
-        # plot plane defined by the mesh and eye position
-    axes[0].figure.tight_layout()
-    axes[0].figure.show()
+    eye_position = np.array([0, 0, 0])
+    points = np.stack(np.meshgrid(10,
+                                  np.linspace(-15, 15, 51),
+                                  np.linspace(-15, 15, 51),
+                                  indexing="ij")).reshape((3, -1)).T
 
+    cond = check_visible(model, eye_position, points)
+    fig = go.Figure()
+    plotly_show_stl(model, fig=fig, show_fig=False)
+    fig.add_trace(go.Scatter3d(x=[eye_position[0]],
+                               y=[eye_position[1]],
+                               z=[eye_position[2]], mode="markers",
+                               marker=dict(size=3, color="green")))
+    x, y, z = points[cond.squeeze()].T
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
+                               marker=dict(size=3, color="red")))
+    x, y, z = points[~cond.squeeze()].T
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
+                               marker=dict(size=3, color="blue")))
+    for x, y, z in vertices:
+        a = x - eye_position[0]
+        yy = y * 10 / a
+        zz = z * 10 / a
+        fig.add_trace(go.Scatter3d(x=[0, 10],
+                                   y=[0, yy],
+                                   z=[0, zz], mode="lines",
+                                   marker=dict(size=3, color="black")))
+    fig.show()
+
+    vertices = np.array([[-5, 3, -3],
+                         [-5, -3, 3],
+                         [-5, -3, -3],
+                         [-5, 3, 3],
+                         [-10, 3, -3],
+                         [-10, -3, 3],
+                         [-10, -3, -3],
+                         [-10, 3, 3]])
+    # faces = np.array([[0, 2, 1], [0, 1, 3]])
+    faces = np.array([[0, 1, 2], [4, 5, 7]])
+    # faces = np.array([[0, 1, 3]])
+    # model = make_stl(vertices, faces)
+    model = generate_aperture_stl(shape="circle", size=3.6, resolution=40, max_size=10)
+    model.translate([0, 0, 5])
+    # model.rotate([0, 1, 0], np.pi/2)
+    eye_position = np.array([0, 0, 10])
+    points = np.stack(np.meshgrid(np.linspace(-15, 15, 51),
+                                  np.linspace(0, 15, 51),
+                                  np.linspace(5, 15, 5),
+                                  indexing="ij")).reshape((3, -1)).T
+
+    cond = check_visible(model, eye_position, points, behind_start_included=-7)
+    # cond = check_visible(model, eye_position, points, behind_start_included=True)
+    fig = go.Figure()
+    plotly_show_stl(model, fig=fig, show_fig=False)
+    fig.add_trace(go.Scatter3d(x=[eye_position[0]],
+                               y=[eye_position[1]],
+                               z=[eye_position[2]], mode="markers",
+                               marker=dict(size=3, color="green")))
+    x, y, z = points[cond.squeeze()].T
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
+                               marker=dict(size=2, color="red")))
+    x, y, z = points[~cond.squeeze()].T
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
+                               marker=dict(size=2, color="blue")))
+    # for x, y, z in vertices:
+    #     a = x - eye_position[0]
+    #     yy = y * 10 / a
+    #     zz = z * 10 / a
+    #     fig.add_trace(go.Scatter3d(x=[x, 10],
+    #                                y=[y, yy],
+    #                                z=[z, zz], mode="lines",
+    #                                marker=dict(size=3, color="black")))
+    fig.show()
     # # model = make_stl(*meshed_surface(np.linspace(0, 2 * np.pi, 20), np.linspace(0, 2 * np.pi, 20), torus, a=1, R=2))
     # model = mesh.Mesh.from_file("../cube.stl")
     # model.x = model.x - np.max(model.x)
