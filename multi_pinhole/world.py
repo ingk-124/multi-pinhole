@@ -1,5 +1,6 @@
 import gc
 import time
+from typing import Tuple, List
 
 import dill
 import numpy as np
@@ -9,11 +10,10 @@ from scipy import sparse
 from stl import mesh
 from tqdm.contrib import tzip
 
+from multi_pinhole import Camera, Voxel, Eye, Screen, Aperture
 from utils import stl_utils
 from utils import type_check_and_list
 from utils.my_stdio import my_print
-from .core import Camera, Eye, Screen, Aperture
-from .voxel import Voxel
 
 
 def type_list(obj, type_):
@@ -26,6 +26,45 @@ def type_list(obj, type_):
         return obj
     else:
         raise TypeError(f"obj should be a list of {type_} or a {type_}, not {type(obj)}")
+
+
+def _blocks_lengths(arr_blocks) -> np.ndarray:
+    return np.array([0 if blk is None else blk.shape[0] for blk in arr_blocks], dtype=np.int64)
+
+
+def _slice_blocks(
+        pts_blocks: List[np.ndarray],
+        S_blocks: List[sparse.csr_matrix],
+        start: int,
+        stop: int,
+        n_vox: int
+) -> Tuple[np.ndarray, sparse.csr_matrix]:
+    """連結した (pts_blocks, S_blocks) をグローバル範囲 [start:stop) で部分スライス。"""
+    out_pts, out_S = [], []
+    if start >= stop:
+        return np.empty((0, 3)), sparse.csr_matrix((0, n_vox))
+    lens = _blocks_lengths(pts_blocks)
+    csum = np.cumsum(np.concatenate([[0], lens]))
+    b = int(np.searchsorted(csum, start, side="right") - 1)
+    pos = start
+    while pos < stop and b < len(pts_blocks):
+        L = lens[b]
+        if L == 0:
+            b += 1
+            continue
+        blk_start, blk_stop = csum[b], csum[b + 1]
+        s = max(0, pos - blk_start)
+        t = min(L, stop - blk_start)
+        if s < t:
+            out_pts.append(pts_blocks[b][s:t])
+            out_S.append(S_blocks[b][s:t, :])
+            pos = blk_start + t
+        else:
+            pos = blk_stop
+        b += 1
+    pts_chunk = np.concatenate(out_pts, axis=0) if out_pts else np.empty((0, 3))
+    S_chunk = sparse.vstack(out_S, format="csr") if out_S else sparse.csr_matrix((0, n_vox))
+    return pts_chunk, S_chunk
 
 
 class World:
@@ -68,7 +107,7 @@ class World:
         self._wall_ranges = None
         self.walls = walls
         self._inside_voxels = True
-        self._visible_voxels = None
+        self._visible_voxels = [None] * len(self._cameras)
         self._projection = [None] * len(self._cameras)
         self._P_matrix_list = [None] * len(self._cameras)
         self._P_matrix = None
@@ -140,8 +179,8 @@ class World:
 
     @property
     def visible_voxels(self):
-        if self._visible_voxels is None or len(self._visible_voxels) != len(self._cameras):
-            self.find_visible_voxels()
+        force = any([_ is None for _ in self._visible_voxels]) or len(self._visible_voxels) != len(self._cameras)
+        self.find_visible_voxels(force=force)
         return self._visible_voxels
 
     @property
@@ -413,7 +452,10 @@ class World:
                     if aperture.stl_model is None:
                         aperture.set_model()
                     visible *= stl_utils.check_visible(mesh_obj=aperture.stl_model, start=_eye.position,
-                                                       grid_points=camera_grid, verbose=verbose)  # (N_points, )
+                                                       grid_points=camera_grid, verbose=verbose,
+                                                       behind_start_included=True,
+
+                                                       )  # (N_points, )
                     my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
                     my_print("-" * 15, show=verbose > 0)
 
@@ -494,6 +536,119 @@ class World:
             _im_vec_list.append(sum(im_vec_sub_voxels))
 
         return _im_vec_list
+
+    def _calc_voxel_image_for_eye(
+            self,
+            camera_idx,
+            eye_idx: int,
+            res: int,
+            parallel: int = 0,
+            *,
+            target_work_per_batch: int = 5_000_000,
+            sample_for_batch: int = 2000,
+    ) -> sparse.csc_matrix:
+        """
+        1つの Eye について、可視サブボクセル中心をまとめて投影→右掛けでボクセル列に集約。
+        sub_voxel_interpolator は (K × N_voxel) で、行に複数非ゼロ（補間）を想定。
+        """
+        screen = self.cameras[camera_idx].screen
+        N_vox = self.voxel.N
+
+        # 可視フラグ: 0=不可視, 1=部分可視, 2=完全可視
+        vis_flag = self.visible_voxels[camera_idx][eye_idx]
+        voxels_part = np.flatnonzero(vis_flag == 1)
+        voxels_full = np.flatnonzero(vis_flag == 2)
+
+        if voxels_part.size + voxels_full.size == 0:
+            return sparse.csc_matrix((screen.N_subpixel, N_vox))
+
+        # 取得順（FULL→PART）
+        vox_order = np.concatenate([voxels_full, voxels_part])
+        sub_list = self.voxel.get_sub_voxel(n=vox_order, res=res)  # list of sub-voxel
+        interp_list = self.voxel.sub_voxel_interpolator(n=vox_order, res=res)  # list of CSR (K × N_vox)
+
+        # voxel_id -> (centers(K,3), interpolator(K×N_vox))
+        sub_map = {v: (sv.gravity_center, itp) for v, sv, itp in zip(vox_order, sub_list, interp_list)}
+
+        # --- FULL: 全行採用 ---
+        full_pts_blocks, full_S_blocks = [], []
+        for v in voxels_full:
+            centers, Ivn = sub_map[v]
+            full_pts_blocks.append(centers)  # (K,3)
+            full_S_blocks.append(Ivn)  # (K×N_vox)
+
+        # --- PART: まとめて可視判定 → 可視行だけ採用 ---
+        part_pts_blocks, part_S_blocks = [], []
+        if voxels_part.size:
+            centers_blocks = [sub_map[v][0] for v in voxels_part]
+            sizes = np.array([c.shape[0] for c in centers_blocks], dtype=np.int64)
+            if sizes.sum() > 0:
+                centers_cat = np.concatenate(centers_blocks, axis=0)
+                vis = self.find_visible_points(centers_cat, cameras=self.cameras[camera_idx], eye_num=eye_idx, verbose=0)
+                # 返り値が bool 配列 or インデックス配列の両対応
+                if isinstance(vis, (tuple, list)):
+                    idx = vis[0][0] if isinstance(vis[0], (list, tuple, np.ndarray)) else vis[0]
+                    mask_cat = np.zeros(centers_cat.shape[0], dtype=bool)
+                    mask_cat[idx] = True
+                else:
+                    arr = np.asarray(vis)
+                    if arr.dtype == bool and arr.shape[0] == centers_cat.shape[0]:
+                        mask_cat = arr
+                    else:
+                        mask_cat = np.zeros(centers_cat.shape[0], dtype=bool)
+                        mask_cat[arr] = True
+                # 分配
+                off = 0
+                for v, K in zip(voxels_part, sizes):
+                    m = mask_cat[off:off + K]
+                    if np.any(m):
+                        centers, Ivn = sub_map[v]
+                        part_pts_blocks.append(centers[m])
+                        part_S_blocks.append(Ivn[m, :])
+                    off += K
+
+        my_print(f"Full voxels: {len(full_pts_blocks)}, Part voxels: {len(part_pts_blocks)}",
+                 show=self.verbose > 0)
+        # 以降、(pts_blocks, S_blocks) をチャンクで処理
+        pts_blocks = full_pts_blocks + part_pts_blocks
+        S_blocks = full_S_blocks + part_S_blocks
+        total_pts = int(_blocks_lengths(pts_blocks).sum())
+        if total_pts == 0:
+            return sparse.csc_matrix((screen.N_subpixel, N_vox))
+
+        # バッチサイズ見積り（投影の nnz/点 と 補間の nnz/行 から）
+        def _estimate_batch_points() -> int:
+            n_samp = min(total_pts, int(sample_for_batch))
+            samp_pts, _ = _slice_blocks(pts_blocks, S_blocks, 0, n_samp, N_vox)
+            if samp_pts.shape[0] == 0:
+                return 1
+            I_s = self.cameras[camera_idx].calc_image_vec(eye_idx, points=samp_pts, parallel=parallel)
+            k = max(1.0, I_s.nnz / float(samp_pts.shape[0]))  # 1点あたりのスクリーン nnz
+            # S 側（補間）の平均 nnz/行を簡易に推定：先頭ブロックの一部で十分
+            S_head = S_blocks[0] if S_blocks else sparse.csr_matrix((0, N_vox))
+            if S_head.shape[0] > 4096:
+                S_head = S_head[:4096, :]
+            r = max(1.0, float(np.mean(np.asarray(S_head.getnnz(axis=1)).ravel())) if S_head.shape[0] else 8.0)
+            bs = int(max(1, target_work_per_batch / (k * r)))
+            return int(min(bs, 100_000))
+
+        batch_pts = _estimate_batch_points()
+
+        # チャンクループ：投影 → 右掛けで集約
+        result = sparse.csc_matrix((screen.N_subpixel, N_vox))
+        done = 0
+        while done < total_pts:
+            s = done
+            t = min(done + batch_pts, total_pts)
+            pts_chunk, S_chunk = _slice_blocks(pts_blocks, S_blocks, s, t, N_vox)
+            if pts_chunk.shape[0] == 0:
+                break
+            # 上位で並列化するなら parallel=0 に、逆にするならここで並列
+            I_chunk = self.cameras[camera_idx].calc_image_vec(eye_idx, points=pts_chunk, parallel=parallel)
+            result += I_chunk @ S_chunk
+            done = t
+
+        return result.tocsc()
 
     def set_projection_matrix(self, index: int | list[int] = None,
                               res: int = None, verbose: int = 1, parallel: int = -1,
@@ -791,7 +946,7 @@ if __name__ == '__main__':
     camera_1.screen.show_image(camera_1.screen.subpixel_to_pixel(sum(im_vec_list).sum(axis=1)), block=False,
                                ax=ax)
     for i, eye in enumerate(camera_1.eyes):
-        c = camera_1.screen.xy2uv(eye.calc_rays(camera_1.apertures[0].position).xy)
+        c = camera_1.screen.xy2uv(eye.calc_rays(camera_1.apertures[0].position).XY)
         r = eye.focal_length / (camera_1.apertures[0].position[-1] - eye.focal_length) * camera_1.apertures[
             0].size
         ax.plot(np.cos(np.linspace(0, 2 * np.pi)) * r[0] + c[0, 1],

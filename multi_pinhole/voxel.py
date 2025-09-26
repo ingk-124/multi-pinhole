@@ -2,7 +2,7 @@ import numpy as np
 from scipy import sparse
 from scipy.spatial.transform import Rotation
 
-from utils.my_stdio import my_print
+from utils.my_stdio import *
 
 # TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
 # TODO: refactor variable names
@@ -833,7 +833,7 @@ class Voxel:
         # (i,j,k) -> n: n = k + N_z * (j + N_y * i)
         self._vertices_indices = np.array([[k + self._grid_shape[2] * (j + self._grid_shape[1] * i)
                                             for i, j, k in vertex_index + ijk] for ijk in
-                                           self._voxel_indices])  # (N_voxel, 8)
+                                           my_tqdm(self._voxel_indices, verbose=1)])  # (N_voxel, 8)
         self._vertices = self._grid[self._vertices_indices]  # (N_voxel, 8, 3)
 
         # voxel edge length
