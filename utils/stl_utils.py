@@ -623,10 +623,13 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     start_time = time.time()
     cand, valid = delta_cone_apply(triangles, start, grid_points,
                                    allow_behind=allow_behind,
-                                   batch_size=batch_points, eps=1e-6, verbose=verbose)  # (M, N)
+                                   batch_size=batch_points, verbose=verbose,
+                                   eps=1e-6)  # (M, N)
+    time.sleep(0.1)
     my_print(f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0)
     visible = np.ones(N, dtype=bool)
-
+    my_print("check_intersection start", show=verbose > 0)
+    start_time = time.time()
     for i in my_range(M, verbose=verbose):
         if valid[i]:
             inside_grid_points = cand.getrow(i).nonzero()[1]  # 点 i が三角形 j のコーン内にあるインデックス
@@ -634,6 +637,7 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
                 intersected = check_intersection(triangles[i], start, grid_points[inside_grid_points],
                                                  behind_start_included=behind_start_included, eps=1e-6)
                 visible[inside_grid_points[intersected]] = False
+    my_print(f"check_intersection done in {time.time() - start_time:.3f} sec", show=verbose > 0)
 
     return visible
 

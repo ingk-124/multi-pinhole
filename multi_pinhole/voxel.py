@@ -402,8 +402,9 @@ class Voxel:
         self._coordinate_parameters = {}
 
         # set attributes
+        self.set_coordinate(coordinate_type=coordinate_type, rotation=rotation,
+                            **self.coordinate_parameters)
         self.axes = axes
-        self.set_coordinate(coordinate_type=coordinate_type, rotation=rotation, **self.coordinate_parameters)
         self.res = sub_voxel_resolution
 
     def __repr__(self):
@@ -792,11 +793,34 @@ class Voxel:
         # for i, (axis, step, div) in enumerate(zip(axes, steps, divs)):
         #     print(f"axis {i}: {div=}")
         #     print(f"{step=}, {axis=}")
+        print("update axes...")
         self.axes = axes
         if show_info:
             self.show_info()
 
         return self
+
+    @staticmethod
+    def uniform_voxel(ranges, shape, **kwargs):
+        """
+        create Voxel with uniform axes
+
+        Parameters
+        ----------
+        ranges : ((float, float), (float, float), (float, float))
+            axis ranges
+        shape : (int, int, int)
+            voxel shape
+        kwargs : dict
+            other arguments of Voxel
+
+        Returns
+        -------
+        voxel : Voxel
+        """
+        axes = [np.linspace(start, end, num + 1) for (start, end), num in zip(ranges, shape)]
+        voxel = Voxel(*axes, **kwargs)
+        return voxel
 
     def update(self):
         """
@@ -804,7 +828,8 @@ class Voxel:
 
         if 0 is in grid_shape i.e. N_grid == 0, then do nothing
         """
-
+        if self.axes is None:
+            return
         # vertex points
         self._grid_shape = tuple(len(axis) for axis in self.axes)  # (N_x + 1, N_y + 1, N_z + 1)
         self._N_grid = np.prod(self._grid_shape)  # (N_x + 1) * (N_y + 1) * (N_z + 1)
@@ -831,9 +856,9 @@ class Voxel:
         vertex_index = np.mgrid[0:2, 0:2, 0:2].reshape((3, -1)).T  # (8, 3)
 
         # (i,j,k) -> n: n = k + N_z * (j + N_y * i)
-        self._vertices_indices = np.array([[k + self._grid_shape[2] * (j + self._grid_shape[1] * i)
-                                            for i, j, k in vertex_index + ijk] for ijk in
-                                           my_tqdm(self._voxel_indices, verbose=1)])  # (N_voxel, 8)
+        self._vertices_indices = np.array(
+            [[k + self._grid_shape[2] * (j + self._grid_shape[1] * i) for i, j, k in vertex_index + ijk] for ijk in
+             self._voxel_indices])  # (N_voxel, 8)
         self._vertices = self._grid[self._vertices_indices]  # (N_voxel, 8, 3)
 
         # voxel edge length
@@ -856,6 +881,152 @@ class Voxel:
             self._normalized_coordinates = spherical_coordinates(**self._coordinate_parameters)
 
         return
+
+    # -------- Fast updater (reduced allocations) ---------------------------------
+    def update_fast(self, *, build_grid: bool = False, build_vertices: bool = False):
+        """
+        Faster alternative to `update()`.
+        - Avoids allocating the full `grid` / `vertices` unless explicitly requested.
+        - Computes voxel centers, cell sizes and volumes in a vectorized way.
+        - Builds `vertices_indices` with a fully vectorized formula.
+
+        Parameters
+        ----------
+        build_grid : bool, default False
+            If True, materialize `self._grid` ((N_grid,3)). Otherwise keep it None.
+        build_vertices : bool, default False
+            If True, materialize `self._vertices` ((N_voxel,8,3)). Otherwise keep it None.
+        """
+        if self.axes is None:
+            return
+
+        # Basic shapes
+        self._grid_shape = tuple(len(axis) for axis in self.axes)           # (N_x+1, N_y+1, N_z+1)
+        self._N_grid = int(np.prod(self._grid_shape))
+        if self._N_grid == 0:
+            return
+
+        # Voxel shape / count
+        self._voxel_shape = tuple(max(0, len(axis) - 1) for axis in self.axes)  # (N_x, N_y, N_z)
+        self._N_voxel = int(np.prod(self._voxel_shape))
+
+        # Axis ranges
+        self._ranges = tuple((float(np.min(axis)), float(np.max(axis))) for axis in self.axes)
+
+        # Optionally build full grid (heavy). Keep None by default to save memory.
+        if build_grid:
+            self._grid = np.stack(np.meshgrid(*self.axes, indexing="ij")).reshape((3, -1)).T
+        else:
+            self._grid = None
+
+        # Precompute per-axis diffs and centers (1D)
+        x, y, z = self.axes
+        dx = np.diff(x)  # (N_x,)
+        dy = np.diff(y)  # (N_y,)
+        dz = np.diff(z)  # (N_z,)
+
+        cx = 0.5 * (x[:-1] + x[1:])  # (N_x,)
+        cy = 0.5 * (y[:-1] + y[1:])  # (N_y,)
+        cz = 0.5 * (z[:-1] + z[1:])  # (N_z,)
+
+        # Vectorized voxel indices (i,j,k) and vertices_indices
+        Nx, Ny, Nz = self._voxel_shape
+        if self._N_voxel == 0:
+            # degenerate
+            self._voxel_indices = np.empty((0, 3), dtype=int)
+            self._vertices_indices = np.empty((0, 8), dtype=int)
+            self._vertices = None
+            self._d = np.empty((0, 3))
+            self._gravity_center = np.empty((0, 3))
+            self._volume = np.empty((0,))
+        else:
+            ii, jj, kk = np.meshgrid(np.arange(Nx), np.arange(Ny), np.arange(Nz), indexing="ij")
+            self._voxel_indices = np.stack([ii, jj, kk], axis=-1).reshape(-1, 3)
+
+            # vertex linear index base (grid is in z->y->x order: n = k + Nz*(j + Ny*i))
+            base = (kk + Nz * (jj + Ny * ii)).reshape(-1)  # (N_voxel,)
+
+            # fixed offsets for the 8 vertex corners
+            off = np.array([0, 1, Nz, Nz + 1, Nz * Ny, Nz * Ny + 1, Nz * Ny + Nz, Nz * Ny + Nz + 1], dtype=np.int64)
+            self._vertices_indices = (base[:, None] + off[None, :]).astype(np.int64, copy=False)  # (N_voxel,8)
+
+            # Per-voxel cell sizes (N_voxel, 3) without building full 3D stacks
+            # Use meshgrid on 1D diffs and 1D centers to create compact 3D then flatten.
+            DX, DY, DZ = np.meshgrid(dx, dy, dz, indexing="ij")
+            self._d = np.stack([DX, DY, DZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
+
+            CX, CY, CZ = np.meshgrid(cx, cy, cz, indexing="ij")
+            self._gravity_center = np.stack([CX, CY, CZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
+
+            # Volumes (N_voxel,)
+            self._volume = (DX * DY * DZ).reshape(-1)
+
+            # Optionally materialize per-voxel 8 vertices (heavy)
+            if build_vertices:
+                # Create the grid on demand to index vertices (costly)
+                if self._grid is None:
+                    self._grid = np.stack(np.meshgrid(*self.axes, indexing="ij")).reshape((3, -1)).T
+                self._vertices = self._grid[self._vertices_indices]
+            else:
+                self._vertices = None
+
+        # normalized coordinate function refresh (same as update())
+        if self._coordinate_type == "cartesian":
+            self._normalized_coordinates = cartesian_coordinates(**self._coordinate_parameters)
+        elif self._coordinate_type == "torus":
+            self._normalized_coordinates = torus_coordinates(**self._coordinate_parameters)
+        elif self._coordinate_type == "cylindrical":
+            self._normalized_coordinates = cylindrical_coordinates(**self._coordinate_parameters)
+        elif self._coordinate_type == "spherical":
+            self._normalized_coordinates = spherical_coordinates(**self._coordinate_parameters)
+
+        return
+
+    # -------- Lightweight helper properties (computed from 1D data) --------------
+    @property
+    def dx_axis(self):
+        """1D cell size along x (length N_x)."""
+        if self.axes is None or len(self.axes[0]) == 0:
+            return np.array([])
+        return np.diff(self.axes[0])
+
+    @property
+    def dy_axis(self):
+        """1D cell size along y (length N_y)."""
+        if self.axes is None or len(self.axes[1]) == 0:
+            return np.array([])
+        return np.diff(self.axes[1])
+
+    @property
+    def dz_axis(self):
+        """1D cell size along z (length N_z)."""
+        if self.axes is None or len(self.axes[2]) == 0:
+            return np.array([])
+        return np.diff(self.axes[2])
+
+    @property
+    def cx_axis(self):
+        """1D centers along x (length N_x)."""
+        if self.axes is None or len(self.axes[0]) == 0:
+            return np.array([])
+        x = self.axes[0]
+        return 0.5 * (x[:-1] + x[1:])
+
+    @property
+    def cy_axis(self):
+        """1D centers along y (length N_y)."""
+        if self.axes is None or len(self.axes[1]) == 0:
+            return np.array([])
+        y = self.axes[1]
+        return 0.5 * (y[:-1] + y[1:])
+
+    @property
+    def cz_axis(self):
+        """1D centers along z (length N_z)."""
+        if self.axes is None or len(self.axes[2]) == 0:
+            return np.array([])
+        z = self.axes[2]
+        return 0.5 * (z[:-1] + z[1:])
 
     def show_info(self):
         print(f"{self.__class__.__name__} info:")
@@ -910,7 +1081,7 @@ class Voxel:
             vertices = np.array(vertices, ndmin=3)
             if vertices.shape[1:] != (8, 3):
                 raise ValueError(f"vertices must be (8, 3) or (n_voxel, 8, 3)")
-
+        # TODO: verticesは重いのでインデックスのみ使用する
         sub_axes = [[np.linspace(x, y, r + 1) for x, y, r in zip(vox[0], vox[-1], self._res)] for vox in vertices]
         sub_voxels = [Voxel(*axes) for axes in sub_axes]
         if len(sub_voxels) == 1:

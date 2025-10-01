@@ -72,7 +72,7 @@ class World:
                  voxel: Voxel = None,
                  cameras: list[Camera] | Camera = None,
                  walls: list[mesh.Mesh] | mesh.Mesh = None,
-                 inside_voxels: np.ndarray = None,
+                 inside_func: callable = None,
                  verbose: int = 1
                  ):
         """The world class
@@ -85,9 +85,8 @@ class World:
             The camera model
         walls: list[mesh.Mesh], optional (default is None)
             The walls in the world
-        inside_voxels: np.ndarray, optional (default is None)
-            The inside voxels
-
+        inside_func: callable, optional (default is None)
+            A function that takes three parameters X, Y, Z and returns a boolean array
 
         Notes
         -----
@@ -95,25 +94,33 @@ class World:
         The inside voxels should be a boolean array with the length of the number of voxels.
         """
 
+        # Voxel
         self._voxel = voxel if voxel is not None else Voxel()
         self._voxel.set_world(self)
 
-        self._cameras = type_check_and_list(cameras, Camera)
-
-        for _ in self._cameras:
+        # Cameras
+        # TODO: use dictionary to store cameras and other attributes related to cameras
+        # self._cameras = type_check_and_list(cameras, Camera)
+        self._cameras = {i: cam for i, cam in enumerate(type_check_and_list(cameras, Camera))}
+        for _ in self._cameras.values():
             _.set_world(self)
 
+        # Walls
         self._walls = []
         self._wall_ranges = None
         self.walls = walls
-        self._inside_voxels = True
-        self._visible_voxels = [None] * len(self._cameras)
-        self._projection = [None] * len(self._cameras)
-        self._P_matrix_list = [None] * len(self._cameras)
-        self._P_matrix = None
+
+        # initialize other attributes
+        self._inside_vertices = None
+        self._visible_vertices = {i: None for i in self._cameras.keys()}
+        self._visible_voxels = {i: None for i in self._cameras.keys()}
+        self._projection = {i: [None]*len(self._cameras[i].eyes) for i in self._cameras.keys()}
+        self._P_matrix = {i: None for i in self._cameras.keys()}
         self.verbose = verbose
 
-        self._normalized_coordinates = None
+        # set inside vertices if inside_func is provided
+        if inside_func is not None:
+            self.set_inside_vertices(inside_func)
 
     def __repr__(self):
         return f"World(voxel={self.voxel}, CAMERA={self.cameras}, walls={self.walls})"
@@ -121,6 +128,20 @@ class World:
     def __copy__(self):
         return World(cameras=self.cameras, voxel=self.voxel)
 
+    def camera_info(self):
+        """Print the summary of the cameras"""
+        txt = "Camera Info:\n"
+        for i, camera in self._cameras.items():
+            txt += f" Camera {i}:\n"
+            txt += camera.__repr__() + "\n"
+        txt = txt.rstrip("\n")
+        return txt
+
+    def voxel_info(self):
+        """Print the summary of the voxel"""
+        return self.voxel.__repr__()
+
+    # MARK: Save and Load
     def save_world(self, filename):
         """Save the world to a file
 
@@ -144,6 +165,7 @@ class World:
             loaded_world = dill.load(f)
         self.__dict__.update(loaded_world.__dict__)
 
+    # MARK: Properties
     @property
     def cameras(self):
         return self._cameras
@@ -156,17 +178,18 @@ class World:
     def walls(self):
         return self._walls
 
-    @property
-    def coordinate_type(self):
-        return self._coordinate_type
+    # future use
+    # @property
+    # def coordinate_type(self):
+    #     return self._coordinate_type
 
-    @property
-    def coordinate_parameters(self):
-        return self._coordinate_parameters
+    # @property
+    # def coordinate_parameters(self):
+    #     return self._coordinate_parameters
 
-    @property
-    def normalized_coordinates(self):
-        return (lambda x: x) if self._normalized_coordinates is None else self._normalized_coordinates
+    # @property
+    # def normalized_coordinates(self):
+    #     return (lambda x: x) if self._normalized_coordinates is None else self._normalized_coordinates
 
     @property
     def wall_ranges(self):
@@ -179,52 +202,39 @@ class World:
 
     @property
     def visible_voxels(self):
-        force = any([_ is None for _ in self._visible_voxels]) or len(self._visible_voxels) != len(self._cameras)
-        self.find_visible_voxels(force=force)
         return self._visible_voxels
+
+    # @property
+    # def P_matrix(self):
+    # TODO: implement this property
+    # if None in self._P_matrix_list:
+    #     print("One or more P matrix is not calculated.")
+    #     print("Please run set_projection_matrix method.")
+    #     return
+    # elif (self._P_matrix is None) or (
+    #         self._P_matrix.shape[0] != sum([P.shape[0] for P in self._P_matrix_list])):
+    #     self._P_matrix = sparse.vstack(self._P_matrix_list)
+    # return self._P_matrix
 
     @property
     def P_matrix(self):
-        if None in self._P_matrix_list:
-            print("One or more P matrix is not calculated.")
-            print("Please run set_projection_matrix method.")
-            return
-        elif (self._P_matrix is None) or (
-                self._P_matrix.shape[0] != sum([P.shape[0] for P in self._P_matrix_list])):
-            self._P_matrix = sparse.vstack(self._P_matrix_list)
         return self._P_matrix
 
     @property
-    def P_matrix_list(self):
-        return self._P_matrix_list
-
-    @property
-    def inside_voxels(self):
-        return self._inside_voxels
-
-    @inside_voxels.setter
-    def inside_voxels(self, inside_voxels: np.ndarray):
-        if not isinstance(inside_voxels, np.ndarray):
-            raise TypeError(f"inside_voxels should be a np.ndarray, not {type(inside_voxels)}")
-        if inside_voxels.shape != (self.voxel.N_voxel,):
-            raise ValueError(f"inside_voxels should be a np.ndarray with the length of the number of voxels, "
-                             f"not {inside_voxels.shape}")
-        self._inside_voxels = inside_voxels
-        self._visible_voxels = [vv * self._inside_voxels for vv in self.visible_voxels]
-
-    @property
     def inside_vertices(self):
-        return self._inside_vertices
+        if self._inside_vertices is None:
+            return np.ones(self.voxel.N_grid, dtype=bool)
+        else:
+            return self._inside_vertices
 
+    # MARK: Setters
     @inside_vertices.setter
     def inside_vertices(self, inside_vertices: np.ndarray):
         if not isinstance(inside_vertices, np.ndarray):
             raise TypeError(f"inside_voxels should be a np.ndarray, not {type(inside_vertices)}")
-        if inside_vertices.shape != (self.voxel.N_voxel,):
-            raise ValueError(f"inside_voxels should be a np.ndarray with the length of the number of voxels, "
-                             f"not {inside_vertices.shape}")
-        self._inside_voxels = inside_vertices
-        self._visible_voxels = [vv * self._inside_voxels for vv in self.visible_voxels]
+        if inside_vertices.size != self.voxel.N_grid:
+            raise ValueError("inside_voxels should be a np.ndarray with the length of the number of grid points.")
+        self._inside_vertices = inside_vertices.astype(bool)
 
     @cameras.setter
     def cameras(self, cameras: list[Camera] | Camera):
@@ -233,48 +243,50 @@ class World:
         Parameters
         ----------
         cameras
-            The camera objects
+            List of Camera objects
+
+        Notes
+        -----
+        If the new camera is the same as the previous one, the visible voxels, projection, and P matrix are reused.
         """
         cameras = type_check_and_list(cameras, Camera)
-        camera_index = []
-        visible_voxels = []
-        projection = []
-        P_matrix_list = []
-
+        camera_dict = {}
+        visible_voxels = {}
+        projection = {}
+        P_matrix = {}
         for c_, camera in enumerate(cameras):
-            if camera in self._cameras:
+            if camera in self._cameras.values():
                 # get the index of the camera in the original camera list
-                ind = self._cameras.index(camera)
+                ind = list(self._cameras.values()).index(camera)
                 # keep the previous visible voxels, projection, and P matrix
-                visible_voxels.append(self._visible_voxels[ind])
-                projection.append(self._projection[ind])
-                P_matrix_list.append(self._P_matrix_list[ind])
-                camera_index.append(c_)
+                visible_voxels[c_] = self._visible_voxels[ind]
+                projection[c_] = self._projection[ind]
+                P_matrix[c_] = self._P_matrix[ind]
             else:
                 # if the camera is not in the original camera list,
                 # set the visible voxels, projection, and P matrix to None
-                visible_voxels.append(None)
-                projection.append(None)
-                P_matrix_list.append(None)
-                camera_index.append(None)
+                visible_voxels[c_] = None
+                projection[c_] = None
+                P_matrix[c_] = None
+            camera_dict[c_] = camera
 
-        self._cameras = cameras
+        self._cameras = camera_dict
         self._visible_voxels = visible_voxels
         self._projection = projection
-        self._P_matrix_list = P_matrix_list
-        self._P_matrix = None
-
-        if all([_ is None for _ in camera_index]):
+        self._P_matrix = P_matrix
+        # self._P_matrix = None
+        if all([_ is None for _ in visible_voxels.values()]):
             print("Notice: All cameras are updated.")
-        elif None in camera_index:
+        elif None in visible_voxels.values():
             # Notice: *th, *th, and *th cameras are reused.
-            reused_index = [f"{i + 1}th" for i in camera_index if i is not None]
+            reused_index = [f"{i + 1}th" for i in visible_voxels.keys() if visible_voxels[i] is not None]
             xth = ", ".join(reused_index[:-1]) + " and " + reused_index[-1] if \
                 len(reused_index) > 1 else f"{reused_index[0]}"
             print(f"Notice: {xth} camera{'s are' if len(reused_index) > 1 else ' is'} reused.")
         else:
             # All cameras are reused.
             print("Notice: All cameras are reused.")
+        print(self.camera_info())
 
     def add_camera(self, new_camera: Camera | list[Camera]):
         """Add a camera
@@ -283,9 +295,19 @@ class World:
         ----------
         new_camera: Camera | list[Camera]
             The camera object to add
+
+        Notes
+        -----
+        Added cameras are appended to the end of the camera list.
         """
         new_camera = type_check_and_list(new_camera, Camera)
-        self.cameras = self._cameras + new_camera
+        current_len = len(self._cameras)
+        for i, cam in enumerate(new_camera):
+            self._cameras[current_len + i] = cam
+            self._visible_voxels[current_len + i] = None
+            self._projection[current_len + i] = [None]*len(cam.eyes)
+            self._P_matrix[current_len + i] = None
+        print(self.camera_info())
 
     def remove_camera(self, index: int | list[int]):
         """Remove a camera
@@ -294,25 +316,50 @@ class World:
         ----------
         index: int
             The index of the camera to remove
+
+        Notes
+        -----
+        After removing the camera(s), the keys of the dictionaries related to cameras are re-indexed.
         """
         index = type_check_and_list(index, int)
-        self.cameras = [c for i, c in enumerate(self._cameras) if i not in index]
+        for i in sorted(index, reverse=True):
+            if i in self._cameras:
+                del self._cameras[i]
+                del self._visible_voxels[i]
+                del self._projection[i]
+                del self._P_matrix[i]
+        # re-index the cameras and related attributes
+        self._cameras = {new_i: cam for new_i, cam in enumerate(self._cameras.values())}
+        self._visible_voxels = {new_i: self._visible_voxels[old_i] for new_i, old_i in
+                                enumerate(sorted(self._visible_voxels.keys()))}
+        self._projection = {new_i: self._projection[old_i] for new_i, old_i in
+                            enumerate(sorted(self._projection.keys()))}
+        self._P_matrix = {new_i: self._P_matrix[old_i] for new_i, old_i in enumerate(sorted(self._P_matrix.keys()))}
+        print(self.camera_info())
 
-    def change_camera(self, index: int | list[int],
-                      camera: Camera | list[Camera]):
-        """Change a camera
+    def change_camera(self, index: int | list[int], camera: Camera | list[Camera]):
+        """Change cameras at the specified indices
 
         Parameters
         ----------
-        index: int
+        index: int | list[int]
             The index of the camera to change
-        camera: Camera
+        camera: Camera | list[Camera]
             The new camera object
         """
         index = type_check_and_list(index, int)
         camera = type_check_and_list(camera, Camera)
+        if len(index) != len(camera):
+            raise ValueError("The length of index and camera should be the same.")
 
-        self.cameras = [c if i not in index else camera.pop(0) for i, c in enumerate(self._cameras)]
+        for i, cam in zip(index, camera):
+            if i in self._cameras:
+                self._cameras[i] = cam
+                self._visible_voxels[i] = None
+                self._projection[i] = [None]*len(cam.eyes)
+                self._P_matrix[i] = None
+
+        print(self.camera_info())
 
     @voxel.setter
     def voxel(self, voxel):
@@ -321,17 +368,16 @@ class World:
         if voxel != self._voxel:
             my_print("Voxel is updated.", show=self.verbose > 0)
             self._voxel = voxel
-            self._visible_voxels = [None] * len(self._cameras)
-            self._projection = [None] * len(self._cameras)
-            self._P_matrix_list = [None] * len(self._cameras)
-            self._P_matrix = None
+            self._visible_voxels = {i: None for i in self._cameras.keys()}
+            self._projection = {i: [None]*len(self._cameras[i].eyes) for i in self._cameras.keys()}
+            self._P_matrix = {i: None for i in self._cameras.keys()}
 
     @walls.setter
     def walls(self, walls: list[mesh.Mesh] | mesh.Mesh):
         walls = type_check_and_list(walls, mesh.Mesh)
         if walls != self._walls:
             self._walls = walls
-            self._visible_voxels = [None] * len(self._cameras)
+            self._visible_voxels = {i: None for i in self._cameras.keys()}
             if self._walls:
                 for wall in self._walls:
                     wall.update_min()
@@ -339,137 +385,181 @@ class World:
                 self._wall_ranges = zip(np.min([_.min_ for _ in self._walls], axis=0),
                                         np.max([_.max_ for _ in self._walls], axis=0))
 
-    def set_inside_voxels_from_axis(self, axis: np.ndarray):
-        """Set the inside voxels from the axis
+    # MARK: Methods
+    def set_inside_vertices(self, function: callable, **kwargs) -> None:
+        """
+        Find the inside vertices using a function
 
         Parameters
         ----------
-        axis: np.ndarray
-            The axis of the inside voxels (n_points, 3)
-        """
-
-        def inside(start):
-            """Check if the start point is inside the walls
-
-            Parameters
-            ----------
-            start: np.ndarray
-                The start point (3, )
-
-            Returns
-            -------
-            inside: bool
-                Whether the start point is inside the walls (N_voxel, )
-            """
-            inside_vertices = np.all(
-                [stl_utils.check_visible(mesh_obj=wall, start=start, grid_points=self.voxel.grid, verbose=1) for wall in
-                 self.walls], axis=0)[self.voxel.vertices_indices]
-            return np.any(inside_vertices, axis=1)
-
-        self._inside_voxels = np.any(np.apply_along_axis(inside, axis=1, arr=axis), axis=0)
-
-    def find_visible_voxels(self, force=False, verbose=None):
-        """Return the conditions of visible voxels
+        function: callable
+            A function that takes three parameters X, Y, Z and returns a boolean array
+        kwargs: dict
+            Additional parameters for the function
 
         Notes
         -----
-        The condition is a boolean array with the length of the number of voxels.
-        If more than one vertex of the voxel is visible, the voxel is defined as visible.
+        The function should take three parameters X, Y, Z, which are the vertices of the voxel grid.
+        The return value should be a boolean array with the length of the number of vertices and True for inside vertices.
+        The boolean array is stored in `self.inside_vertices`.
         """
-        verbose = self.verbose if verbose is None else verbose
-        if force:
-            print("Force to calculate visible voxels.")
-            self._visible_voxels = [None] * len(self.cameras)
+        if not callable(function):
+            raise TypeError(f"function should be a callable, not {type(function)}")
+        inside_vertices = function(*self.voxel.grid.T, **kwargs).astype(bool)
+        if self._inside_vertices.size != self.voxel.N_grid:
+            raise ValueError("The return value of the function should be a boolean array with the length of the number "
+                             "of grid points.")
+        else:
+            self._inside_vertices = inside_vertices
+            print(f"Inside vertices are updated. (N_inside_vertices: {np.sum(inside_vertices)})")
 
-        for c_, camera in enumerate(self.cameras):
-            if self._visible_voxels[c_] is not None:
-                print(f"Visible voxels for camera {c_ + 1}/{len(self.cameras)} is already calculated.")
-                continue
-            else:
-                print(f"Finding visible voxels for camera {c_ + 1}/{len(self.cameras)}")
-                visible_vertices = self.find_visible_points(self.voxel.grid, cameras=camera, verbose=verbose)[0]
-                conditions_any = np.any(visible_vertices[:, self.voxel.vertices_indices], axis=-1).astype(int)
-                conditions_all = np.all(visible_vertices[:, self.voxel.vertices_indices], axis=-1).astype(int)
-                self._visible_voxels[c_] = conditions_any + conditions_all
-
-    def find_visible_points(self, points: np.ndarray, cameras: list[Camera] | Camera = None,
-                            eye_num: int | slice = None, verbose: int = 1) -> list[np.ndarray]:
-        """Return the conditions of visible voxels
+    def _find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
+                             verbose: int = 1) -> np.ndarray:
+        """
+        Return the conditions of visible vertices for each camera
 
         Parameters
         ----------
         points: np.ndarray (N_points, 3)
             The points to check visibility
-        cameras: list[Camera] | Camera, optional (default is None)
-            The camera objects
-        eye_num: int | slice, optional (default is None)
-            The index of the eye
+        camera_idx: int
+            The index of the camera to check visibility
         verbose: int, optional (default is 1)
             The verbose level
 
         Returns
         -------
-        visible: list[np.ndarray] (N_camera, N_eye, N_points)
-            The conditions of visible voxels for each camera.
+        visible: np.ndarray (N_eye, N_points)
+            The conditions of visible voxels for the camera.
             If lines from the eye to the point are not intersected with any mesh (aperture or wall),
             the points are defined as visible (True).
+        """
+
+        if camera_idx not in self._cameras.keys():
+            raise ValueError(f"The camera index {camera_idx} is not in the camera list.")
+        _camera = self._cameras[camera_idx]
+        walls_in_camera = [stl_utils.copy_model(wall, -_camera.camera_position, _camera.rotation_matrix.T) for
+                           wall in self.walls]
+        camera_points = _camera.world2camera(points)  # (N_points, 3)
+
+        eye_idx = range(len(_camera.eyes)) if eye_idx is None else type_check_and_list(eye_idx, int)
+        if any([_e >= len(_camera.eyes) or _e < 0 for _e in eye_idx]):
+            raise ValueError(f"eye_idx should be in the range of [0, {len(_camera.eyes) - 1}]")
+
+        visible = np.zeros((len(eye_idx), points.shape[0]), dtype=bool)  # (N_eye, N_points)
+
+        for _e in eye_idx:
+            _eye = _camera.eyes[_e]
+            # check if the voxel is behind the camera (N_points, )
+            visible[_e] = camera_points[:, 2] >= _eye.position[-1]
+            # check if the voxel is in front of the camera (N_points, )
+            my_print(f"checking visible points for eye {_e + 1}/{len(_camera.eyes)}",
+                     show=verbose > 0)
+            my_print("-" * 15, show=verbose > 0)
+            # get conditions for each aperture and wall
+            my_print(f"--- checking for apertures ---", show=verbose > 0)
+            for a, aperture in enumerate(_camera.apertures):
+                if aperture.stl_model is None:
+                    aperture.set_model()
+                visible[_e] *= stl_utils.check_visible(mesh_obj=aperture.stl_model,
+                                                       start=_eye.position,
+                                                       grid_points=camera_points,
+                                                       verbose=verbose,
+                                                       behind_start_included=True)  # (N_points, )
+                my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
+                my_print("-" * 15, show=verbose > 0)
+                time.sleep(0.1)
+
+            my_print("--- checking for walls ---", show=verbose > 0)
+            for w, wall_in_camera in enumerate(walls_in_camera):
+                visible[_e] *= stl_utils.check_visible(mesh_obj=wall_in_camera,
+                                                       start=_eye.position,
+                                                       grid_points=camera_points,
+                                                       verbose=verbose)  # (N_points, )
+                my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
+                my_print("-" * 15, show=verbose > 0)
+                time.sleep(0.1)
+        return visible  # (N_eye, N_points)
+
+    def _find_visible_vertices(self, force: bool = False, verbose: int = None, camera_idx: int = None) -> None:
+        """Set the conditions of visible vertices for each camera
+
+        Parameters
+        ----------
+        force: bool, optional (default is False)
+            If True, the visible vertices are recalculated even if they are already calculated.
+        verbose: int, optional (default is None)
+            The verbose level
 
         Notes
         -----
-        The condition is a boolean array with the length of the number of voxels.
-        If more than one vertex of the voxel is visible, the voxel is defined as visible.
+        The conditions are stored in `self._visible_vertices` as a dictionary with the camera index as the key.
+        The condition array has the shape of (N_eye, N_vertices).
         """
-        visible_list = []
-        if cameras is None:
-            cameras = self.cameras
+        verbose = self.verbose if verbose is None else verbose
+        if camera_idx is not None:
+            if camera_idx not in self._cameras.keys():
+                raise ValueError(f"The camera index {camera_idx} is not in the camera list.")
+            cameras_to_process = [camera_idx]
         else:
-            cameras = type_list(cameras, Camera)
+            cameras_to_process = list(self._cameras.keys())
+        for c_ in cameras_to_process:
+            camera = self._cameras[c_]
+            if force:
+                my_print("Force to calculate visible vertices.", show=verbose > 0)
+                self._visible_vertices[c_] = None
+            if self._visible_vertices[c_] is not None:
+                if self._visible_vertices[c_].shape == (len(camera.eyes), self.voxel.N_grid):
+                    my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is already calculated.",
+                             show=verbose > 0)
+                    continue
+                else:
+                    my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} has wrong shape. "
+                             f"Recalculating...", show=verbose > 0)
+            else:
+                my_print(f"Finding visible vertices for camera {c_ + 1}/{len(self._cameras)}...", show=verbose > 0)
+            visible_vertices = np.zeros((len(camera.eyes), self.voxel.N_grid), dtype=bool)
+            visible_vertices[:, self.inside_vertices] = True
+            if np.sum(self.inside_vertices) == 0:
+                my_print("No inside vertices. Skip calculating visible vertices.", show=verbose > 0)
+            else:
+                visible_vertices[:, self.inside_vertices] \
+                    = self._find_visible_points(self.voxel.grid[self.inside_vertices],
+                                                camera_idx=c_,
+                                                verbose=verbose)  # (N_eye, N_inside_points)
+            self._visible_vertices[c_] = visible_vertices
+            my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
 
-        if eye_num is None:
-            eye_slice = slice(None)
-        elif isinstance(eye_num, int):
-            eye_slice = slice(eye_num, eye_num + 1)
-        elif isinstance(eye_num, slice):
-            eye_slice = eye_num
-        else:
-            raise TypeError(f"eye_num should be an int or a slice, not {type(eye_num)}")
+    def find_visible_voxels(self, force=False, verbose=None):
+        """Return the conditions of visible voxels
+        Parameters
+        ----------
+        force: bool, optional (default is False)
+            If True, the visible vertices are recalculated even if they are already calculated.
+        verbose: int, optional (default is None)
+            The verbose level
 
-        for _c, _camera in enumerate(cameras):
-            walls_in_camera = [stl_utils.copy_model(wall, -_camera.camera_position, _camera.rotation_matrix.T) for
-                               wall in self.walls]
-            condition_list = []  # condition for each eye
-            camera_grid = _camera.world2camera(points)
-            for _e, _eye in enumerate(_camera.eyes[eye_slice]):
-                visible = camera_grid[:, 2] > _eye.position[-1]
-                # check if the voxel is in front of the camera (N_points, )
+        Notes
+        -----
+        The conditions are stored in `self._visible_voxels` as a list with the camera index as the key.
+        The condition array has the shape of (N_eye, N_voxels).
+        The value of the condition array is:
+            0: not visible
+            1: partially visible (some vertices are visible)
+            2: fully visible (all vertices are visible)
+        """
 
-                my_print(f"checking visible points for eye {_e + 1}/{len(_camera.eyes)}",
-                         show=verbose > 0)
-                my_print("-" * 15, show=verbose > 0)
-                # get conditions for each aperture and wall
-                my_print(f"--- checking for apertures ---", show=verbose > 0)
-                for a, aperture in enumerate(_camera.apertures):
-                    if aperture.stl_model is None:
-                        aperture.set_model()
-                    visible *= stl_utils.check_visible(mesh_obj=aperture.stl_model, start=_eye.position,
-                                                       grid_points=camera_grid, verbose=verbose,
-                                                       behind_start_included=True,
-
-                                                       )  # (N_points, )
-                    my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
-                    my_print("-" * 15, show=verbose > 0)
-
-                my_print("--- checking for walls ---", show=verbose > 0)
-                for w, wall_in_camera in enumerate(walls_in_camera):
-                    visible *= stl_utils.check_visible(mesh_obj=wall_in_camera, start=_eye.position,
-                                                       grid_points=camera_grid, verbose=verbose)  # (N_points, )
-                    my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
-                    my_print("-" * 15, show=verbose > 0)
-
-                condition_list.append(visible)  # (N_eye, N_points)
-
-            visible_list.append(np.array(condition_list, dtype=bool))  # (N_camera, N_eye, N_points)
-        return visible_list
+        verbose = self.verbose if verbose is None else verbose
+        my_print("Finding visible voxels...", show=verbose > 0)
+        visible_voxels = {c_: None for c_ in self._cameras.keys()}
+        for c_ in self._cameras.keys():
+            self._find_visible_vertices(force=force, verbose=verbose, camera_idx=c_)
+            conditions_any = np.any(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
+            conditions_all = np.all(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
+            visible_voxels[c_] = conditions_any + conditions_all
+            my_print(f"Visible voxels for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
+        self._visible_voxels = visible_voxels
+        my_print("Finding visible voxels is done.", show=verbose > 0)
 
     def _calc_all_voxel_image(self, camera: Camera,
                               res: int = None, verbose: int = 0, parallel: int = 4) -> list[sparse.csc_matrix]:
@@ -537,25 +627,50 @@ class World:
 
         return _im_vec_list
 
-    def _calc_voxel_image_for_eye(
-            self,
-            camera_idx,
-            eye_idx: int,
-            res: int,
-            parallel: int = 0,
-            *,
-            target_work_per_batch: int = 5_000_000,
-            sample_for_batch: int = 2000,
-    ) -> sparse.csc_matrix:
+    def _calc_voxel_image_for_eye(self, camera_idx: int, eye_idx: int, res: int, parallel: int = 0,
+                                  target_work_per_batch: int = 5_000_000,
+                                  sample_for_batch: int = 2000, verbose: int=None) -> sparse.csc_matrix:
         """
-        1つの Eye について、可視サブボクセル中心をまとめて投影→右掛けでボクセル列に集約。
-        sub_voxel_interpolator は (K × N_voxel) で、行に複数非ゼロ（補間）を想定。
+        Calculate the image vector for visible voxels for a specific eye of a camera
+        Parameters
+        ----------
+        camera_idx: int
+            The index of the camera
+        eye_idx: int
+            The index of the eye
+        res: int
+            The resolution of the sub-voxel
+        parallel: int, optional (default is 0)
+            number of parallel processes for parallel calculation (0: no parallel calculation)
+        target_work_per_batch: int, optional (default is 5_000_000)
+            The target work per batch for estimating the batch size
+        sample_for_batch: int, optional (default is 2000)
+            The number of samples for estimating the batch size
+        verbose: int, optional (default is None)
+            The verbose level
+        Returns
+        -------
+        projection_matrix: sparse.csc_matrix
+            The projection matrix for the specified eye of the camera
+
+        Notes
+        -----
+        The projection matrix has the shape of (N_subpixel, N_voxel).
+        For fully visible voxels, all sub-voxels are used for projection.
+        For partially visible voxels, only the visible sub-voxels are used for projection.
+        The projection matrix is calculated in batches to reduce memory usage.
+        The batch size is estimated based on the number of non-zero elements in the image vector and the interpolator.
         """
-        screen = self.cameras[camera_idx].screen
+
+        verbose = self.verbose if verbose is None else verbose
+        _camera = self.cameras[camera_idx]
+        screen = _camera.screen
         N_vox = self.voxel.N
+        self.find_visible_voxels()
 
         # 可視フラグ: 0=不可視, 1=部分可視, 2=完全可視
-        vis_flag = self.visible_voxels[camera_idx][eye_idx]
+
+        vis_flag = self.visible_voxels[camera_idx][eye_idx]  # (N_vox, )
         voxels_part = np.flatnonzero(vis_flag == 1)
         voxels_full = np.flatnonzero(vis_flag == 2)
 
@@ -563,9 +678,12 @@ class World:
             return sparse.csc_matrix((screen.N_subpixel, N_vox))
 
         # 取得順（FULL→PART）
+        my_print(f"Getting sub-voxels and interpolators...", show=verbose > 0)
+        start_time = time.time()
         vox_order = np.concatenate([voxels_full, voxels_part])
         sub_list = self.voxel.get_sub_voxel(n=vox_order, res=res)  # list of sub-voxel
         interp_list = self.voxel.sub_voxel_interpolator(n=vox_order, res=res)  # list of CSR (K × N_vox)
+        my_print(f"Done. ({time.time() - start_time:.1f} sec)", show=verbose > 0)
 
         # voxel_id -> (centers(K,3), interpolator(K×N_vox))
         sub_map = {v: (sv.gravity_center, itp) for v, sv, itp in zip(vox_order, sub_list, interp_list)}
@@ -584,19 +702,9 @@ class World:
             sizes = np.array([c.shape[0] for c in centers_blocks], dtype=np.int64)
             if sizes.sum() > 0:
                 centers_cat = np.concatenate(centers_blocks, axis=0)
-                vis = self.find_visible_points(centers_cat, cameras=self.cameras[camera_idx], eye_num=eye_idx, verbose=0)
-                # 返り値が bool 配列 or インデックス配列の両対応
-                if isinstance(vis, (tuple, list)):
-                    idx = vis[0][0] if isinstance(vis[0], (list, tuple, np.ndarray)) else vis[0]
-                    mask_cat = np.zeros(centers_cat.shape[0], dtype=bool)
-                    mask_cat[idx] = True
-                else:
-                    arr = np.asarray(vis)
-                    if arr.dtype == bool and arr.shape[0] == centers_cat.shape[0]:
-                        mask_cat = arr
-                    else:
-                        mask_cat = np.zeros(centers_cat.shape[0], dtype=bool)
-                        mask_cat[arr] = True
+                mask_cat = self._find_visible_points(centers_cat,
+                                                     camera_idx=camera_idx, eye_idx=eye_idx, verbose=1).squeeze()
+
                 # 分配
                 off = 0
                 for v, K in zip(voxels_part, sizes):
@@ -622,7 +730,7 @@ class World:
             samp_pts, _ = _slice_blocks(pts_blocks, S_blocks, 0, n_samp, N_vox)
             if samp_pts.shape[0] == 0:
                 return 1
-            I_s = self.cameras[camera_idx].calc_image_vec(eye_idx, points=samp_pts, parallel=parallel)
+            I_s = _camera.calc_image_vec(eye_idx, points=samp_pts, parallel=0)
             k = max(1.0, I_s.nnz / float(samp_pts.shape[0]))  # 1点あたりのスクリーン nnz
             # S 側（補間）の平均 nnz/行を簡易に推定：先頭ブロックの一部で十分
             S_head = S_blocks[0] if S_blocks else sparse.csr_matrix((0, N_vox))
@@ -636,22 +744,30 @@ class World:
 
         # チャンクループ：投影 → 右掛けで集約
         result = sparse.csc_matrix((screen.N_subpixel, N_vox))
-        done = 0
-        while done < total_pts:
-            s = done
-            t = min(done + batch_pts, total_pts)
-            pts_chunk, S_chunk = _slice_blocks(pts_blocks, S_blocks, s, t, N_vox)
-            if pts_chunk.shape[0] == 0:
-                break
-            # 上位で並列化するなら parallel=0 に、逆にするならここで並列
-            I_chunk = self.cameras[camera_idx].calc_image_vec(eye_idx, points=pts_chunk, parallel=parallel)
-            result += I_chunk @ S_chunk
-            done = t
+        # done = 0
+        # while done < total_pts:
+        #     s = done
+        #     t = min(done + batch_pts, total_pts)
+        #     pts_chunk, S_chunk = _slice_blocks(pts_blocks, S_blocks, s, t, N_vox)
+        #     if pts_chunk.shape[0] == 0:
+        #         break
+        #     # 上位で並列化するなら parallel=0 に、逆にするならここで並列
+        #     I_chunk = _camera.calc_image_vec(eye_idx, points=pts_chunk, parallel=parallel, verbose=verbose)
+        #     result += I_chunk @ S_chunk
+        #     done = t
+        def _sub_proc(pts, S):
+            if pts.shape[0] == 0:
+                return sparse.csc_matrix((screen.N_subpixel, N_vox))
+            return _camera.calc_image_vec(eye_idx, points=pts, parallel=0, verbose=0) @ S
+        pts_chunks, S_chunks = zip(*[_slice_blocks(pts_blocks, S_blocks, s, min(s + batch_pts, total_pts), N_vox) for
+                                     s in range(0, total_pts, batch_pts)])
+        res = Parallel(n_jobs=parallel, verbose=verbose, backend="loky")(
+            [delayed(_sub_proc)(pts, S) for pts, S in zip(pts_chunks, S_chunks)])
 
-        return result.tocsc()
+        result = sum(res, result)
+        self._projection[camera_idx][eye_idx] = result
 
-    def set_projection_matrix(self, index: int | list[int] = None,
-                              res: int = None, verbose: int = 1, parallel: int = -1,
+    def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
                               force: bool = False):
         """Get the projection matrix from the voxel to the screen
 
@@ -674,18 +790,24 @@ class World:
             The projection matrix (N_pixel, N_voxel)
         """
         my_print("Calculating projection matrix", show=verbose > 0)
-        index = type_check_and_list(index, int, default=range(len(self.cameras)))
-
-        for i in index:
-            camera = self.cameras[i]
-            if self._projection[i] is None or force:
-                im_vec_list = self._calc_all_voxel_image(camera=camera, res=res, verbose=verbose, parallel=parallel)
-                self._projection[i] = sum(im_vec_list)
-                self._P_matrix_list[i] = camera.screen.transform_matrix @ self._projection[i]
-            else:
-                my_print(f"Projection matrix for camera {i + 1}/{len(self.cameras)} is already calculated.",
-                         show=verbose > 0)
-
+        indices = list(self.cameras.keys())
+        for _c in indices:
+            camera = self.cameras[_c]
+            for _e in range(len(camera.eyes)):
+                if force or (self._projection[_c][_e] is None) or \
+                        (self._projection[_c][_e].shape != (camera.screen.N_subpixel, self.voxel.N)):
+                    my_print(f"Calculating projection matrix for camera {_c + 1}/{len(self.cameras)}, "
+                             f"eye {_e + 1}/{len(camera.eyes)}", show=verbose > 0)
+                    self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, parallel=parallel,
+                                                   verbose=verbose)
+                else:
+                    my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)}, "
+                             f"eye {_e + 1}/{len(camera.eyes)} is already calculated.", show=verbose > 0)
+            # combine all projection matrices
+            self._P_matrix[_c] = sum(self._projection[_c], sparse.csc_matrix(
+                (camera.screen.N_subpixel, self.voxel.N)))
+            my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)} is calculated.", show=verbose > 0)
+        my_print("Calculating projection matrix is done.", show=verbose > 0)
     def draw_camera_orientation(self, ax=None, show_fig=False, x_lim=None, y_lim=None, z_lim=None, **kwargs):
         """Draw the camera orientation
 
@@ -959,7 +1081,7 @@ if __name__ == '__main__':
     plt.close("all")
 
     x_ = camera_1.screen.pixel_position.reshape(*camera_1.screen.pixel_shape, -1)[
-         camera_1.screen.pixel_shape[0] // 2, :, 1]
+        camera_1.screen.pixel_shape[0] // 2, :, 1]
     cosine = camera_1.screen.subpixel_to_pixel(camera_1.screen.cosine(camera_1.eyes[0])).reshape(
         camera_1.screen.pixel_shape)[
                  camera_1.screen.pixel_shape[0] // 2] / camera_1.screen.subpixel_resolution ** 2

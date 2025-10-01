@@ -1048,7 +1048,7 @@ class Screen:
         )
         return image_vectors
 
-    def ray2image_grid(self, eye: Eye, rays: Rays, parallel=0):
+    def ray2image_grid(self, eye: Eye, rays: Rays, parallel=0, verbose=0):
         """Convert rays to image vectors (grid-localized; consistent with ray2image)"""
         if rays.n == 0:
             return sparse.csc_matrix((self.N_subpixel, 0), dtype=float)
@@ -1146,7 +1146,7 @@ class Screen:
             # 粗めに分割（CPUにより調整可）
             chunk = max(1, n // (parallel * 8) or 1)
             bounds = [(s, min(s + chunk, n)) for s in range(0, n, chunk)]
-            Parallel(n_jobs=parallel, backend="threading")(
+            Parallel(n_jobs=parallel, backend="threading", verbose=verbose)(
                 delayed(process)(lo, hi) for (lo, hi) in bounds
             )
         else:
@@ -1555,7 +1555,7 @@ class Camera:
         """
         self._apertures.append(aperture)
 
-    def calc_image_vec(self, eye_num, points, parallel: bool = True):
+    def calc_image_vec(self, eye_num, points, parallel: int = 0, verbose: int = 0):
         """Calculate image vectors
 
         Parameters
@@ -1576,13 +1576,14 @@ class Camera:
         points_in_camera = self.world2camera(points)
         visible_list = [stl_utils.check_visible(mesh_obj=aperture.stl_model,
                                                 start=eye.position,
-                                                grid_points=points_in_camera) for aperture in self._apertures]
+                                                grid_points=points_in_camera,
+                                                behind_start_included=True) for aperture in self._apertures]
         visible = np.any(visible_list, axis=0)
         rays = eye.calc_rays(points_in_camera, visible)
         # print("ray2image start")
         # res1 = self.screen.ray2image(eye, rays, parallel=parallel)
         # res2 = self.screen.ray2image2(eye, rays, parallel=parallel)
-        res3 = self.screen.ray2image_grid(eye, rays, parallel=parallel)
+        res3 = self.screen.ray2image_grid(eye, rays, parallel=parallel, verbose=verbose)
         return res3
 
     def draw_optical_system(self, ax=None, show_focal_length=True, show_aperture=True, show_screen=True,
