@@ -901,7 +901,7 @@ class Voxel:
             return
 
         # Basic shapes
-        self._grid_shape = tuple(len(axis) for axis in self.axes)           # (N_x+1, N_y+1, N_z+1)
+        self._grid_shape = tuple(len(axis) for axis in self.axes)  # (N_x+1, N_y+1, N_z+1)
         self._N_grid = int(np.prod(self._grid_shape))
         if self._N_grid == 0:
             return
@@ -1042,7 +1042,7 @@ class Voxel:
         # print(f"{self.N_voxel=}")
         # print(f"{self.voxel_shape=}")
 
-    def get_sub_voxel(self, vertices=None, n=None, res=None):
+    def get_sub_voxel(self, vertices=None, n=None, res=None, verbose=0):
         """
         get sub voxels with resolution `res`
         Parameters
@@ -1082,7 +1082,8 @@ class Voxel:
             if vertices.shape[1:] != (8, 3):
                 raise ValueError(f"vertices must be (8, 3) or (n_voxel, 8, 3)")
         # TODO: verticesは重いのでインデックスのみ使用する
-        sub_axes = [[np.linspace(x, y, r + 1) for x, y, r in zip(vox[0], vox[-1], self._res)] for vox in vertices]
+        sub_axes = [[np.linspace(x, y, r + 1) for x, y, r in zip(vox[0], vox[-1], self._res)] for vox in
+                    my_tqdm(vertices, verbose=verbose)]
         sub_voxels = [Voxel(*axes) for axes in sub_axes]
         if len(sub_voxels) == 1:
             return sub_voxels[0]
