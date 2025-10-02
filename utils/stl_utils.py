@@ -33,22 +33,24 @@ MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[Li
 
 # MARK: - STL utilities
 def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict = None) -> Tuple[str, Vector2DLike]:
-    """Check the shape and size of the object.
+    """Normalize aperture ``shape`` and ``size`` specifications.
 
     Parameters
     ----------
     shape : str
-        one of {'circle','ellipse','rectangle','square'}
+        Desired aperture shape. One of ``{"circle", "ellipse", "rectangle", "square"}``.
     size : Union[Number, Vector2DLike]
-        - circle/square: scalar or 2要素（2要素は等しい必要あり）
-        - ellipse/rectangle: scalar（→両辺同じに展開）または2要素
+        Size specification. Circles/squares accept a scalar radius/edge length or a
+        two-element sequence of equal values. Ellipses/rectangles accept either a
+        scalar (expanded to both axes) or a two-element ``(height, width)`` pair.
     ok_shapes : dict, optional
-        kept for backward-compat (unused for validation logic)
+        Deprecated argument that is ignored during validation.
 
     Returns
     -------
     Tuple[str, np.ndarray]
-        (shape, np.array([height, width]))
+        Normalized ``(shape, size)`` pair where ``size`` is a two-element array
+        containing positive ``(height, width)`` values.
     """
     # 許可形状
     allowed = {'circle', 'ellipse', 'rectangle', 'square'}
@@ -97,27 +99,25 @@ def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict =
 
 def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolution: Union[Number, Vector2DLike],
                           max_size: Union[Number, Vector2DLike] = None) -> mesh.Mesh:
-    """Generate an STL model of the aperture.
-
-    Return a 2D STL model of the aperture. The vertexes include 10x10 grid points and edge points of the aperture.
+    """Create a planar STL mesh representing an aperture outline.
 
     Parameters
     ----------
     shape : str
-        The shape of the object. (circle, ellipse, rectangle)
-    size : Vector2DLike, float
-        The size of the object.
-        radius for circle, [semi-major radius, semi-minor radius] for ellipse, [width, height] for rectangle.
-    resolution : int
-        The resolution of edge points of the aperture.
-    max_size : Vector2DLike, float, optional (default is None)
-        The maximum size of the aperture
-        If max_size is None, the maximum size is set to be 1.5 times the size of the aperture.
+        Aperture type (``"circle"``, ``"ellipse"`` or ``"rectangle"``).
+    size : Union[Number, Vector2DLike]
+        Characteristic size of the aperture. Circles use a radius, ellipses use
+        ``(semi-major, semi-minor)`` axes and rectangles use ``(width, height)``.
+    resolution : Union[Number, Vector2DLike]
+        Number of samples used to discretize the aperture boundary.
+    max_size : Union[Number, Vector2DLike], optional
+        Extent of the surrounding grid used to generate supporting vertices.
+        Defaults to ``1.5`` times the normalized aperture size.
 
     Returns
     -------
-    stl_obj : mesh.Mesh
-        The STL model of the aperture.
+    mesh.Mesh
+        Mesh containing the 2D aperture surface in the ``z = 0`` plane.
     """
 
     # check the shape and size of the object
@@ -157,27 +157,27 @@ def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolut
 
 def rotate_model(model: mesh.Mesh, order: str = 'xyz', angles: Vector3DLike = (0, 0, 0), matrix: np.ndarray = None,
                  origin: Vector3DLike = (0, 0, 0), degrees: bool = True) -> mesh.Mesh:
-    """Rotate the model by given Euler angles using
+    """Rotate an STL mesh either by Euler angles or by an explicit matrix.
 
     Parameters
     ----------
     model : mesh.Mesh
-        The model to be rotated.
-    order : str, optional, default "xyz"
-        The order of the rotation, by default "xyz".
-    angles : Vector3DLike, float
-        The angles to be rotated.
-    matrix : np.ndarray, optional, default None
-        The rotation matrix, by default None. If this argument is specified, the angles and order are ignored.
-    origin : Vector3DLike, float, optional, default (0, 0, 0)
-        The origin of the rotation, by default (0, 0, 0).
-    degrees : bool, optional, default True
-        Whether the angles are in degrees, by default True.
-    
+        Source mesh to rotate.
+    order : str, optional
+        Euler angle order used when ``matrix`` is not provided, by default ``"xyz"``.
+    angles : Vector3DLike, optional
+        Euler angles describing the rotation applied around ``origin``.
+    matrix : np.ndarray, optional
+        Precomputed rotation matrix. When supplied, ``order`` and ``angles`` are ignored.
+    origin : Vector3DLike, optional
+        Rotation pivot point expressed in model coordinates.
+    degrees : bool, optional
+        If ``True`` (default) Euler ``angles`` are interpreted in degrees, otherwise radians.
+
     Returns
     -------
     mesh.Mesh
-        The rotated model.
+        Deep copy of ``model`` rotated in place.
     """
     origin = np.array(origin)
     rotation_matrix = Rotation.from_euler(order, angles, degrees=degrees).as_matrix() if (
@@ -192,21 +192,21 @@ def rotate_model(model: mesh.Mesh, order: str = 'xyz', angles: Vector3DLike = (0
 
 
 def copy_model(model: mesh.Mesh, translate: np.ndarray = (0, 0, 0), rotation_matrix: np.ndarray = None) -> mesh.Mesh:
-    """Copy the model.
+    """Return a transformed deep copy of ``model``.
 
     Parameters
     ----------
     model : mesh.Mesh
-        The model to be copied.
-    translate : np.ndarray, optional, default (0, 0, 0)
-        The translation vector, by default (0, 0, 0).
-    rotation_matrix : np.ndarray, optional, default None
-        The rotation matrix, by default None.
+        Mesh to duplicate.
+    translate : np.ndarray, optional
+        Translation applied to the copy before returning.
+    rotation_matrix : np.ndarray, optional
+        Optional rotation applied after translation using ``mesh.Mesh.rotate_using_matrix``.
 
     Returns
     -------
     mesh.Mesh
-        The copied model.
+        Independent copy of the original mesh with requested transforms applied.
     """
     model = mesh.Mesh(model.data.copy())
     model.translate(translate)
@@ -218,52 +218,42 @@ def copy_model(model: mesh.Mesh, translate: np.ndarray = (0, 0, 0), rotation_mat
 # MARK: - Visibility calculation utilities
 def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points: np.ndarray,
                        behind_start_included: float | bool = False, eps: float = 1e-6) -> np.ndarray:
-    """Check if a line segment intersects with a mesh.
-
-    This function checks if a line segment intersects with a triangle using the Möller–Trumbore intersection algorithm.
-    The line segment is defined by the start point and end point. The triangle is defined by three vectors.
-
-    The line segment is checked to intersect with the triangle by solving the following equation:
-    e_1 = b - a, e_2 = c - a, d = end - start, r = start - a
-    Line eq. defined by the line segment: R(t) = start + t * d
-    Plane eq. defined by the triangle: T(u, v) = a + u * e_1 + v * e_2
-    Intersection eq.: R(t) = T(u, v)
-                    <=> start + t * d = a + u * e_1 + v * e_2
-                    <=> t * (-d) + u * e_1 + v * e_2 = r
-                    <=> (-d, e_1, e_2) * (t, u, v)^T = r  ... (1)
-
-    Here, t, u, v are expressed as:
-    u = r dot (d x e_2) / det = r dot n_2 / det
-    v = d dot (r x e_1) / det = r dot (e_1 x d) / det = r dot n_1 / det
-    t = e_2 dot (r x e_1) / det = r dot (e_1 x e_2) / det = r dot n_0 / det
-    where n_0 = e_1 x e_2, n_1 = e_1 x d, n_2 = d x e_2, det = -d dot n_0.
-
-    If n_0 dot d = 0, the line segment is parallel to the triangle, not intersecting with the triangle.
-    If n_0 dot d != 0, solve the equation (1) for t, u, v and check the following conditions:
-        1. u >= 0, v >= 0, u + v <= 1
-        2. 0 < t <= 1
-    If behind the start point is included, the condition 2 is changed to t <= 1. (i.e., for aperture)
-    If all the conditions are satisfied, the line segment intersects with the triangle.
+    """Test intersection between a triangle and one or more line segments.
 
     Parameters
     ----------
-    triangle : numpy.ndarray (shape: (3, 3))
-        Three vectors of a triangle.
-    start_point : numpy.ndarray (shape: (3, ))
-        Start point of the line segment.
-    end_points : numpy.ndarray (shape: (N, 3))
-        End points of the line segment. N is the number of line segments.
+    triangle : np.ndarray, shape (3, 3)
+        Triangle vertices ordered as ``(a, b, c)``.
+    start_point : np.ndarray, shape (3,)
+        Shared origin of the tested line segments.
+    end_points : np.ndarray, shape (N, 3)
+        Endpoints of the segments to test.
     behind_start_included : float or bool, optional
-        Whether to include the part behind the start point, by default False.
-        If bool, True means include all part behind the start point.
-        If float, include the part behind the start point up to the distance of the float value.
+        If ``True``, intersections with ``t <= 1`` are reported regardless of sign.
+        A numeric value allows visibility checks to include a bounded region
+        behind ``start_point``.
     eps : float, optional
-        The tolerance for numerical errors, by default 1e-6.
+        Numerical tolerance applied to barycentric and ``t`` comparisons.
 
     Returns
     -------
-    condition : numpy.ndarray (shape: (N, ))
-        The condition whether the line segment intersects with the triangle.
+    np.ndarray, shape (N,)
+        Boolean mask indicating which segments intersect the triangle.
+
+    Notes
+    -----
+    Implements the Möller–Trumbore intersection algorithm. The triangle edges
+    are defined as ``e₁ = b - a`` and ``e₂ = c - a`` while each segment uses the
+    direction ``d = end - start`` and the offset ``r = start - a``. Solving the
+    coupled system ``start + t·d = a + u·e₁ + v·e₂`` yields the barycentric
+    coordinates ``(u, v)`` and parametric distance ``t`` via
+
+    ``u = (r · (d × e₂)) / det``, ``v = (r · (e₁ × d)) / det`` and
+    ``t = (r · (e₁ × e₂)) / det`` where ``det = -d · (e₁ × e₂)``. When
+    ``det ≠ 0`` the segment intersects the triangle iff ``u ≥ 0``, ``v ≥ 0``,
+    ``u + v ≤ 1`` and ``0 < t ≤ 1`` (relaxed to ``t ≤ 1`` when
+    ``behind_start_included`` is truthy). Parallel segments with ``det = 0`` are
+    rejected.
     """
 
     if end_points.shape[0] == 0:
@@ -320,34 +310,32 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
 
 
 def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
-    """
-    Calculate the condition whether the grid points are inside the cone defined by the mesh and the origin.
-
-    Define the m-th triangle of the mesh as abc, the origin as o, the grid point as p.
-    Vectors oa, ob, oc, and n are defined as a - o, b - o, c - o, and ob x oa, respectively.
-    The plane oab satisfies n dot (x - oa) = 0. (where x is a point on the plane)
-    The necessary condition for p to be inside the cone is that p is on the same side of the plane oab as c.
-    It is equivalent to sign(n dot (p - oa)) = sign(n dot (c - oa)) <=> (n dot (p - o)) * (n dot (c - o)) >= 0.
-    The condition that p is inside the cone is AND of the above conditions for three sides (oab, obc, oca) of the cone.
+    """Compute cone plane normals for each triangle in ``mesh_obj``.
 
     Parameters
     ----------
-    mesh_obj : mesh.Mesh object
-        STL mesh object with M triangles.
-    start_point : numpy.ndarray of shape (3, )
-        The origin of the light.
+    mesh_obj : mesh.Mesh
+        STL mesh with ``M`` triangular faces.
+    start_point : np.ndarray, shape (3,)
+        Point of origin used to form cones with each triangle.
 
     Returns
     -------
-    n_oab : numpy.ndarray (shape: (M, 3))
-        The normal vectors of the plane oab.
-    n_obc : numpy.ndarray (shape: (M, 3))
-        The normal vectors of the plane obc.
-    n_oca : numpy.ndarray (shape: (M, 3))
-        The normal vectors of the plane oca.
-    zero_volume : numpy.ndarray of shape (M, )
-        The condition whether the triangle has zero volume.
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Signed normals for the planes ``oab``, ``obc`` and ``oca`` along with a
+        boolean mask identifying triangles with non-zero volume.
 
+    Notes
+    -----
+    Each triangle ``abc`` defines a cone with apex ``o = start_point``. The
+    helper constructs vectors ``oa``, ``ob`` and ``oc`` together with oriented
+    plane normals ``n_oab = oa × ob``, ``n_obc = ob × oc`` and ``n_oca = oc × oa``.
+    A grid point ``p`` lies inside the cone when it resides on the same side of
+    all three planes as the opposite vertex, i.e.
+
+    ``sign(n_oab · (p - o)) = sign(n_oab · (c - o))`` and similarly for the
+    ``obc`` and ``oca`` planes. The returned normals are signed so the checks can
+    be performed with simple dot-product comparisons.
     """
 
     # check if the start point is on the plane defined by the mesh
@@ -391,29 +379,31 @@ def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
 
 
 def delta_cone_prepare(triangles: np.ndarray, start_point: np.ndarray, eps: float = 1e-6):
-    """
-    Prepare the parameters for delta_cone function.
-
-    Calculate the normal vectors of the planes oab, obc, oca.
-    The normal vectors are used to check if the grid points are inside the cone defined by the mesh and the origin.
+    """Generate oriented cone planes for a batch of triangles.
 
     Parameters
     ----------
-    triangles : numpy.ndarray of shape (M, 3, 3)
-        Three 3D vectors of triangles.
-    start_point : numpy.ndarray of shape (3, )
-        The origin of the light.
+    triangles : np.ndarray, shape (M, 3, 3)
+        Vertices of ``M`` triangles.
+    start_point : np.ndarray, shape (3,)
+        Cone origin shared across triangles.
     eps : float, optional
-        The tolerance for zero volume check, by default 1e-6.
-    dtype : data-type, optional
-        The data type of the output, by default np.float32.
+        Tolerance used to filter degenerate triangles.
 
     Returns
     -------
-    Planes : numpy.ndarray
-        The normal vectors of the planes oab, obc, oca. (M, 3, 3)
-    valid : numpy.ndarray
-        The condition whether the triangle has non-zero volume. (M, )
+    tuple[np.ndarray, np.ndarray]
+        Array of signed plane normals with shape ``(M, 3, 3)`` and a boolean
+        validity mask indicating non-zero volume triangles.
+
+    Notes
+    -----
+    The triangle vertices are translated so the apex ``o`` sits at the origin
+    (``a = A - o``, ``b = B - o``, ``c = C - o``). The helper rejects
+    near-degenerate triangles by checking ``|a · (b × c)| > eps`` before
+    assembling the oriented plane normals ``(a × b)``, ``(b × c)`` and ``(c × a)``.
+    The normals are flipped so each points toward the third vertex, enabling the
+    half-space tests described in :func:`delta_cone`.
     """
     dtype = triangles.dtype
     eps = dtype.type(eps)
@@ -447,31 +437,40 @@ def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points:
                      eps: float = 1e-6, allow_behind: bool = False,
                      batch_size: int = 65536, verbose: int = 0
                      ) -> sparse.csr_matrix:
-    """
-    Apply the delta_cone function to the grid points.
+    """Test which points fall inside the cones defined by ``triangles``.
 
     Parameters
     ----------
-    triangles : numpy.ndarray of shape (M, 3, 3)
-        Three 3D vectors of triangles.
-    start_point : numpy.ndarray of shape (3, )
-        The origin of the light.
-    end_points : numpy.ndarray of shape (N, 3)
-        The grid points to be checked.
+    triangles : np.ndarray, shape (M, 3, 3)
+        Triangle vertices forming each cone.
+    start_point : np.ndarray, shape (3,)
+        Apex of all cones.
+    end_points : np.ndarray, shape (N, 3)
+        Candidate points to evaluate.
     eps : float, optional
-        The tolerance for zero volume check, by default 1e-6.
+        Numerical tolerance forwarded to :func:`delta_cone_prepare`.
     allow_behind : bool, optional
-        Whether to include the part behind the start point, by default False.
+        When ``True`` the cones also include the opposite side of each plane.
     batch_size : int, optional
-        The batch size for processing the grid points, by default 65536.
+        Number of points processed per batch to limit memory usage.
     verbose : int, optional
-        The verbosity level, by default 0.
+        Controls progress reporting via :func:`my_range`.
 
     Returns
     -------
-    condition : scipy.sparse.csr_matrix (shape: (M, N))
-        The condition whether the grid points are inside the cone defined by the mesh and the origin.
-        condition[i, j] is True if points[j] is inside the cone of mesh_obj.vectors[i].
+    tuple[sparse.csr_matrix, np.ndarray]
+        Sparse mask of shape ``(M, N)`` marking points inside each cone and a
+        boolean array describing which triangles were valid.
+
+    Notes
+    -----
+    For each batch of candidate points the helper evaluates the signed distance
+    to the oriented planes prepared by :func:`delta_cone_prepare`. Points that
+    satisfy ``p · n ≥ -eps`` for all three plane normals are inside the cone. If
+    ``allow_behind`` is ``True`` the opposite half-spaces ``p · n ≤ eps`` are
+    also accepted, allowing cones to extend behind the apex. The collected mask
+    is emitted as a sparse matrix with rows aligned to the original triangle
+    indices and columns to the source point order.
     """
     dtype = triangles.dtype
     eps = dtype.type(eps)
@@ -566,44 +565,46 @@ def delta_cone_apply_test():
 def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
                   behind_start_included: float | bool = False, dtype: type = np.float32,
                   batch_points: int = 65536) -> np.ndarray:
-    """
-    Visibility check using delta_cone and Möller–Trumbore intersection algorithm.
-    This function provides a visibility of the grid points from the start point.
-    Conditions:
-    C_1. Whether the grid points are inside the cone defined by the mesh and the origin.
-    C_2. Whether the line segment between the start point and the grid point intersects with the mesh.
+    """Determine which ``grid_points`` are visible from ``start``.
 
     Parameters
     ----------
-    mesh_obj : mesh.Mesh object
-        STL mesh object with M triangles.
-    start : numpy.ndarray (shape: (3, ))
-        The start point of the ray.
-    grid_points : numpy.ndarray (shape: (N, 3))
-        The grid points to be checked.
-    verbose : int, optional, default 0
-        The verbosity level.
-    behind_start_included : float or bool, optional, default False
-        Whether to include the part behind the start point, by default False.
-        If bool, True means include all part behind the start point.
-        If float, include the part behind the start point up to the distance of the float value.
-    dtype : data-type, optional, default np.float32
-        The data type for calculations.
+    mesh_obj : mesh.Mesh
+        Scene geometry represented by ``M`` triangles.
+    start : np.ndarray, shape (3,)
+        Ray origin for the visibility test.
+    grid_points : np.ndarray, shape (N, 3)
+        Sample points to classify as visible or occluded.
+    verbose : int, optional
+        Verbosity level forwarded to helper utilities.
+    behind_start_included : float or bool, optional
+        Controls whether intersections behind ``start`` are considered blocking.
+    dtype : type, optional
+        Numpy dtype used for intermediate calculations. Defaults to ``np.float32``.
     batch_points : int, optional
-        The batch size for processing the grid points, by default 65536.
+        Number of candidate points processed per batch during cone evaluation.
 
     Returns
     -------
-    visible : numpy.ndarray (shape: (N,)) (dtype=bool)
-        The condition of the grid points. If the n-th grid point is visible from the start point, the value at n is True.
+    np.ndarray, shape (N,), dtype=bool
+        Mask with ``True`` for points that remain visible.
 
     Notes
     -----
-    This function first checks if the grid points are inside the cone defined by the mesh and the origin using delta_cone_apply.
-    The points outside the cone are considered to be visible from the start point with the current mesh.
-    Then, for the points inside the cone, it checks if the line segment between the start point and the grid point intersects with the mesh using check_intersection.
-    Once a grid point is found to be intersecting with any mesh, it is considered to be invisible from the start point.
-    That is, C_1 and C_2 for each mesh are ORed and the result is ANDed for all meshes.
+    Visibility is determined by two coupled conditions:
+
+    ``C₁``
+        Whether a point resides inside the viewing cone induced by each mesh
+        triangle. This is evaluated with :func:`delta_cone_apply`, which returns
+        a sparse mask of candidate points per triangle. Points outside every
+        cone remain visible without further checks.
+    ``C₂``
+        Whether the segment from ``start`` to the candidate point intersects the
+        triangle. For candidates inside a cone the function calls
+        :func:`check_intersection`, which applies the Möller–Trumbore algorithm.
+
+    A point becomes occluded as soon as any triangle satisfies ``C₁`` *and*
+    ``C₂``. Otherwise the point is marked visible.
     """
 
     N = grid_points.shape[0]
@@ -680,37 +681,25 @@ def check_visible_test():
 
 def check_visible_old(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarray,
                       verbose: int = 0, behind_start_included: bool = False) -> np.ndarray:
-    """
-    Check if the grid points are visible from the start point.
-
-    This function provides a visibility of the grid points from the start point.
-    Three conditions are checked to determine the visibility:
-    C_1. Whether the grid points are inside the cone defined by the mesh and the origin.
-    C_2. Whether the grid points are farther than all vertices of the mesh.
-    C_3. Whether the line segment between the start point and the grid point intersects with the mesh.
-
-    The shadow related to the mesh is defined as C_1 & C_2 for each mesh and OR of the shadows for all meshes.
-    C_3 is not evaluated for the grid points being outside `check_list` in which the grid points are invisible from
-    the start point.
+    """Legacy visibility algorithm retained for regression testing.
 
     Parameters
     ----------
-    mesh_obj : mesh.Mesh object
-        STL mesh object with M triangles.
-    start : numpy.ndarray (shape: (3, ))
-        The start point of the ray.
-    grid_points : numpy.ndarray (shape: (N, 3))
-        The grid points to be checked.
-    verbose : int, optional, default 0
-        The verbosity level.
-    behind_start_included : bool, optional, default False
-        Whether to include the part behind the start point, by default False.
-        If True, the grid points behind the start point are considered to be invisible from the start point.
+    mesh_obj : mesh.Mesh
+        STL mesh containing ``M`` triangles.
+    start : np.ndarray, shape (3,)
+        Viewpoint or ray origin.
+    grid_points : np.ndarray, shape (N, 3)
+        Locations to test for visibility.
+    verbose : int, optional
+        Verbosity level forwarded to progress utilities.
+    behind_start_included : bool, optional
+        When ``True`` any points located behind ``start`` are treated as occluded.
 
     Returns
     -------
-    visible : numpy.ndarray (shape: (N,)) (dtype=bool)
-        The condition of the grid points. If the n-th grid point is visible from the start point, the value at n is True.
+    np.ndarray, shape (N,), dtype=bool
+        Boolean visibility mask comparable to :func:`check_visible`.
     """
     if verbose > 0:
         _trange = trange
@@ -758,19 +747,12 @@ def check_visible_old(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.nd
 
 # MARK: STL visualization utilities
 def stl2mesh3d(stl_mesh: mesh.Mesh):
-    """
-    Convert a stl mesh to a Plotly mesh3d object.
-
-    Parameters
-    ----------
-    stl_mesh
+    """Convert ``numpy-stl`` triangle data into a Plotly ``Mesh3d`` representation.
 
     Returns
     -------
-    vertices : numpy.ndarray (shape: (N, 3))
-        The unique vertices of the mesh.
-    (I, J, K) : tuple of numpy.ndarray (shape: (M, ))
-        The indices of the vertices to define the triangles.
+    tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]
+        Unique vertex coordinates and corresponding face index arrays ``(i, j, k)``.
     """
     # stl_mesh is read by numpy-stl from a stl file; it is  an array of faces/triangles (i.e. three 3d points)
     # this function extracts the unique vertices and the lists I, J, K to define a Plotly mesh3d
@@ -787,32 +769,31 @@ def stl2mesh3d(stl_mesh: mesh.Mesh):
 def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure = None, color: str = 'lightblue',
                     opacity: float = 0.5, show_edges: bool = False, show_fig: bool = True,
                     linearg: dict = None, **kwargs):
-    """
-    Plot a stl mesh using Plotly.
+    """Render ``stl_mesh`` into a Plotly figure with optional edge overlays.
 
     Parameters
     ----------
-    fig : go.Figure
-        The figure to be updated.
     stl_mesh : mesh.Mesh
-        The stl mesh to be plotted.
-    color : str
-        The color of the mesh.
-    opacity : float
-        The opacity of the mesh.
-    show_edges : bool
-        Whether to show the edges of the mesh.
-    show_fig : bool
-        Whether to show the figure.
-    linearg : dict
-        The arguments to be passed to go.Scatter3d for the edges.
-    kwargs : dict
-        Other arguments to be passed to go.Layout.
+        Mesh to visualize.
+    fig : go.Figure, optional
+        Figure receiving the traces. A new figure is created when omitted.
+    color : str, optional
+        Fill color for the ``Mesh3d`` trace.
+    opacity : float, optional
+        Face opacity supplied to Plotly.
+    show_edges : bool, optional
+        When ``True`` an additional ``Scatter3d`` trace highlights triangle edges.
+    show_fig : bool, optional
+        Whether to call :meth:`go.Figure.show` before returning.
+    linearg : dict, optional
+        Keyword arguments passed to the edge trace.
+    **kwargs
+        Additional layout updates applied to ``fig``.
 
     Returns
     -------
-    fig : go.Figure
-        The updated figure.
+    go.Figure
+        Figure instance containing the rendered mesh.
     """
     if fig is None:
         fig = go.Figure()
@@ -846,31 +827,31 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure = None, color: str = 'li
 def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
                      fig: go.Figure = None, show_fig: bool = True, axis_length: float = 1.0, cone_scale: float = 0.2,
                      name: str = 'axes', **kwargs):
-    """
-    Plot the axes of a rotation matrix.
+    """Plot a triad of axes derived from ``R`` in a Plotly figure.
+
     Parameters
     ----------
-    R: Rotation
-        The rotation matrix.
-    origin: np.ndarray
-        The origin of the axes.
-    fig: go.Figure
-        The figure to be updated.
-    show_fig: bool
-        Whether to show the figure.
-    axis_length:
-        The length of the axes.
-    cone_scale:
-        The scale of the cones.
-    name: str
-        The name of the axes.
-    kwargs: dict
-        Other arguments to be passed to go.Layout.
+    R : Rotation | np.ndarray
+        Rotation instance or 3×3 matrix providing axis directions.
+    origin : np.ndarray, optional
+        Anchor position of the axes in world coordinates.
+    fig : go.Figure, optional
+        Figure to update. A new figure is created when omitted.
+    show_fig : bool, optional
+        Display the figure via :meth:`go.Figure.show`.
+    axis_length : float, optional
+        Length of each axis line segment.
+    cone_scale : float, optional
+        Scale applied to the arrowhead cones.
+    name : str, optional
+        Prefix used for axis labels in the annotation trace.
+    **kwargs
+        Additional layout options forwarded to :meth:`go.Figure.update_layout`.
 
     Returns
     -------
-    fig: go.Figure
-        The updated figure.
+    go.Figure
+        Figure containing the axes visualization.
     """
     if fig is None:
         fig = go.Figure()
@@ -923,60 +904,44 @@ def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
 def show_stl(model, ax=None, fsz=10, elev=30, azim=30, facecolors="lightblue", edgecolors="k", lw=0.1,
              x_lim=None, y_lim=None, z_lim=None, modify_axes=False, full_model=True, show_origin=False, show_fig=False,
              **kwargs):
-    """Show the STL model using matplotlib.
+    """Visualize an STL ``model`` with Matplotlib's 3D toolkit.
 
     Parameters
     ----------
     model : mesh.Mesh
-        The STL model to be shown.
-    ax : matplotlib.axes.Axes, optional, default None
-        The axes to be used.
-    fsz : float, optional, default 10
-        The font size of the axes.
-    elev : float, optional, default 30
-        The elevation of the view.
-    azim : float, optional, default 30
-        The azimuth of the view.
-    facecolors : str, optional, default "lightblue"
-        The face color of the model.
-    edgecolors : str, optional, default None
-        The edge color of the model.
-    lw : float, optional, default 0.1
-        The line width of the model.
-    x_lim : tuple, optional, default None
-        The x limits of the axes.
-    y_lim : tuple, optional, default None
-        The y limits of the axes.
-    z_lim : tuple, optional, default None
-        The z limits of the axes.
-    modify_axes : bool, optional, default False
-        Whether to modify the axes.
-    full_model : bool, optional, default True
-        Whether to show the full model.
-    show_origin: bool, optional, default False
-        Whether to show the origin.
-    show_fig : bool, optional, default False
-        Whether to show the figure.
-    kwargs : dict
-        Other arguments to be passed to Poly3DCollection.
+        Mesh object to render.
+    ax : matplotlib.axes.Axes, optional
+        Target axes. A new 3D subplot is created when omitted.
+    fsz : float, optional
+        Font size used for axis annotations.
+    elev : float, optional
+        Elevation angle passed to :meth:`Axes3D.view_init`.
+    azim : float, optional
+        Azimuth angle for the view initialization.
+    facecolors : str, optional
+        Fill color forwarded to :class:`~mpl_toolkits.mplot3d.art3d.Poly3DCollection`.
+    edgecolors : str, optional
+        Edge color used for rendered polygons.
+    lw : float, optional
+        Line width applied to polygon edges.
+    x_lim, y_lim, z_lim : tuple[float, float], optional
+        Axis limits. When ``None`` the existing axis limits are reused unless
+        ``modify_axes`` is ``True``.
+    modify_axes : bool, optional
+        Override existing axes limits with model bounds when ``True``.
+    full_model : bool, optional
+        Render the entire mesh regardless of limits when ``True``.
+    show_origin : bool, optional
+        Add axis arrows and labels at the origin for reference.
+    show_fig : bool, optional
+        Display the containing figure via :meth:`matplotlib.figure.Figure.show`.
+    **kwargs
+        Additional keyword arguments passed to :class:`Poly3DCollection`.
 
     Returns
     -------
-    ax : matplotlib.axes.Axes
-        The axes used.
-
-    Notes
-    -----
-    The axes limits are set to the range of the model if `modify_axes` is True.
-     modify_axes |  full_model   |   *_lim    |       axes   |   model
-        False    |     False     |    None    | ->    axis   |  limited
-        False    |     False     |  not None  | ->   *_lim   |  limited
-        False    |     True      |    None    | ->    axis   |   full
-        False    |     True      |  not None  | ->   *_lim   |   full
-        True     |     False     |    None    | ->   model   |   full
-        True     |     False     |  not None  | ->   *_lim   |  limited
-        True     |     True      |    None    | ->   model   |   full
-        True     |     True      |  not None  | ->   *_lim   |   full
+    matplotlib.axes.Axes
+        Axes instance containing the rendered mesh.
     """
     if ax is None:
         ax = plt.subplot(projection='3d')
@@ -1035,20 +1000,19 @@ def show_stl(model, ax=None, fsz=10, elev=30, azim=30, facecolors="lightblue", e
 
 # MARK: STL generation utilities
 def make_stl(vertices: np.ndarray, faces: np.ndarray) -> mesh.Mesh:
-    """
-    Make stl data from vertices and faces
+    """Create an ``numpy-stl`` mesh from vertex and face arrays.
 
     Parameters
     ----------
     vertices : np.ndarray
-        vertices of mesh
+        Vertex positions with shape ``(N, 3)``.
     faces : np.ndarray
-        faces of mesh
+        Triangle indices referencing ``vertices``.
 
     Returns
     -------
-    stl_data : mesh.Mesh
-        stl data
+    mesh.Mesh
+        Mesh instance with normals computed.
     """
 
     stl_data = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
@@ -1062,24 +1026,21 @@ def make_stl(vertices: np.ndarray, faces: np.ndarray) -> mesh.Mesh:
 
 def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
                    func: Callable, **func_kwargs) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Make meshed surface
+    """Sample ``func`` across a parameter grid and triangulate the resulting surface.
 
     Parameters
     ----------
-    para_1 : np.ndarray
-        (N, ) array of parameters
-    para_2 : np.ndarray
-        (N, ) array of parameters
-    func : function
-        get 3D coordinates from 2D parameters
+    para_1, para_2 : np.ndarray
+        Parameter vectors defining the rectangular sampling grid.
+    func : Callable
+        Callable mapping ``(u, v)`` inputs to ``(x, y, z)`` coordinates.
+    **func_kwargs
+        Additional keyword arguments forwarded to ``func``.
 
     Returns
     -------
-    vertices : np.ndarray
-        (N, 3) array of vertices
-    faces : np.ndarray
-        (N, 3) array of faces
+    Tuple[np.ndarray, np.ndarray]
+        Tuple containing the sampled vertices and Delaunay faces.
     """
     params = np.array(np.meshgrid(para_1, para_2)).T.reshape(-1, 2)
     tri = Delaunay(params)
@@ -1090,28 +1051,23 @@ def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
 
 
 def torus(theta: np.ndarray, phi: np.ndarray, a: float = 1, R: float = 2):
-    """
-    Return 3D coordinates on torus surface
+    """Evaluate torus surface coordinates for grids of ``theta`` and ``phi``.
 
     Parameters
     ----------
     theta : np.ndarray
-        angle of toroidal direction
+        Toroidal angle values.
     phi : np.ndarray
-        angle of poloidal direction
-    a : float
-        minor radius of torus
-    R : float
-        major radius of torus
+        Poloidal angle values.
+    a : float, optional
+        Minor radius of the torus.
+    R : float, optional
+        Major radius of the torus.
 
     Returns
     -------
-    x : np.ndarray
-        x coordinates
-    y : np.ndarray
-        y coordinates
-    z : np.ndarray
-        z coordinates
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Arrays of ``x``, ``y`` and ``z`` coordinates.
     """
     x = (R + a * np.cos(theta)) * np.cos(phi)
     y = (R + a * np.cos(theta)) * np.sin(phi)
@@ -1120,26 +1076,21 @@ def torus(theta: np.ndarray, phi: np.ndarray, a: float = 1, R: float = 2):
 
 
 def sphere(theta: np.ndarray, phi: np.ndarray, r: float = 1):
-    """
-    Return 3D coordinates on sphere surface
+    """Evaluate spherical surface coordinates for the supplied angles.
 
     Parameters
     ----------
     theta : np.ndarray
-        angle of toroidal direction
+        Polar (inclination) angle values.
     phi : np.ndarray
-        angle of poloidal direction
-    r : float
-        radius of sphere
+        Azimuthal angle values.
+    r : float, optional
+        Sphere radius.
 
     Returns
     -------
-    x : np.ndarray
-        x coordinates
-    y : np.ndarray
-        y coordinates
-    z : np.ndarray
-        z coordinates
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Arrays of ``x``, ``y`` and ``z`` coordinates.
     """
     x = r * np.sin(theta) * np.cos(phi)
     y = r * np.sin(theta) * np.sin(phi)
@@ -1148,20 +1099,20 @@ def sphere(theta: np.ndarray, phi: np.ndarray, r: float = 1):
 
 
 def make_2D_surface(points: np.ndarray, condition: Callable) -> mesh.Mesh:
-    """
-    Make unclosed surface from vertices
+    """Triangulate planar ``points`` and construct a filtered STL mesh.
+
     Parameters
     ----------
     points : np.ndarray
-        (N, 2) array of points
+        Planar coordinates with shape ``(N, 2)``.
     condition : Callable
-        condition is a function that returns True if points are not included in the surface
-        condition(x, y) -> bool
+        Predicate evaluated on triangle centroids. Triangles are retained when
+        the predicate returns ``False``.
 
     Returns
     -------
-    stl_data : mesh.Mesh
-        unclosed stl data (z = 0)
+    mesh.Mesh
+        Unclosed STL mesh constrained to the ``z = 0`` plane.
     """
 
     tri = Delaunay(points)
