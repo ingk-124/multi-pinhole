@@ -1,3 +1,5 @@
+from itertools import chain
+
 import numpy as np
 from scipy import sparse
 from scipy.spatial.transform import Rotation
@@ -373,7 +375,6 @@ class Voxel:
         # grid
         self._N_grid = 0
         self._grid_shape = None
-        self._grid = None
 
         # voxel
         self._N_voxel = 0
@@ -385,9 +386,9 @@ class Voxel:
         self._vertices = None
 
         # voxel properties
-        self._d = None
-        self._gravity_center = None
-        self._volume = None
+        # self._d = None
+        # self._gravity_center = None
+        # self._volume = None
 
         # interpolation
         self._vertices_interpolator = None
@@ -406,6 +407,8 @@ class Voxel:
                             **self.coordinate_parameters)
         self.axes = axes
         self.res = sub_voxel_resolution
+        self._voxel2vertices = None
+        self.update()
 
     def __repr__(self):
         return f"Voxel(ranges={self.ranges}, N_voxel={self.N_voxel}, voxel_shape={self.voxel_shape}, " \
@@ -458,7 +461,8 @@ class Voxel:
         -------
         np.ndarray (N_grid, 3)
         """
-        return self._grid
+        return np.stack(
+            [axis[_] for axis, _ in zip(self.axes, np.unravel_index(np.arange(self.N_grid), self.grid_shape))], axis=-1)
 
     @property
     def N_voxel(self):
@@ -481,10 +485,6 @@ class Voxel:
         return self._voxel_shape
 
     @property
-    def voxel_indices(self):
-        return self._voxel_indices
-
-    @property
     def vertices_indices(self):
         """
         get vertices indices
@@ -495,6 +495,14 @@ class Voxel:
         return self._vertices_indices
 
     @property
+    def vertices_indices_3d(self):
+        """
+        get vertices indices in (N_voxel, 8, 3) form
+        """
+        ii, jj, kk = np.unravel_index(self._vertices_indices, self.grid_shape)  # each shape is (N_voxel, 8)
+        return np.stack([ii, jj, kk], axis=-1)  # shape is (N_voxel, 8, 3)
+
+    @property
     def vertices(self):
         """
         get vertices
@@ -502,31 +510,54 @@ class Voxel:
         -------
         np.ndarray (N_voxel, 8, 3)
         """
-        return self._vertices
-
-    @property
-    def d(self):
-        """
-        get voxel edge length
-        Returns
-        -------
-        np.ndarray (N, 3)
-        """
-        return self._d
+        ii, jj, kk = np.unravel_index(self._vertices_indices, self.grid_shape)  # each shape is (N_voxel, 8)
+        return np.stack([self.x_axis[ii], self.y_axis[jj], self.z_axis[kk]], axis=-1)  # shape is (N_voxel, 8, 3)
 
     @property
     def gravity_center(self):
         """
         get gravity center
+
         Returns
         -------
         np.ndarray (N_voxel, 3)
         """
-        return self._gravity_center
+        # return self._gravity_center
+        # calculate from cx, cy, cz_axis
+        xxx, yyy, zzz = np.meshgrid(self.cx_axis, self.cy_axis, self.cz_axis, indexing="ij")
+        return np.stack([xxx.ravel(), yyy.ravel(), zzz.ravel()], axis=1)
+
+    def get_gravity_center(self, n=None):
+        """
+        get gravity center
+
+        Parameters
+        ----------
+        n : int
+            number of points to return
+
+        Returns
+        -------
+        np.ndarray (n, 3)
+        """
+        # return self.gravity_center[n]  # original <- this requires all gravity centers to be calculated
+        # calculate only for the requested indices
+        indices = self.get_voxel_position(n)
+        cx = self.cx_axis[indices[:, 0]]
+        cy = self.cy_axis[indices[:, 1]]
+        cz = self.cz_axis[indices[:, 2]]
+        return np.stack([cx, cy, cz], axis=1)
 
     @property
     def volume(self):
-        return self._volume
+        """
+        get voxel volume
+
+        Returns
+        -------
+        np.ndarray (N_voxel,)
+        """
+        return (self.dx_axis[:, None, None] * self.dy_axis[None, :, None] * self.dz_axis[None, None, :]).ravel()
 
     @property
     def coordinate_type(self):
@@ -626,7 +657,6 @@ class Voxel:
 
         my_print(f"coordinate type: {self._coordinate_type}, coordinate parameters: {self._coordinate_parameters}",
                  show=show)
-        self.update()
         return self
 
     @property
@@ -647,7 +677,7 @@ class Voxel:
             The normalized points (n_points, 3)
         """
         if points is None:
-            return self._normalized_coordinates(self._gravity_center.dot(self._rotation_matrix.T))
+            return self._normalized_coordinates(self.gravity_center.dot(self._rotation_matrix.T))
         else:
             return self._normalized_coordinates(points.dot(self._rotation_matrix.T))
 
@@ -664,34 +694,18 @@ class Voxel:
     @axes.setter
     def axes(self, axes):
         self._axes = [np.array(axis) for axis in axes]
-        self.update()
 
     @property
     def x_axis(self):
         return self.axes[0]
 
-    @x_axis.setter
-    def x_axis(self, x_axis):
-        self._axes[0] = np.array(x_axis)
-        self.update()
-
     @property
     def y_axis(self):
         return self.axes[1]
 
-    @y_axis.setter
-    def y_axis(self, y_axis):
-        self._axes[1] = np.array(y_axis)
-        self.update()
-
     @property
     def z_axis(self):
         return self.axes[2]
-
-    @z_axis.setter
-    def z_axis(self, z_axis):
-        self._axes[2] = np.array(z_axis)
-        self.update()
 
     @property
     def vx(self):
@@ -763,42 +777,19 @@ class Voxel:
         """
         return self.N_voxel
 
-    def set_world(self, world_obj):
-        self._world = world_obj
-
-    def reset_axes(self):
+    @property
+    def voxel2vertices(self):
         """
-        reset axes with ranges and N_voxel
-        """
-        self.uniform_axes(self.ranges, self.voxel_shape)
+        get mapping from voxel index to vertex indices
 
-    def uniform_axes(self, ranges, shape, show_info=False):
-        """
-        set uniform axes with ranges and divs
-
-        Parameters
-        ----------
-        ranges : ((float, float), (float, float), (float, float))
-            axis ranges
-        shape : (int, int, int)
-            voxel shape
-        show_info : bool
-            show info or not
         Returns
         -------
-        self
+        np.ndarray (N_voxel, 8)
         """
-        axes, steps = zip(
-            *[np.linspace(start, end, num + 1, retstep=True) for (start, end), num in zip(ranges, shape)])
-        # for i, (axis, step, div) in enumerate(zip(axes, steps, divs)):
-        #     print(f"axis {i}: {div=}")
-        #     print(f"{step=}, {axis=}")
-        print("update axes...")
-        self.axes = axes
-        if show_info:
-            self.show_info()
+        return self._voxel2vertices
 
-        return self
+    def set_world(self, world_obj):
+        self._world = world_obj
 
     @staticmethod
     def uniform_voxel(ranges, shape, **kwargs):
@@ -818,77 +809,16 @@ class Voxel:
         -------
         voxel : Voxel
         """
-        axes = [np.linspace(start, end, num + 1) for (start, end), num in zip(ranges, shape)]
+        axes = [np.round(np.linspace(start, end, num + 1), 6) for (start, end), num in zip(ranges, shape)]
         voxel = Voxel(*axes, **kwargs)
         return voxel
 
     def update(self):
         """
-        update all attributes
-
-        if 0 is in grid_shape i.e. N_grid == 0, then do nothing
-        """
-        if self.axes is None:
-            return
-        # vertex points
-        self._grid_shape = tuple(len(axis) for axis in self.axes)  # (N_x + 1, N_y + 1, N_z + 1)
-        self._N_grid = np.prod(self._grid_shape)  # (N_x + 1) * (N_y + 1) * (N_z + 1)
-        if self._N_grid == 0:
-            return
-
-        # increment coordinates in the order of z->y->x
-        self._grid = np.stack(np.meshgrid(*self.axes, indexing="ij")).reshape((3, -1)).T  # (N_grid, 3)
-        # ((N_x + 1) * (N_y + 1) * (N_z + 1), 3)
-
-        # voxel number
-        # voxels are 1 less than grid in each axis
-        self._voxel_shape = tuple(len(axis) - 1 for axis in self.axes)  # (N_x, N_y, N_z)
-        self._N_voxel = np.prod(self._voxel_shape)  # N_x * N_y * N_z
-
-        # axis ranges
-        self._ranges = tuple((np.min(axis), np.max(axis)) for axis in self.axes)
-
-        # 3d voxel index (i,j,k)
-        self._voxel_indices = np.stack(np.meshgrid(*[np.arange(s) for s in self._voxel_shape],
-                                                   indexing="ij")).reshape((3, -1)).T  # (N_voxel, 3)
-
-        # get 8 indices of vertices defining each voxel (k->j->i [[0,0,0],[0,0,1],...,[1,1,1]])
-        vertex_index = np.mgrid[0:2, 0:2, 0:2].reshape((3, -1)).T  # (8, 3)
-
-        # (i,j,k) -> n: n = k + N_z * (j + N_y * i)
-        self._vertices_indices = np.array(
-            [[k + self._grid_shape[2] * (j + self._grid_shape[1] * i) for i, j, k in vertex_index + ijk] for ijk in
-             self._voxel_indices])  # (N_voxel, 8)
-        self._vertices = self._grid[self._vertices_indices]  # (N_voxel, 8, 3)
-
-        # voxel edge length
-        diff = [np.diff(axis) for axis in self.axes]
-        self._d = np.stack(np.meshgrid(*diff, indexing="ij")).reshape((3, -1)).T  # (N_grid, 3)
-
-        # gravity center
-        self._gravity_center = np.mean(self._vertices, axis=1)
-
-        # volume
-        self._volume = np.prod(self._d, axis=1)
-
-        if self._coordinate_type == "cartesian":
-            self._normalized_coordinates = cartesian_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "torus":
-            self._normalized_coordinates = torus_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "cylindrical":
-            self._normalized_coordinates = cylindrical_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "spherical":
-            self._normalized_coordinates = spherical_coordinates(**self._coordinate_parameters)
-
-        return
-
-    # -------- Fast updater (reduced allocations) ---------------------------------
-    def update_fast(self, *, build_grid: bool = False, build_vertices: bool = False):
-        """
-        Faster alternative to `update()`.
-        - Avoids allocating the full `grid` / `vertices` unless explicitly requested.
-        - Computes voxel centers, cell sizes and volumes in a vectorized way.
-        - Builds `vertices_indices` with a fully vectorized formula.
+        Update attributes.
+            - Avoids allocating the full `grid` / `vertices` unless explicitly requested.
+            - Computes voxel centers, cell sizes and volumes in a vectorized way.
+            - Builds `vertices_indices` with a fully vectorized formula.
 
         Parameters
         ----------
@@ -897,78 +827,58 @@ class Voxel:
         build_vertices : bool, default False
             If True, materialize `self._vertices` ((N_voxel,8,3)). Otherwise keep it None.
         """
-        if self.axes is None:
-            return
 
         # Basic shapes
+        # grid
         self._grid_shape = tuple(len(axis) for axis in self.axes)  # (N_x+1, N_y+1, N_z+1)
         self._N_grid = int(np.prod(self._grid_shape))
         if self._N_grid == 0:
             return
 
-        # Voxel shape / count
-        self._voxel_shape = tuple(max(0, len(axis) - 1) for axis in self.axes)  # (N_x, N_y, N_z)
+        # voxel
+        self._voxel_shape = tuple(max(0, N__ - 1) for N__ in self._grid_shape)  # (N_x, N_y, N_z)
         self._N_voxel = int(np.prod(self._voxel_shape))
 
         # Axis ranges
         self._ranges = tuple((float(np.min(axis)), float(np.max(axis))) for axis in self.axes)
 
-        # Optionally build full grid (heavy). Keep None by default to save memory.
-        if build_grid:
-            self._grid = np.stack(np.meshgrid(*self.axes, indexing="ij")).reshape((3, -1)).T
-        else:
-            self._grid = None
-
         # Precompute per-axis diffs and centers (1D)
         x, y, z = self.axes
-        dx = np.diff(x)  # (N_x,)
-        dy = np.diff(y)  # (N_y,)
-        dz = np.diff(z)  # (N_z,)
-
-        cx = 0.5 * (x[:-1] + x[1:])  # (N_x,)
-        cy = 0.5 * (y[:-1] + y[1:])  # (N_y,)
-        cz = 0.5 * (z[:-1] + z[1:])  # (N_z,)
 
         # Vectorized voxel indices (i,j,k) and vertices_indices
-        Nx, Ny, Nz = self._voxel_shape
         if self._N_voxel == 0:
             # degenerate
-            self._voxel_indices = np.empty((0, 3), dtype=int)
-            self._vertices_indices = np.empty((0, 8), dtype=int)
+            self._voxel_indices = np.empty((0, 3), dtype=np.uint64)
+            self._vertices_indices = np.empty((0, 8), dtype=np.uint64)
             self._vertices = None
-            self._d = np.empty((0, 3))
-            self._gravity_center = np.empty((0, 3))
-            self._volume = np.empty((0,))
         else:
-            ii, jj, kk = np.meshgrid(np.arange(Nx), np.arange(Ny), np.arange(Nz), indexing="ij")
-            self._voxel_indices = np.stack([ii, jj, kk], axis=-1).reshape(-1, 3)
+            Vx, Vy, Vz = self._voxel_shape
+            Gx, Gy, Gz = self._grid_shape
 
+            ii, jj, kk = np.meshgrid(np.arange(Vx), np.arange(Vy), np.arange(Vz), indexing="ij")
+            self._voxel_indices = np.stack([ii, jj, kk], axis=-1).reshape(-1, 3).astype(np.uint64)  # (N_voxel, 3)
+
+            # voxel_numbers = np.arange(self._N_voxel)  # (N_voxel,)
+            # i_indices, j_indices, k_indices = self.get_voxel_position(voxel_numbers).T  # (N_voxel,) x3
             # vertex linear index base (grid is in z->y->x order: n = k + Nz*(j + Ny*i))
-            base = (kk + Nz * (jj + Ny * ii)).reshape(-1)  # (N_voxel,)
-
+            # base = k_indices + Nz * (j_indices + Ny * i_indices)  # (N_voxel,)
+            base = self._voxel_indices @ np.array([Gz * Gy, Gz, 1])  # (N_voxel,)
             # fixed offsets for the 8 vertex corners
-            off = np.array([0, 1, Nz, Nz + 1, Nz * Ny, Nz * Ny + 1, Nz * Ny + Nz, Nz * Ny + Nz + 1], dtype=np.int64)
-            self._vertices_indices = (base[:, None] + off[None, :]).astype(np.int64, copy=False)  # (N_voxel,8)
+            offset = np.array([0, 1, Gz, Gz + 1, Gz * Gy,
+                               Gz * Gy + 1, Gz * Gy + Gz, Gz * Gy + Gz + 1])
+            self._vertices_indices = np.array([base[:, None] + offset[None, :]],
+                                              dtype=np.uint64).squeeze()  # (N_voxel,8)
 
             # Per-voxel cell sizes (N_voxel, 3) without building full 3D stacks
             # Use meshgrid on 1D diffs and 1D centers to create compact 3D then flatten.
-            DX, DY, DZ = np.meshgrid(dx, dy, dz, indexing="ij")
-            self._d = np.stack([DX, DY, DZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
-
-            CX, CY, CZ = np.meshgrid(cx, cy, cz, indexing="ij")
-            self._gravity_center = np.stack([CX, CY, CZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
-
-            # Volumes (N_voxel,)
-            self._volume = (DX * DY * DZ).reshape(-1)
-
-            # Optionally materialize per-voxel 8 vertices (heavy)
-            if build_vertices:
-                # Create the grid on demand to index vertices (costly)
-                if self._grid is None:
-                    self._grid = np.stack(np.meshgrid(*self.axes, indexing="ij")).reshape((3, -1)).T
-                self._vertices = self._grid[self._vertices_indices]
-            else:
-                self._vertices = None
+            # DX, DY, DZ = np.meshgrid(dx, dy, dz, indexing="ij")
+            # self._d = np.stack([DX, DY, DZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
+            #
+            # CX, CY, CZ = np.meshgrid(cx, cy, cz, indexing="ij")
+            # self._gravity_center = np.stack([CX, CY, CZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
+            #
+            # # Volumes (N_voxel,)
+            # self._volume = (DX * DY * DZ).reshape(-1)
 
         # normalized coordinate function refresh (same as update())
         if self._coordinate_type == "cartesian":
@@ -981,6 +891,52 @@ class Voxel:
             self._normalized_coordinates = spherical_coordinates(**self._coordinate_parameters)
 
         return
+
+    def get_voxel_position(self, n: int | np.ndarray):
+        """
+        Get voxel position (i, j, k) from voxel number n.
+
+        Parameters
+        ----------
+        n : int or np.ndarray
+            voxel number
+
+        Returns
+        -------
+        np.ndarray
+            voxel position (i, j, k)
+        """
+        n = self._type_check_n_voxel(n)
+        # N_x, N_y, N_z = self.voxel_shape
+        # i = n // (N_y * N_z)
+        # j = (n % (N_y * N_z)) // N_z
+        # k = n % N_z
+        # return np.stack((i, j, k), axis=-1)  # (n_voxel, 3) or (3,)
+        # return np.array(np.unravel_index(n, self.voxel_shape)).T  # (n_voxel, 3) or (3,)
+        return self._voxel_indices[n]  # (n_voxel, 3)
+
+    def get_voxel_number(self, i, j, k):
+        """
+
+        Parameters
+        ----------
+        i : int
+            index along x
+        j : int
+            index along y
+        k : int
+            index along z
+
+        Returns
+        -------
+        int
+            voxel number
+        """
+        N_x, N_y, N_z = self.voxel_shape
+        if not (0 <= i < N_x and 0 <= j < N_y and 0 <= k < N_z):
+            raise IndexError(f"Index out of range: {(i, j, k)} for voxel_shape {self.voxel_shape}")
+        n = k + N_z * (j + N_y * i)
+        return n
 
     # -------- Lightweight helper properties (computed from 1D data) --------------
     @property
@@ -1042,13 +998,52 @@ class Voxel:
         # print(f"{self.N_voxel=}")
         # print(f"{self.voxel_shape=}")
 
-    def get_sub_voxel(self, vertices=None, n=None, res=None, verbose=0):
+    def _type_check_n_voxel(self, n=None):
+        """
+        type check for voxel number n
+
+        Parameters
+        ----------
+        n : int, list[int], slice, np.ndarray, optional (default=None)
+            voxel numbers
+
+        Returns
+        -------
+        n : np.ndarray
+            voxel numbers as np.ndarray
+        """
+
+        if n is None:
+            n = np.arange(self.N_voxel)
+        else:
+            if isinstance(n, int):
+                n = np.array([n])
+            elif isinstance(n, list):
+                n = np.array(n)
+            elif isinstance(n, slice):
+                n = np.arange(self.N_voxel)[n]
+            elif isinstance(n, np.ndarray):
+                if n.ndim == 1:
+                    if n.dtype == bool:
+                        n = np.arange(self.N_voxel)[n]
+                    elif np.issubdtype(n.dtype, np.integer):
+                        n = n
+                    else:
+                        raise TypeError(f"n must be int or boolean np.ndarray")
+                else:
+                    raise TypeError(f"n must be 1d np.ndarray")
+            else:
+                raise TypeError(f"n must be int, slice, list, or np.ndarray")
+
+            if np.any((n < 0) | (n >= self.N_voxel)):
+                raise IndexError(f"voxel number out of range: n should satisfy 0 <= n < {self.N_voxel}")
+        return n.astype(int)
+
+    def get_sub_voxel(self, n=None, res=None, verbose=0):
         """
         get sub voxels with resolution `res`
         Parameters
         ----------
-        vertices : np.ndarray (8, 3) or (n_voxel, 8, 3), optional (default=None)
-            vertices of voxels (n_voxel is the number of voxels)
         n : int, list[int], slice, optional (default=None)
             voxel numbers (if vertices is specified, n is ignored)
         res : int or (int, int, int), optional (default=3)
@@ -1061,36 +1056,28 @@ class Voxel:
         """
 
         self.res = res
-        if vertices is None:
-            if n is None:
-                vertices = self.vertices
-            else:
-                if isinstance(n, int):
-                    n = [n]
-                elif isinstance(n, slice) or isinstance(n, list):
-                    pass
-                elif isinstance(n, np.ndarray):
-                    if n.ndim == 1 and n.dtype in [bool, int]:
-                        pass
-                    else:
-                        raise TypeError(f"{n=} must be int or bool np.ndarray")
-                else:
-                    raise TypeError(f"{n=} must be int, slice, list, or np.ndarray")
-                vertices = self.vertices[n]
-        else:
-            vertices = np.array(vertices, ndmin=3)
-            if vertices.shape[1:] != (8, 3):
-                raise ValueError(f"vertices must be (8, 3) or (n_voxel, 8, 3)")
-        # TODO: verticesは重いのでインデックスのみ使用する
-        sub_axes = [[np.linspace(x, y, r + 1) for x, y, r in zip(vox[0], vox[-1], self._res)] for vox in
-                    my_tqdm(vertices, verbose=verbose)]
-        sub_voxels = [Voxel(*axes) for axes in sub_axes]
-        if len(sub_voxels) == 1:
-            return sub_voxels[0]
-        else:
-            return sub_voxels
+        n = self._type_check_n_voxel(n)
 
-    def sub_voxel_interpolator(self, n, res=None):
+        i, j, k = self.get_voxel_position(n).T.astype(int)
+        x0 = self.x_axis[i]
+        x1 = self.x_axis[i + 1]
+        y0 = self.y_axis[j]
+        y1 = self.y_axis[j + 1]
+        z0 = self.z_axis[k]
+        z1 = self.z_axis[k + 1]
+
+        if isinstance(n, int):
+            sub_voxels = Voxel(np.linspace(x0, x1, self.res[0] + 1),
+                               np.linspace(y0, y1, self.res[1] + 1),
+                               np.linspace(z0, z1, self.res[2] + 1))
+        else:
+            sub_voxels = [Voxel(np.linspace(x0_, x1_, self.res[0] + 1),
+                                np.linspace(y0_, y1_, self.res[1] + 1),
+                                np.linspace(z0_, z1_, self.res[2] + 1))
+                          for x0_, x1_, y0_, y1_, z0_, z1_ in my_zip(x0, x1, y0, y1, z0, z1, disable=verbose <= 0)]
+        return sub_voxels
+
+    def sub_voxel_interpolator(self, n=None, res=None, verbose=0):
         """
         get n-th sub voxel interpolator with resolution `res`
 
@@ -1100,6 +1087,8 @@ class Voxel:
             voxel number(s)
         res : int or (int, int, int), optional (default=3)
             resolution of sub voxels (x_res, y_res, z_res)
+        verbose : int, default=0
+            verbosity level
 
         Returns
         -------
@@ -1107,10 +1096,26 @@ class Voxel:
             interpolator for n-th sub voxel (N_sub_grid = x_res * y_res * z_res)
         """
         self.res = res
-        # not necessary to check n because n is verified in _interpolate_vertices
-        # the return value of _interpolate_vertices is a list of lil_matrix (length = len(n) or 1 (when n is int))
-        interpolator = [self._sub_voxel_matrix @ interpolate_vertices for interpolate_vertices in
-                        self._interpolate_vertices(n)]
+        n = self._type_check_n_voxel(n)
+        # self.set_voxel2vertices(exist_ok=True, n_jobs=0, verbose=0)
+        if self.voxel2vertices is None:
+            raise RuntimeError("voxel2vertices is not calculated. "
+                               "Please run set_voxel2vertices() before calling sub_voxel_interpolator().")
+
+        # not necessary to check n because n is verified in set_voxel2vertices
+        # the return value of set_voxel2vertices is a list of lil_matrix (length = len(n) or 1 (when n is int))
+        # interpolator = [self._sub_voxel_matrix @ interpolate_vertices for interpolate_vertices in
+        #                 self.set_voxel2vertices(n)]
+        # voxel2vertices = self.set_voxel2vertices(verbose=verbose)  # (N_grid, N_voxel) or list of such matrices
+
+        def _append_interpolator_matrix(vi):
+            selector = sparse.coo_matrix((np.ones(8, dtype=bool), (np.arange(8), vi)),
+                                         shape=(8, self.N_grid), dtype=bool).tocsr()  # (8, N_grid)
+            return self._sub_voxel_matrix @ (selector @ self.voxel2vertices)
+
+        interpolator = [_append_interpolator_matrix(self._vertices_indices[_n]) for _n in
+                        my_tqdm(n, desc="Creating sub-voxel interpolator", disable=verbose <= 0)]
+
         return interpolator if len(interpolator) > 1 else interpolator[0]
 
     def get_random_point(self, n, N=1, rng=None):
@@ -1142,39 +1147,36 @@ class Voxel:
                 raise TypeError(f"{rng=} must be float (seed) or np.random._generator.Generator")
         return rng.uniform(self.vertices[n][0], self.vertices[n][-1], (N, 3))
 
-    # TODO: make calc_coordinate in Voxel class
-    def _interpolate_vertices(self, n):
+    def set_voxel2vertices(self, exist_ok=True, n_jobs=-2, verbose=0):
         """
         interpolate values to vertices
 
         Parameters
         ----------
-        n : int or list[int] or np.ndarray (bool, int)
-            voxel number
+        exist_ok : bool, default=True
+            if True and voxel2vertices is already calculated, do nothing
+        verbose : int, default=0
+            verbosity level
+        n_jobs : int, default=-2
+            number of parallel jobs (-1 means all CPUs, -2 means all but one)
 
         Returns
         -------
-        matrix_list : list[scipy.sparse.csr_matrix]
-            interpolation matrix list
-            if n is int, the length of matrix_list is 1
+        scipy.sparse.csr_matrix (N_grid, N_voxel)
+            interpolation matrix from voxel values to grid values
         """
+        if exist_ok and self._voxel2vertices is not None:
+            return None
 
-        # type check for n
-        if isinstance(n, int):
-            n = [n]
-        elif isinstance(n, slice) or isinstance(n, list):
-            pass
-        elif isinstance(n, np.ndarray):
-            if n.ndim == 1 and n.dtype in [bool, int]:
-                pass
-            else:
-                raise TypeError(f"{n=} must be int or bool np.ndarray")
-        else:
-            raise TypeError(f"{n=} must be int, slice, list, or np.ndarray")
+        cols = np.repeat(np.arange(self.N_voxel, dtype=np.int64), 8)  # (N_voxel * 8,)
+        rows = self.vertices_indices.reshape(-1).astype(np.int64)  # (N_voxel * 8,)
+        included_vertices = sparse.coo_matrix((np.ones_like(cols, dtype=bool), (rows, cols)),
+                                              shape=(self.N_grid, self.N_voxel),
+                                              dtype=bool).tocsr()  # (N_grid, N_voxel)
 
         def _func(virtual_vertices, grid):
             d_virtual = np.asarray([np.ptp(vv) for vv in virtual_vertices.T])
-            para = (grid - virtual_vertices[0])[d_virtual.nonzero()] / d_virtual[d_virtual.nonzero()]
+            para = (grid - virtual_vertices[0])[d_virtual.nonzero()] / d_virtual[d_virtual.nonzero()]  #
             data = [float(x) for x in range(0)]
             if len(para) == 3:
                 # if i-th grid point is included in 8 voxels (inside the virtual voxel)
@@ -1197,25 +1199,69 @@ class Voxel:
                 data.extend([1])
             return data
 
-        vertices = self._vertices_indices[n]
-        matrix_list = []
-        for nth_vertices in vertices:
-            matrix = sparse.lil_matrix((8, self.N_voxel))
-            for i, v in enumerate(nth_vertices):
-                included_voxel = np.where(np.any(self.vertices_indices == v, axis=1))[0]
-                matrix[i, included_voxel] = _func(self.gravity_center[included_voxel], self.grid[v])
-            matrix_list.append(matrix.tocsr())
-        return matrix_list
+        #
+        # vertices = self._vertices_indices[n]
+        # matrix_list = []
+        # for nth_vertices in vertices:
+        #     matrix = sparse.lil_matrix((8, self.N_voxel))
+        #     for i, v in enumerate(nth_vertices):
+        #         included_voxel = np.where(np.any(self.vertices_indices == v, axis=1))[0]
+        #         matrix[i, included_voxel] = _func(self.gravity_center[included_voxel], self.grid[v])
+        #     matrix_list.append(matrix.tocsr())
+        # return matrix_list
+        # data = []
+        # rows = []
+        # cols = []
+        # for v in my_range(self.N_grid, verbose=verbose, desc="Interpolating vertices"):
+        #     voxel_indices = included_vertices.indices[included_vertices.indptr[v]:included_vertices.indptr[v + 1]]
+        #     if len(voxel_indices) == 0:
+        #         continue
+        #     gc = self.get_gravity_center(voxel_indices)
+        #     i, j, k = np.unravel_index(v, self.grid_shape)
+        #     x, y, z = self.x_axis[i], self.y_axis[j], self.z_axis[k]
+        #     data.extend(_func(gc, np.array([x, y, z])))
+        #     rows.extend([v] * len(voxel_indices))
+        #     cols.extend(voxel_indices.tolist())
+
+        # parallel version
+        def _process_vertex(v):
+            voxel_indices = included_vertices.indices[included_vertices.indptr[v]:included_vertices.indptr[v + 1]]
+            if len(voxel_indices) == 0:
+                return [], [], []
+            gc = self.get_gravity_center(voxel_indices)
+            i, j, k = np.unravel_index(v, self.grid_shape)
+            x, y, z = self.x_axis[i], self.y_axis[j], self.z_axis[k]
+            data_ = _func(gc, np.array([x, y, z]))
+            rows_ = [v] * len(voxel_indices)
+            cols_ = voxel_indices.tolist()
+            return data_, rows_, cols_
+
+        # results = Parallel(n_jobs=n_jobs, verbose=0, backend="threading")(
+        #     [delayed(_process_vertex)(v) for v in my_range(self.N_grid,
+        #                                                    desc="Interpolating vertices", disable=verbose <= 0)])
+        # no parallel
+        results = [_process_vertex(v) for v in my_range(self.N_grid,
+                                                        desc="Interpolating vertices", disable=verbose <= 0)]
+        data_list, rows_list, cols_list = zip(*results)
+        data = list(chain.from_iterable(data_list))
+        rows = list(chain.from_iterable(rows_list))
+        cols = list(chain.from_iterable(cols_list))
+
+        self._voxel2vertices = sparse.coo_matrix((data, (rows, cols)), shape=(self.N_grid, self.N_voxel)).tocsr()
+        return None
 
 
 if __name__ == "__main__":
     # obj = Voxel(*[[10, 20, 40, 50, 80], [10, 15, 25, 40, 60], [10, 25, 40, 60, 85, 100]])
     obj = Voxel(coordinate_type="torus", coordinate_parameters={"major_radius": 100, "minor_radius": 50})
-    obj = obj.uniform_axes(ranges=[[-750, 750], [-750, 750], [-250, 250]], shape=[5, 5, 5], show_info=True)
+    # obj = obj.uniform_axes(ranges=[[-750, 750], [-750, 750], [-250, 250]], shape=[5, 5, 5], show_info=True)
+    obj = obj.uniform_voxel(ranges=[[-1, 1], [-1, 1], [-1, 1]], shape=[49, 49, 49])
     print(dir(obj))
-    _ = obj.sub_voxel_interpolator(n=0)
+    _ = obj.sub_voxel_interpolator(n=0, res=5)
+    obj.get_sub_voxel(5)
+    obj.get_sub_voxel(np.array([0, 1, 2, 3, 4, 5]))
     # obj.show_info()
 
     # start = time.time()
-    # obj._interpolate_vertices()
+    # obj.set_voxel2vertices()
     # print(time.time() - start)
