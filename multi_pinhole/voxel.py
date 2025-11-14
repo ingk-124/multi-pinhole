@@ -212,18 +212,21 @@ def spherical_coordinates(radius: float):
 
 
 def interpolate_matrix_from_vertices(res=None):
-    """
-    get interpolation matrix from values at vertices
+    """Build an interpolation matrix from voxel vertex contributions.
 
     Parameters
     ----------
-    res : int or (int, int, int), default=3
-        resolution of sub grid (x_res, y_res, z_res)
+    res : int | tuple[int, int, int] | None, optional
+        Resolution of the sub-grid in ``(x_res, y_res, z_res)`` form. When
+        ``None`` the sub-grid is treated as ``(1, 1, 1)``. If a single integer is
+        provided, it is broadcast to all three axes.
 
     Returns
     -------
-    matrix : np.ndarray (N_sub_voxel, 8) (N_sub_voxel = x_res * y_res * z_res)
-        interpolation matrix
+    numpy.ndarray | scipy.sparse.csr_matrix
+        Dense interpolation matrix of shape ``(N_sub_voxel, 8)`` when
+        ``res`` is ``None``; otherwise a CSR sparse matrix where
+        ``N_sub_voxel = x_res * y_res * z_res``.
     """
     if res is None:
         return np.full((1, 8), 1 / 8)
@@ -250,6 +253,26 @@ def interpolate_matrix_from_vertices(res=None):
 
 
 def shifted_torus(r, theta, cx, cy):
+    """Evaluate the radial displacement for a torus shifted in the plane.
+
+    Parameters
+    ----------
+    r : np.ndarray | float
+        Radial coordinate of the original torus cross-section.
+    theta : np.ndarray | float
+        Poloidal angle corresponding to ``r``.
+    cx : float
+        X-component of the torus center offset.
+    cy : float
+        Y-component of the torus center offset.
+
+    Returns
+    -------
+    np.ndarray | float
+        Radial displacement that positions the torus according to the provided
+        offsets.
+    """
+
     x = r * np.cos(theta)
     y = r * np.sin(theta)
     A = 1 - cx ** 2 - cy ** 2
@@ -260,6 +283,35 @@ def shifted_torus(r, theta, cx, cy):
 
 
 def helical_island(r, theta, phi, a_i, w_i, psi_0=0, m_i=1, n_i=0, alpha=4):
+    """Evaluate a helical magnetic island perturbation field.
+
+    Parameters
+    ----------
+    r : np.ndarray | float
+        Normalized minor radius where the field is sampled.
+    theta : np.ndarray | float
+        Poloidal angle coordinate.
+    phi : np.ndarray | float
+        Toroidal angle coordinate.
+    a_i : float
+        Island center radius.
+    w_i : float
+        Island half-width controlling the Gaussian envelope.
+    psi_0 : float, optional
+        Constant phase offset applied to the helical perturbation. Default is ``0``.
+    m_i : int, optional
+        Poloidal mode number. Default is ``1``.
+    n_i : int, optional
+        Toroidal mode number. Default is ``0``.
+    alpha : float, optional
+        Exponent that modulates the radial profile near the plasma edge. Default is ``4``.
+
+    Returns
+    -------
+    np.ndarray | float
+        Perturbation amplitude evaluated at the provided coordinates.
+    """
+
     r_i = r - a_i
     psi = m_i * theta - n_i * phi + psi_0
     z_1 = np.exp(-((r_i / w_i) ** 2))

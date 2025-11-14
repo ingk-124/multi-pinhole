@@ -18,6 +18,28 @@ from utils.my_stdio import *
 
 
 def type_list(obj, type_):
+    """Normalize an input object into a list of a specific type.
+
+    Parameters
+    ----------
+    obj : Any
+        Value that should either be an instance of ``type_`` or an iterable of
+        ``type_`` instances.
+    type_ : type
+        Expected element type that each entry in ``obj`` must satisfy.
+
+    Returns
+    -------
+    list[type_]
+        List containing the objects of type ``type_`` extracted from ``obj``.
+
+    Raises
+    ------
+    TypeError
+        Raised when ``obj`` is neither an instance of ``type_`` nor a list of
+        compatible objects.
+    """
+
     if isinstance(obj, type_):
         return [obj]
     elif isinstance(obj, list):
@@ -30,6 +52,19 @@ def type_list(obj, type_):
 
 
 def _blocks_lengths(arr_blocks) -> np.ndarray:
+    """Return lengths of 0th dimensions for an iterable of arrays.
+
+    Parameters
+    ----------
+    arr_blocks : Iterable[np.ndarray | None]
+        Collection of array blocks where ``None`` indicates an empty block.
+
+    Returns
+    -------
+    np.ndarray
+        Array of block lengths with entries of zero when the block is ``None``.
+    """
+
     return np.array([0 if blk is None else blk.shape[0] for blk in arr_blocks], dtype=np.int64)
 
 
@@ -40,7 +75,29 @@ def _slice_blocks(
         stop: int,
         n_vox: int
 ) -> Tuple[np.ndarray, sparse.csr_matrix]:
-    """連結した (pts_blocks, S_blocks) をグローバル範囲 [start:stop) で部分スライス。"""
+    """Slice concatenated block data within a global index range.
+
+    Parameters
+    ----------
+    pts_blocks : list[np.ndarray]
+        Point blocks whose rows correspond to individual entries in the global
+        concatenated array.
+    S_blocks : list[scipy.sparse.csr_matrix]
+        Sparse matrix blocks aligned with ``pts_blocks`` rows.
+    start : int
+        Inclusive starting index of the global slice.
+    stop : int
+        Exclusive ending index of the global slice.
+    n_vox : int
+        Number of voxel columns used to size the returned sparse matrix when
+        the slice is empty.
+
+    Returns
+    -------
+    tuple[np.ndarray, scipy.sparse.csr_matrix]
+        Tuple containing the stacked point array and sparse matrix slice for
+        the requested index window.
+    """
     out_pts, out_S = [], []
     if start >= stop:
         return np.empty((0, 3)), sparse.csr_matrix((0, n_vox))
@@ -76,23 +133,35 @@ class World:
                  inside_func: callable = None,
                  verbose: int = 1
                  ):
-        """The world class
+        """Instantiate the world container and initialize linked components.
 
         Parameters
         ----------
-        voxel: Voxel
-            The voxel model
-        cameras: Camera or list[Camera]
-            The camera model
-        walls: list[mesh.Mesh], optional (default is None)
-            The walls in the world
-        inside_func: callable, optional (default is None)
-            A function that takes three parameters X, Y, Z and returns a boolean array
+        voxel : Voxel, optional
+            Voxel volume description used to compute visibility and projection
+            matrices. A new :class:`~multi_pinhole.Voxel` instance is created
+            when ``None`` (default).
+        cameras : Camera or list[Camera], optional
+            Camera instances that should be registered with the world. Any
+            single instance is promoted to a list. When omitted the world starts
+            without cameras.
+        walls : mesh.Mesh or list[mesh.Mesh], optional
+            STL meshes representing obstructions or environmental walls. Each
+            mesh is registered to support visibility checks. ``None`` (default)
+            skips wall initialization.
+        inside_func : callable, optional
+            Callable accepting three ``numpy.ndarray`` coordinate arrays
+            ``(X, Y, Z)`` and returning a boolean mask identifying voxels that
+            belong inside the world volume. When provided, the function is
+            executed immediately to seed :attr:`inside_vertices`.
+        verbose : int, optional
+            Verbosity level controlling informational output. Defaults to ``1``.
 
         Notes
         -----
-        The walls should be a list of mesh.Mesh or a mesh.Mesh.
-        The inside voxels should be a boolean array with the length of the number of voxels.
+        Cameras and walls are normalized through :func:`type_check_and_list`
+        ensuring that downstream operations receive homogeneous lists of
+        objects.
         """
 
         # Voxel
@@ -124,13 +193,38 @@ class World:
             self.set_inside_vertices(inside_func)
 
     def __repr__(self):
+        """Represent the world with its core components for debugging.
+
+        Returns
+        -------
+        str
+            Readable summary containing the voxel object, registered cameras,
+            and wall meshes.
+        """
+
         return f"World(voxel={self.voxel}, CAMERA={self.cameras}, walls={self.walls})"
 
     def __copy__(self):
+        """Create a shallow copy retaining voxel and camera references.
+
+        Returns
+        -------
+        World
+            New world sharing the original voxel and camera objects.
+        """
+
         return World(cameras=self.cameras, voxel=self.voxel)
 
     def camera_info(self):
-        """Print the summary of the cameras"""
+        """Summarize currently registered cameras.
+
+        Returns
+        -------
+        str
+            Multiline description enumerating each camera and its
+            :func:`__repr__` output.
+        """
+
         txt = "Camera Info:\n"
         for i, camera in self._cameras.items():
             txt += f" Camera {i}:\n"
@@ -139,29 +233,43 @@ class World:
         return txt
 
     def voxel_info(self):
-        """Print the summary of the voxel"""
+        """Describe the voxel grid configuration.
+
+        Returns
+        -------
+        str
+            Representation of the :class:`~multi_pinhole.Voxel` instance
+            associated with the world.
+        """
+
         return self.voxel.__repr__()
 
     # MARK: Save and Load
     def save_world(self, filename):
-        """Save the world to a file
+        """Persist the world instance to disk.
 
         Parameters
         ----------
-        filename: str
-            The filename to save the world
+        filename : str or os.PathLike[str]
+            Destination path where the serialized world should be written.
         """
         with open(filename, "wb") as f:
             dill.dump(self, f)
 
     @staticmethod
     def load_world(filename):
-        """Load the world from a file
+        """Deserialize a world instance from disk.
 
         Parameters
         ----------
-        filename: str
-            The filename to load the world
+        filename : str or os.PathLike[str]
+            Path to a pickled :class:`World` instance created by
+            :meth:`save_world`.
+
+        Returns
+        -------
+        World
+            Restored world populated with the serialized state.
         """
         with open(filename, "rb") as f:
             loaded_world = dill.load(f)
@@ -170,14 +278,17 @@ class World:
     # MARK: Properties
     @property
     def cameras(self):
+        """dict[int, Camera]: Mapping of camera indices to instances."""
         return self._cameras
 
     @property
     def voxel(self):
+        """Voxel: Primary voxel model used for visibility and projection."""
         return self._voxel
 
     @property
     def walls(self):
+        """list[mesh.Mesh]: Collection of STL meshes representing walls."""
         return self._walls
 
     # TODO: この辺をうまく活用してinside_verticesを制御する
@@ -196,6 +307,7 @@ class World:
 
     @property
     def wall_ranges(self):
+        """zip[tuple[float, float]]: Axis-aligned bounds for registered walls."""
         if not self.walls:
             return None
         _ = [(w.update_min(), w.update_max()) for w in self.walls]
@@ -205,18 +317,22 @@ class World:
 
     @property
     def visible_voxels(self):
+        """dict[int, np.ndarray]: Visibility state of each voxel per camera."""
         return self._visible_voxels
 
     @property
     def P_matrix(self):
+        """dict[int, sparse.csr_matrix]: Cached voxel-to-pixel projection matrices."""
         return self._P_matrix
 
     @property
     def projection(self):
+        """dict[int, list[sparse.csr_matrix]]: Subpixel projection matrices per eye."""
         return self._projection
 
     @property
     def inside_vertices(self):
+        """np.ndarray: Boolean mask indicating which voxel vertices lie inside the world."""
         if self._inside_vertices is None:
             return np.ones(self.voxel.N_grid, dtype=bool)
         else:
@@ -225,6 +341,21 @@ class World:
     # MARK: Setters
     @inside_vertices.setter
     def inside_vertices(self, inside_vertices: np.ndarray):
+        """Validate and store the inside-vertex mask.
+
+        Parameters
+        ----------
+        inside_vertices : numpy.ndarray
+            Boolean array of length ``voxel.N_grid`` marking which vertices are
+            considered inside the world volume.
+
+        Raises
+        ------
+        TypeError
+            Raised when ``inside_vertices`` is not a ``numpy.ndarray``.
+        ValueError
+            Raised when the array size does not match ``voxel.N_grid``.
+        """
         if not isinstance(inside_vertices, np.ndarray):
             raise TypeError(f"inside_voxels should be a np.ndarray, not {type(inside_vertices)}")
         if inside_vertices.size != self.voxel.N_grid:
@@ -233,16 +364,18 @@ class World:
 
     @cameras.setter
     def cameras(self, cameras: list[Camera] | Camera):
-        """Set the cameras
+        """Register or replace cameras managed by the world.
 
         Parameters
         ----------
-        cameras
-            List of Camera objects
+        cameras : Camera or list[Camera]
+            Camera instances that should replace the current set.
 
         Notes
         -----
-        If the new camera is the same as the previous one, the visible voxels, projection, and P matrix are reused.
+        When an incoming camera already exists in the current mapping, its
+        cached visibility and projection matrices are reused to avoid
+        recalculation.
         """
         cameras = type_check_and_list(cameras, Camera)
         camera_dict = {}
@@ -284,16 +417,17 @@ class World:
         print(self.camera_info())
 
     def add_camera(self, new_camera: Camera | list[Camera]):
-        """Add a camera
+        """Append additional cameras to the world.
 
         Parameters
         ----------
-        new_camera: Camera | list[Camera]
-            The camera object to add
+        new_camera : Camera or list[Camera]
+            Camera objects that should be appended to the existing mapping.
 
         Notes
         -----
-        Added cameras are appended to the end of the camera list.
+        Newly inserted cameras start without cached visibility or projection
+        data until recomputation is triggered.
         """
         new_camera = type_check_and_list(new_camera, Camera)
         current_len = len(self._cameras)
@@ -305,16 +439,17 @@ class World:
         print(self.camera_info())
 
     def remove_camera(self, index: int | list[int]):
-        """Remove a camera
+        """Remove one or more cameras by index.
 
         Parameters
         ----------
-        index: int
-            The index of the camera to remove
+        index : int or list[int]
+            Camera indices that should be deleted from the world mapping.
 
         Notes
         -----
-        After removing the camera(s), the keys of the dictionaries related to cameras are re-indexed.
+        After removal, camera-related dictionaries are re-indexed so that
+        indices remain contiguous and zero-based.
         """
         index = type_check_and_list(index, int)
         for i in sorted(index, reverse=True):
@@ -333,14 +468,20 @@ class World:
         print(self.camera_info())
 
     def change_camera(self, index: int | list[int], camera: Camera | list[Camera]):
-        """Change cameras at the specified indices
+        """Replace cameras at the provided indices.
 
         Parameters
         ----------
-        index: int | list[int]
-            The index of the camera to change
-        camera: Camera | list[Camera]
-            The new camera object
+        index : int or list[int]
+            Positions within the current camera mapping that should be
+            updated.
+        camera : Camera or list[Camera]
+            New camera instances to assign to the corresponding indices.
+
+        Raises
+        ------
+        ValueError
+            Raised when ``index`` and ``camera`` lengths differ.
         """
         index = type_check_and_list(index, int)
         camera = type_check_and_list(camera, Camera)
@@ -358,6 +499,18 @@ class World:
 
     @voxel.setter
     def voxel(self, voxel):
+        """Assign a new voxel model and invalidate cached projections.
+
+        Parameters
+        ----------
+        voxel : Voxel
+            Voxel object to associate with the world.
+
+        Raises
+        ------
+        TypeError
+            Raised when ``voxel`` is not an instance of :class:`Voxel`.
+        """
         if not isinstance(voxel, Voxel):
             raise TypeError(f"voxel should be a Voxel, not {type(voxel)}")
         if voxel != self._voxel:
@@ -369,6 +522,13 @@ class World:
 
     @walls.setter
     def walls(self, walls: list[mesh.Mesh] | mesh.Mesh):
+        """Update the STL meshes that define world boundaries.
+
+        Parameters
+        ----------
+        walls : mesh.Mesh or list[mesh.Mesh]
+            Mesh objects describing occluding geometry.
+        """
         walls = type_check_and_list(walls, mesh.Mesh)
         if walls != self._walls:
             self._walls = walls
@@ -382,21 +542,28 @@ class World:
 
     # MARK: Methods
     def set_inside_vertices(self, function: callable, **kwargs) -> None:
-        """
-        Find the inside vertices using a function
+        """Derive the inside-vertex mask via a user-provided function.
 
         Parameters
         ----------
-        function: callable
-            A function that takes three parameters X, Y, Z and returns a boolean array
-        kwargs: dict
-            Additional parameters for the function
+        function : callable
+            Callable accepting the voxel grid coordinates ``(X, Y, Z)`` as
+            ``numpy.ndarray`` arguments and returning a boolean array marking
+            interior vertices.
+        **kwargs : Any
+            Additional keyword arguments forwarded to ``function``.
+
+        Raises
+        ------
+        TypeError
+            Raised when ``function`` is not callable.
+        ValueError
+            Raised when the returned mask does not match ``voxel.N_grid``.
 
         Notes
         -----
-        The function should take three parameters X, Y, Z, which are the vertices of the voxel grid.
-        The return value should be a boolean array with the length of the number of vertices and True for inside vertices.
-        The boolean array is stored in `self.inside_vertices`.
+        The resulting boolean array is stored in :attr:`inside_vertices` and
+        used to restrict visibility calculations to in-bounds voxels.
         """
         if not callable(function):
             raise TypeError(f"function should be a callable, not {type(function)}")
@@ -410,24 +577,32 @@ class World:
 
     def _find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
                              verbose: int = 1) -> np.ndarray:
-        """
-        Return the conditions of visible vertices for each camera
+        """Determine point visibility for a specific camera and eye selection.
 
         Parameters
         ----------
-        points: np.ndarray (N_points, 3)
-            The points to check visibility
-        camera_idx: int
-            The index of the camera to check visibility
-        verbose: int, optional (default is 1)
-            The verbose level
+        points : numpy.ndarray
+            Array of shape ``(N_points, 3)`` containing world-coordinate points
+            whose visibility should be evaluated.
+        camera_idx : int
+            Index of the camera used for visibility testing.
+        eye_idx : int or list[int], optional
+            Specific eye indices within the camera that should be considered.
+            ``None`` (default) evaluates all eyes.
+        verbose : int, optional
+            Verbosity level controlling logging output. Defaults to ``1``.
 
         Returns
         -------
-        visible: np.ndarray (N_eye, N_points)
-            The conditions of visible voxels for the camera.
-            If lines from the eye to the point are not intersected with any mesh (aperture or wall),
-            the points are defined as visible (True).
+        numpy.ndarray
+            Boolean matrix of shape ``(N_eye, N_points)`` indicating whether
+            each point is visible from the selected eyes.
+
+        Raises
+        ------
+        ValueError
+            Raised when ``camera_idx`` or ``eye_idx`` reference non-existent
+            entries.
         """
 
         if camera_idx not in self._cameras.keys():
@@ -477,19 +652,24 @@ class World:
         return visible  # (N_eye, N_points)
 
     def _find_visible_vertices(self, force: bool = False, verbose: int = None, camera_idx: int = None) -> None:
-        """Set the conditions of visible vertices for each camera
+        """Compute visibility masks for voxel vertices per camera.
 
         Parameters
         ----------
-        force: bool, optional (default is False)
-            If True, the visible vertices are recalculated even if they are already calculated.
-        verbose: int, optional (default is None)
-            The verbose level
+        force : bool, optional
+            When ``True`` (default ``False``), recompute visibility even if
+            cached data with matching shape exists.
+        verbose : int, optional
+            Verbosity level overriding :attr:`verbose`. ``None`` preserves the
+            world default.
+        camera_idx : int, optional
+            Specific camera index to update. ``None`` (default) processes all
+            cameras.
 
         Notes
         -----
-        The conditions are stored in `self._visible_vertices` as a dictionary with the camera index as the key.
-        The condition array has the shape of (N_eye, N_vertices).
+        Visibility results are stored in :attr:`_visible_vertices` as boolean
+        arrays shaped ``(N_eye, N_vertices)``.
         """
         verbose = self.verbose if verbose is None else verbose
         if camera_idx is not None:
@@ -525,23 +705,26 @@ class World:
             self._visible_vertices[c_] = visible_vertices
             my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
 
-    def find_visible_voxels(self, force=False, verbose=None):
-        """Return the conditions of visible voxels
+    def find_visible_voxels(self, force: bool = False, verbose: int | None = None):
+        """Evaluate voxel visibility states for each camera.
+
         Parameters
         ----------
-        force: bool, optional (default is False)
-            If True, the visible vertices are recalculated even if they are already calculated.
-        verbose: int, optional (default is None)
-            The verbose level
+        force : bool, optional
+            When ``True`` (default ``False``), forces recomputation of vertex
+            visibility before aggregating voxel visibility.
+        verbose : int, optional
+            Verbosity level overriding :attr:`verbose`. ``None`` preserves the
+            world default.
 
         Notes
         -----
-        The conditions are stored in `self._visible_voxels` as a list with the camera index as the key.
-        The condition array has the shape of (N_eye, N_voxels).
-        The value of the condition array is:
-            0: not visible
-            1: partially visible (some vertices are visible)
-            2: fully visible (all vertices are visible)
+        Results are stored in :attr:`_visible_voxels` as integer arrays with
+        shape ``(N_eye, N_voxels)``. Values are interpreted as:
+
+        * ``0`` – not visible
+        * ``1`` – partially visible (some vertices visible)
+        * ``2`` – fully visible (all vertices visible)
         """
 
         verbose = self.verbose if verbose is None else verbose
@@ -558,29 +741,31 @@ class World:
 
     def _calc_voxel_image_for_eye(self, camera_idx: int, eye_idx: int, res: int, n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000):
-        """Calculate the projection matrix from voxels to image for a specific eye of a camera
+        """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
         ----------
-        camera_idx: int
-            The index of the camera
-        eye_idx: int
-            The index of the eye
-        res: int
-            The resolution of the voxel subdivision
-        n_jobs: int, optional (default is -2)
-            The number of parallel jobs for voxel to sub-voxel interpolation
-        verbose: int, optional (default is None)
-            The verbose level
-        max_nnz: int, optional (default is 100_000_000)
-            The maximum number of non-zero elements in the projection matrix.
-            If the estimated number of non-zero elements exceeds this value,
-            the calculation is done in chunks to reduce memory usage.
+        camera_idx : int
+            Index of the camera whose projection should be calculated.
+        eye_idx : int
+            Eye index within the selected camera.
+        res : int
+            Sub-voxel resolution used when generating interpolation matrices.
+        n_jobs : int, optional
+            Parallelism level for interpolation and visibility tasks. Negative
+            values are interpreted relative to available CPU cores. Defaults to
+            ``-2``.
+        verbose : int, optional
+            Verbosity level overriding :attr:`verbose`. ``None`` preserves the
+            default.
+        max_nnz : int, optional
+            Upper bound on the allowed number of non-zero elements in the
+            projection matrix before chunking is used to control memory usage.
 
-        Returns
-        -------
-        None
-            The projection matrix is stored in `self._projection[camera_idx][eye_idx]`
+        Notes
+        -----
+        The resulting sparse matrix is stored in
+        ``self._projection[camera_idx][eye_idx]``.
         """
         n_jobs = os.cpu_count() + 1 + n_jobs if n_jobs < 0 else n_jobs
         n_jobs = max(1, n_jobs)
@@ -796,18 +981,31 @@ class World:
                  f"eye {eye_idx + 1}/{len(_camera.eyes)} is calculated.", show=verbose > 0)
         return
 
-    def trace_line(self, points, camera_idx=0, eye_idx=0, coord_type="XY"):
-        """Trace line from the points in the world coordinate system to the screen
+    def trace_line(self, points, camera_idx: int = 0, eye_idx: int = 0, coord_type: str = "XY"):
+        """Project world-coordinate points onto a camera screen.
 
         Parameters
         ----------
         points : numpy.ndarray
-            points in the world coordinate system (shape: (n, 3))
+            Array of shape ``(N, 3)`` containing world-coordinate points.
+        camera_idx : int, optional
+            Index of the camera used for projection. Defaults to ``0``.
+        eye_idx : int, optional
+            Eye index within the camera providing the rays. Defaults to ``0``.
+        coord_type : {'XY', 'UV'}, optional
+            Coordinate frame for the return value. ``'XY'`` (default) produces
+            camera-plane coordinates, whereas ``'UV'`` converts to screen pixel
+            indices.
 
         Returns
         -------
-        uv : numpy.ndarray
-            Projected points on the screen (shape: (n, 2))
+        numpy.ndarray
+            Array of shape ``(N, 2)`` containing projected coordinates.
+
+        Raises
+        ------
+        ValueError
+            Raised when ``coord_type`` is unsupported.
         """
         points_in_camera = self.cameras[camera_idx].world2camera(points)
         rays = self.cameras[camera_idx].eyes[eye_idx].calc_rays(points_in_camera)
@@ -820,25 +1018,27 @@ class World:
 
     def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
                               force: bool = False):
-        """Get the projection matrix from the voxel to the screen
+        """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
         ----------
-        index: int | list[int], optional (default is None)
-            The index of the camera
-        res: int, optional (default is None)
-            The resolution of the sub-voxel
-        verbose: int, optional (default is 1)
-            The verbose level
-        parallel: int, optional (default is -1)
-            The number of parallel processes
-        force: bool, optional (default is False)
-            Whether to force to calculate the projection matrix
+        res : int, optional
+            Sub-voxel resolution used when recomputing projection matrices.
+            ``None`` preserves the voxel default.
+        verbose : int, optional
+            Verbosity level controlling progress logging. Defaults to ``1``.
+        parallel : int, optional
+            Degree of parallelism forwarded to
+            :meth:`_calc_voxel_image_for_eye`. Negative values are interpreted
+            relative to available CPU cores. Defaults to ``-1``.
+        force : bool, optional
+            When ``True`` (default ``False``) forces recalculation even if
+            cached matrices already exist with matching shapes.
 
-        Returns
-        -------
-        P: np.ndarray
-            The projection matrix (N_pixel, N_voxel)
+        Notes
+        -----
+        Aggregated matrices are stored in :attr:`_P_matrix` keyed by camera
+        index, while per-eye subpixel matrices remain in :attr:`_projection`.
         """
         my_print("Calculating projection matrix", show=verbose > 0)
         indices = list(self.cameras.keys())
@@ -870,23 +1070,29 @@ class World:
 
         my_print("Projection matrices are set.", show=verbose > 0)
 
-    def draw_camera_orientation(self, ax=None, show_fig=False, x_lim=None, y_lim=None, z_lim=None, **kwargs):
-        """Draw the camera orientation
+    def draw_camera_orientation(self, ax=None, show_fig: bool = False, x_lim=None, y_lim=None, z_lim=None,
+                                 **kwargs):
+        """Visualize cameras, voxel bounds, and optional walls in 3D.
 
         Parameters
         ----------
-        ax: matplotlib.axes.Axes
-            The axes to draw the camera orientation
-        show_fig: bool, optional (default is False)
-            Whether to show the figure
-        x_lim: tuple, optional (default is None)
-            The x limits of the axes
-        y_lim: tuple, optional (default is None)
-            The y limits of the axes
-        z_lim: tuple, optional (default is None)
-            The z limits of the axes
-        kwargs: dict
-            The keyword arguments for show_stl
+        ax : matplotlib.axes.Axes, optional
+            Axes object used for plotting. ``None`` creates a new 3D axis.
+        show_fig : bool, optional
+            When ``True`` (default ``False``), immediately displays the figure.
+        x_lim : tuple[float, float], optional
+            Explicit x-axis limits. ``None`` auto-scales based on scene bounds.
+        y_lim : tuple[float, float], optional
+            Explicit y-axis limits. ``None`` auto-scales based on scene bounds.
+        z_lim : tuple[float, float], optional
+            Explicit z-axis limits. ``None`` auto-scales based on scene bounds.
+        **kwargs : Any
+            Additional keyword arguments forwarded to :func:`stl_utils.show_stl`.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Axes containing the rendered world context.
         """
         if ax is None:
             ax = plt.subplot(projection="3d", proj_type="ortho")
