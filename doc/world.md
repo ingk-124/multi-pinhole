@@ -1,20 +1,60 @@
 # World Module Guide
 
-The `multi_pinhole.world` module coordinates cameras, voxels, and occluding geometry into a complete simulation scene. It exposes helpers for managing world assets, persisting scenarios, and rasterizing voxel emission into camera images.
+The `multi_pinhole.world` module brings together voxels, cameras, and optional
+occluders to form a simulated scene. Besides maintaining references between
+components, it provides utilities for discovering visibility relationships,
+assembling sparse projection matrices, persisting scenarios, and visualising the
+setup.
 
-## Construction
-`World` accepts optional voxel, camera, wall, and inside-function inputs. Missing values are replaced with defaults, after which each component is linked back to the world so they can request shared state when projecting rays.【F:multi_pinhole/world.py†L38-L118】 Cameras are normalized into a dictionary keyed by index, letting the world track per-camera visibility masks and projection matrices alongside the optical hardware.【F:multi_pinhole/world.py†L76-L118】
+## Helper Utilities
+Two internal helpers smooth over array book-keeping:
 
-Walls, when provided, are validated as STL meshes and cached together with their bounding boxes, allowing later visibility checks to skip empty scenes quickly.【F:multi_pinhole/world.py†L119-L151】【F:multi_pinhole/world.py†L252-L276】 The constructor also primes bookkeeping for inside-vertex masks, per-eye projections, and sparse image operators so subsequent calls can reuse or refresh cached data as needed.【F:multi_pinhole/world.py†L99-L151】 Supplying an `inside_func` immediately seeds the inside-vertex mask, which is otherwise inferred lazily.【F:multi_pinhole/world.py†L153-L171】
+* `type_list` coerces a single object or list into a list while enforcing a
+  required element type. It backs several setters so that callers can supply
+  either single instances or collections.
+* `_blocks_lengths` and `_slice_blocks` operate on collections of point and
+  sparse-matrix blocks, exposing lightweight slicing for later projection work.
 
-## Scene Introspection
-Utility methods such as `camera_info` and `voxel_info` summarize the active optics and grid, while the `save_world`/`load_world` pair persists complete scenarios using `dill` so experiments can be checkpointed and restored.【F:multi_pinhole/world.py†L173-L220】 Rich property setters ensure updates propagate appropriately: replacing the voxel clears cached projections, changing cameras preserves any reusable matrices, and swapping wall meshes refreshes visibility tables.【F:multi_pinhole/world.py†L222-L321】【F:multi_pinhole/world.py†L330-L384】
+## Constructing a World
+`World.__init__` accepts optional voxel, camera, wall, and `inside_func`
+arguments. Absent inputs fall back to defaults and are immediately wired back to
+the world so they can request shared state. Cameras are normalised into an index
+mapping (`{int: Camera}`) and populate parallel dictionaries that cache
+per-camera visibility flags, per-eye projection matrices, and camera-level
+projection operators. Providing `inside_func` seeds the inside-vertex mask right
+away; otherwise it remains lazily initialised to “all vertices inside”.
 
-## Visibility Management
-World maintains boolean masks that describe which voxel vertices are inside the region of interest and which are visible from each eye. `set_inside_vertices` evaluates a user-supplied predicate over the voxel grid, while `_find_visible_points` transforms candidate points into camera coordinates, checks them against aperture and wall meshes, and returns per-eye visibility flags.【F:multi_pinhole/world.py†L386-L480】【F:multi_pinhole/world.py†L432-L474】 The higher-level `_find_visible_vertices` orchestrates this process for all cameras, caching the results so expensive ray-casting runs are reused unless forced to refresh.【F:multi_pinhole/world.py†L482-L546】
+Walls are normalised to a list of `stl.mesh.Mesh` objects. When changed they
+trigger cache invalidation, refresh pre-computed mesh bounds via `update_min`
+and `update_max`, and store combined axis-aligned limits for later plotting.
+
+## Scene Introspection and Persistence
+`camera_info` and `voxel_info` summarise the registered sensors and grid.
+`save_world`/`load_world` serialise complete scenes with `dill`, making it easy
+to checkpoint long-running simulations. Property setters for cameras, voxels,
+and walls reuse cached visibility/projection data when possible but otherwise
+invalidate stale matrices so dependent calculations stay coherent.
+
+## Visibility Evaluation
+`set_inside_vertices` lets callers define the active volume by passing a
+callable evaluated over the voxel grid. `_find_visible_points` converts points
+into a camera’s frame, tests them against each eye, aperture, and wall, and
+returns a boolean mask. `_find_visible_vertices` iterates that routine across
+all cameras (or a specific one) and caches the per-eye, per-vertex results.
+`find_visible_voxels` then aggregates vertex visibility into voxel-level flags
+indicating invisible, partially visible, or fully visible voxels for every eye.
 
 ## Projection Assembly
-Once visibility is known, `_find_visible_voxels` and `_calculate_projection_matrix` (invoked through `set_projection_matrix`) build sparse matrices that map voxel emission to detector subpixels.【F:multi_pinhole/world.py†L548-L748】【F:multi_pinhole/world.py†L748-L889】 The implementation batches sub-voxel centers, queries each camera for projected footprints, and multiplies the resulting sparse operators to yield the final projection. Work chunks are sized adaptively based on sampling density so that large scenes remain tractable even with many voxels.【F:multi_pinhole/world.py†L700-L889】 Parallel execution via `joblib` allows heavy projection calculations to utilize multiple CPU cores when requested.【F:multi_pinhole/world.py†L818-L889】
+`set_projection_matrix` coordinates the expensive projection pipeline. For each
+camera eye, `_calc_voxel_image_for_eye` prepares sub-voxel interpolators,
+evaluates visibility, and multiplies sparse operators to build a voxel-to-
+subpixel matrix. Workloads are chunked adaptively based on estimated sparsity
+and can run in parallel through a `ThreadPoolExecutor` (or serially if only one
+job is requested). Per-eye results accumulate in `_projection`, while combined
+screen-space matrices live in `_P_matrix` after applying the screen transform.
 
-## Accessing Results
-`set_projection_matrix` populates `World._projection` with per-camera, per-eye sparse matrices and caches a combined `P_matrix` when all pieces are available.【F:multi_pinhole/world.py†L891-L949】 Callers can then retrieve visible voxels, projection blocks, and the assembled operator to analyze or render simulated images without recomputing the expensive geometry pipeline.【F:multi_pinhole/world.py†L222-L251】【F:multi_pinhole/world.py†L891-L949】 Ancillary helpers expose inside-vertex masks and wall ranges so downstream code can cull off-screen geometry or track simulation metadata.【F:multi_pinhole/world.py†L201-L251】
+## Visualisation
+`draw_camera_orientation` offers a convenient 3D plot that overlays voxel
+bounds, camera poses, and any registered walls. Axis limits default to the union
+of voxel and wall ranges (inflated slightly) but can be overridden via keyword
+arguments.
