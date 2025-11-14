@@ -848,6 +848,9 @@ class World:
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
                                               check_visibility=False)  # (N_subpixel, sample_size * K)
             est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
+            if est_nnz == 0:
+                density = 0.01
+                est_nnz = screen.N_subpixel * density
             batch_size = int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size))
             _chunks = [slice(_i, min(_i + batch_size, full_voxels.size)) for _i in
                        range(0, full_voxels.size, batch_size)]

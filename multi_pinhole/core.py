@@ -9,7 +9,7 @@ import mpl_toolkits.mplot3d.art3d as art3d
 # import libraries
 import numpy as np
 import plotly.graph_objects as go
-import stl as mesh
+from stl import mesh
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle, Ellipse
 from numba import njit
@@ -130,6 +130,16 @@ class Rays:
         """int: Count of rays that are both in front of the eye and marked visible."""
         return self.front_and_visible.nonzero()[0].size
 
+    # allow indexing and slicing
+    def __getitem__(self, key):
+        # for slicing
+        return Rays(Z=self.Z[key],
+                    XY=self.XY[key],
+                    zoom_rate=self.zoom_rate[key],
+                    front_and_visible=self.front_and_visible[key])
+
+    def __len__(self):
+        return self.n
 
 # MARK: Eye class
 # --------------------------------
@@ -971,10 +981,12 @@ class Screen:
                            half[r, 0], half[r, 1],
                            i_min[r], j_min[r], V_sub) for r in
                    my_tqdm(valid, desc="ray to image", disable=verbose <= 0)]
-        pix_sizes = [p.size for p in out_pix if p.size > 0]
+        pix_sizes = [p.size for p in out_pix]
         pixel_indices = np.concatenate(out_pix)
         indptr = np.zeros(rays.n + 1, dtype=np.int32)
         indptr[valid + 1] = np.cumsum(pix_sizes)
+        last_filled = np.nonzero(indptr)[0][-1]
+        indptr[last_filled + 1:] = indptr[last_filled]
         etendue_per_ray = (1.0 / (rays.zoom_rate * (rays.Z ** 2))).astype(np.float32)
         etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
         data = etendue_per_subpixel[pixel_indices]
