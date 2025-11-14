@@ -1,28 +1,30 @@
+import sys
+
 from tqdm import trange, tqdm
 from tqdm.contrib import tzip
 
-
+NCOLS = 80
 def my_print(s, show=True):
     if show:
         print(s)
 
 
-def my_range(*args, verbose=True, **kwargs):
-    if verbose:
-        return trange(*args, **kwargs)
-    else:
-        return range(*args)
+def my_range(*args, **kwargs):
+    return trange(*args, **kwargs,
+                  ncols=NCOLS,
+                  # file=sys.stdout,
+                  position=0)
 
 
-def my_tqdm(iterable, verbose=True, *args, **kwargs):
-    if verbose:
-        return tqdm(iterable, *args, **kwargs)
-    else:
-        return iterable
+def my_tqdm(iterable, *args, **kwargs):
+    return tqdm(iterable, *args, **kwargs,
+                ncols=NCOLS,
+                # file=sys.stdout,
+                position=0)
 
 
-def my_zip(*iterables, verbose=True, **kwargs):
-    if verbose:
-        return tzip(*iterables, **kwargs)
-    else:
-        return zip(*iterables)
+def my_zip(*iterables, **kwargs):
+    return tzip(*iterables, **kwargs,
+                ncols=NCOLS,
+                # file=sys.stdout,
+                position=0)
