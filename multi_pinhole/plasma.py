@@ -58,40 +58,40 @@ class Plasma(Voxel):
         self._ni = ni
 
     def relative_xray_emission(self, photon_energy):
-        """
-        relative xray emission
+        """Compute the relative x-ray emission spectrum.
 
         Parameters
         ----------
         photon_energy : np.ndarray
-            photon energy in eV
+            Photon energy values, expressed in electron volts (eV).
 
         Returns
         -------
-        relative_xray_emission : np.ndarray
-            relative xray emission spectrum
+        np.ndarray
+            Relative x-ray emission intensity evaluated at ``photon_energy``.
         """
         return self._Te ** 0.5 * np.exp(-photon_energy / self._Te)
 
     def bremsstrahlung(self, photon_energy, Z):
-        """
-        Calculate bremsstrahlung spectrum
+        """Calculate the bremsstrahlung emission spectrum.
 
         Parameters
         ----------
         photon_energy : np.ndarray
-            photon energy in eV
+            Photon energy values, expressed in electron volts (eV).
+        Z : float
+            Effective charge number of the emitting ion species.
 
         Returns
         -------
-        spectrum : np.ndarray
-            bremsstrahlung spectrum
+        np.ndarray
+            Bremsstrahlung spectrum corresponding to ``photon_energy`` and ``Z``.
 
         Notes
         -----
         The bremsstrahlung spectrum is calculated as:
-            spectrum = 1.42e-32 * Te ** 0.5 * ne * Z ** 2 * photon_energy ** -1.5 * np.exp(-photon_energy / Te)
-        where Te is the electron temperature, ne is the electron density, and Z is the atomic number.
+            ``spectrum = 1.42e-32 * Te ** 0.5 * ne * Z ** 2 * photon_energy ** -1.5 * exp(-photon_energy / Te)``
+        where ``Te`` is the electron temperature, ``ne`` is the electron density, and ``Z`` is the atomic number.
         """
         spectrum = 1.54E-29 * self._ne * self._ni * Z * self.relative_xray_emission(photon_energy)
         return spectrum

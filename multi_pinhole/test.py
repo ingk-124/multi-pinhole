@@ -5,6 +5,23 @@ import numpy as np
 
 
 def random_a(shape_a, seed=1234):
+    """Generate a binary array with randomly selected ones.
+
+    Parameters
+    ----------
+    shape_a : tuple[int, ...]
+        Target array shape whose first element defines the sampling range.
+    seed : int, optional
+        Seed value forwarded to :func:`numpy.random.default_rng` for
+        deterministic sampling. The default is ``1234``.
+
+    Returns
+    -------
+    np.ndarray
+        Array populated with zeros except for randomly selected indices in
+        the first axis, which are set to one.
+    """
+
     random_generator = np.random.default_rng(seed=seed)
     i = random_generator.integers(0, shape_a[0] - 1, size=shape_a[0] // 2)
     a = np.zeros(shape_a)
