@@ -1,25 +1,24 @@
 # PYTHON CODE
 # this code is based on PEP8 style guide
 # docstrings are based NumPy style
-import time
 from dataclasses import dataclass
 from numbers import Number
 from typing import Tuple, List, Union
 
 import mpl_toolkits.mplot3d.art3d as art3d
-import numexpr as ne
 # import libraries
 import numpy as np
 import plotly.graph_objects as go
 import stl as mesh
-from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle, Ellipse
-from scipy import constants, sparse
+from numba import njit
+from scipy import sparse
 from scipy.spatial.transform import Rotation
 from typing_extensions import Literal
 
-from utils import filter, stl_utils
+from utils import stl_utils
+from utils.my_stdio import my_tqdm
 
 # TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
 # TODO: refactor variable names
@@ -128,44 +127,6 @@ class Rays:
     @property
     def n_visible(self):
         return self.front_and_visible.nonzero()[0].size
-
-
-# MARK: Filter class
-class Filter:
-    def __init__(self,
-                 material: str = "glass",
-                 thickness: float = 0.1,
-                 photon_energy_range: Tuple[float, float] = None,
-                 wavelength_range: Tuple[float, float] = None,
-                 ):
-        """Filter class
-
-        Parameters
-        ----------
-        material : str, optional
-            material of the filter, by default "glass"
-        thickness : float, optional
-            thickness of the filter, by default 0.1
-        wavelength_range : Tuple[float, float], optional
-            wavelength range of the filter, by default None
-        photon_energy_range : Tuple[float, float], optional
-            photon energy range of the filter, by default None
-
-
-        """
-        self.material = material
-        self.thickness = thickness
-        self.characteristic = None
-        if wavelength_range is None and photon_energy_range is None:
-            self.photon_energy_range = (10., 1e5)
-        else:
-            if photon_energy_range is None:
-                self.energy_range = (constants.h * constants.lambda2nu(l) for l in wavelength_range)
-            else:
-                self.energy_range = photon_energy_range
-
-    def get_data(self):
-        self.characteristic = filter.characteristic(self.material, self.thickness)
 
 
 # MARK: Eye class
@@ -327,7 +288,7 @@ class Eye:
 
         return points_in_camera - self.position.reshape((1, 3))  # (n, 3)
 
-    def calc_rays(self, points_in_camera: np.ndarray, visible: np.ndarray = None):
+    def calc_rays(self, points_in_camera: np.ndarray, visible: np.ndarray = None, front_only: bool = True):
         """Calculate uv coordinate from camera coordinate
 
         Parameters
@@ -361,7 +322,10 @@ class Eye:
         Z = points_in_eye[:, 2]  # (n, )
 
         visible = np.ones(points_in_camera.shape[0], dtype=bool) if visible is None else visible
-        front_and_visible = (Z > 0) & visible  # (n, ) True if the point is in front of the eye and visible
+        if front_only:
+            front_and_visible = (Z > 0) & visible  # (n, ) True if the point is in front of the eye and visible
+        else:
+            front_and_visible = visible
 
         XY = np.tile(np.zeros_like(Z) * np.nan, (2, 1)).T
         zoom_rate = np.zeros_like(Z) * np.nan
@@ -454,7 +418,8 @@ class Aperture:
         if isinstance(stl_model, mesh.Mesh):
             self._shape = "stl"
             self._size = None
-            self._stl_model = stl_model
+            self._stl_model = stl_utils.copy_model(stl_model)
+            self._stl_model.translate(self._position)
         else:
             if (shape is None) and (size is None):
                 pass
@@ -462,7 +427,7 @@ class Aperture:
                 self._shape, self._size = stl_utils.shape_check(shape, size)
                 self.set_model(**stl_args)
 
-        self._stl_model = stl_model
+        # self._stl_model = stl_model
 
     def __eq__(self, other):
         if isinstance(other, Aperture):
@@ -843,8 +808,8 @@ class Screen:
         """
         return self._A_subpixel * (self.cosine(eye) ** 4) / (4 * np.pi)  # (U_p * V_p, )
 
-    def ray2image(self, eye: Eye, rays: Rays, parallel=0):
-        """Convert rays to image vectors
+    def ray2image_grid(self, eye: Eye, rays: Rays, verbose=0):
+        """Convert rays to image vectors (grid-localized; consistent with ray2image)
 
         Parameters
         ----------
@@ -860,309 +825,113 @@ class Screen:
         Returns
         -------
         image_vectors : sparse.csc_matrix
-            image vectors (shape: (N_subpixel, n))
+            spot position matrix (shape: (N_subpixel, n))
         """
         if rays.n == 0:
-            return sparse.csc_matrix((self.N_subpixel, 0), dtype=float)
-
-        # center of the projected image on the screen
-        uv = self.xy2uv(rays.XY)  # (n, 2)
-        # calculate if the projected image is inside the screen
-
-        # calculate the light spot size on the screen
-        spot_size = eye.eye_size[None, :]/2 * rays.zoom_rate[:, None]  # (n, 2) image size (a_u, a_v)
-
-        def im_vec_(condition, n1=0, n2=None):
-            """Calculate image vectors for rectangle eye shape
-
-            Parameters
-            ----------
-            condition : function
-                condition of the image vectors
-            n1 : int, optional (default is 0)
-                start index of rays
-            n2 : int, optional (default is None)
-                end index of rays
-
-            Returns
-            -------
-            np.ndarray
-                image vectors (shape: (2, pixels * (n2 - n1)))
-
-            Notes
-            -----
-            `condition` must be a function that takes normalized_vec as an argument and returns a boolean array.
-            If `r_` includes nan, corresponding elements of other arrays become nan as well.
-            Additionally, the elements of `inside_spot` become False because `np.nan < 1` is False.
-            So, treatments for nan elements are completely hidden.
-            """
-            normalized_vec = (self.subpixel_position[:, None, :] - uv[None, n1:n2, :]
-                              ) / spot_size[None, n1:n2, :]  # (N_subpixel, n2 - n1, 2)
-            pixel_index, ray_index = np.nonzero(condition(normalized_vec))  # (pixels * (n2 - n1), )
-            return np.array((pixel_index, ray_index + n1))
-
-        rays_per_job = max(int(1e6) // self.N_subpixel, 1)
-        index_list = [(i, min(i + rays_per_job, rays.n)) for i in range(0, rays.n, rays_per_job)]
-
-        def ellipse_cond(normalized_vec):
-            return np.sum(normalized_vec ** 2, axis=-1) < 1
-
-        def rectangle_cond(normalized_vec):
-            return np.all(np.abs(normalized_vec) < 1, axis=-1)
-
-        if eye.eye_shape in ["circle", "ellipse"]:
-            if parallel:
-                # parallel for rays
-                res = Parallel(n_jobs=parallel, backend="threading"
-                               )(delayed(im_vec_)(ellipse_cond, n1, n2) for n1, n2 in index_list)
-            else:
-                res = im_vec_(ellipse_cond)
-        elif eye.eye_shape == "rectangle":
-            if parallel:
-                # parallel for rays
-                res = Parallel(n_jobs=parallel, backend="threading", verbose=1,
-                               )(delayed(im_vec_)(rectangle_cond, n1, n2) for n1, n2 in index_list)
-            else:
-                res = im_vec_(rectangle_cond)
-        else:
-            raise ValueError("eye_shape must be 'circle', 'ellipse', or 'rectangle'")
-        pixel_indices, ray_indices = np.hstack(res) if parallel else res
-
-        etendue_per_ray = 1 / (rays.zoom_rate * (rays.Z ** 2))
-        etendue = self.etendue_per_subpixel(eye)[pixel_indices] * etendue_per_ray[ray_indices]  # (pixels * n, )
-        image_vectors = sparse.csc_matrix((etendue, (pixel_indices, ray_indices)),
-                                          shape=(self.N_subpixel, rays.n))  # (N_subpixel, n)
-        return image_vectors
-
-    def ray2image2(self, eye: Eye, rays: Rays, parallel=0):
-        """Convert rays to image vectors (optimized)"""
-        if rays.n == 0:
-            return sparse.csc_matrix((self.N_subpixel, 0), dtype=float)
-
-        # center of the projected image on the screen
-        uv = self.xy2uv(rays.XY)  # (n, 2)
-        # light spot size on the screen
-        spot_size = eye.eye_size[None, :]/2 * rays.zoom_rate[:, None]  # (n, 2)
-
-        # --- 画面外クリップ（AABB）: サブピクセルの範囲を取得 ---
-        # subpixel_position は (N_subpixel, 2) を想定
-        sub = self.subpixel_position
-        u_min = float(np.min(sub[:, 0]));
-        u_max = float(np.max(sub[:, 0]))
-        v_min = float(np.min(sub[:, 1]));
-        v_max = float(np.max(sub[:, 1]))
-
-        half = 0.5 * spot_size
-        uv_u, uv_v = uv[:, 0], uv[:, 1]
-        a_u, a_v = spot_size[:, 0], spot_size[:, 1]
-
-        # 外接矩形が画面と交差する光線のみ残す
-        inside_screen = (
-                (uv_u + half[:, 0] >= u_min) &
-                (uv_u - half[:, 0] <= u_max) &
-                (uv_v + half[:, 1] >= v_min) &
-                (uv_v - half[:, 1] <= v_max)
-        )
-
-        if not np.any(inside_screen):
-            return sparse.csc_matrix((self.N_subpixel, rays.n), dtype=float)
-
-        # マスクされた配列（後で元のインデックスに戻す）
-        valid_idx = np.nonzero(inside_screen)[0]
-        uv_valid = uv[inside_screen]
-        a_u_valid = a_u[inside_screen]
-        a_v_valid = a_v[inside_screen]
-
-        # バッチ分割：N_subpixel とメモリに応じて調整
-        # 目安：dx/dy を (N_subpixel x batch) で2枚作るだけなので、以前より大きめでOK
-        target_elems = int(8e7)  # 約 80M 要素（float64で ~640MB、float32なら ~320MB）※環境に応じて調整
-        rays_per_job = max(int(target_elems // max(self.N_subpixel, 1)), 1)
-        index_list = [(i, min(i + rays_per_job, len(valid_idx)))
-                      for i in range(0, len(valid_idx), rays_per_job)]
-
-        # サブピクセル座標の列ベクトル
-        sub_u = sub[:, 0]
-        sub_v = sub[:, 1]
-
-        out_pixel_idx = []
-        out_ray_idx = []
-
-        def process_batch(n1, n2, shape_cond):
-            # uv, a_u, a_v は valid に絞ったもの
-            uvb = uv_valid[n1:n2]
-            aub = a_u_valid[n1:n2]
-            avb = a_v_valid[n1:n2]
-
-            # 2D ブロードキャスト（3Dテンソル生成なし）
-            dx = sub_u[:, None] - uvb[None, :, 0]  # (N_subpixel, B)
-            dy = sub_v[:, None] - uvb[None, :, 1]  # (N_subpixel, B)
-
-            if shape_cond == "ellipse":
-                # ((dx/a)^2 + (dy/b)^2) < 1
-                # numexpr があればコメントアウト解除で更に速く
-
-                # inside = ne.evaluate("(dx / aub)**2 + (dy / avb)**2 < 1")
-                inside = (dx / aub[None, :]) ** 2 + (dy / avb[None, :]) ** 2 < 1.0
-            else:
-                # 長方形: |dx| < a_u/2, |dy| < a_v/2
-                inside = ne.evaluate("abs(dx) < 0.5 * aub and abs(dy) <  avb")
-                # inside = (np.abs(dx) < (0.5 * aub[None, :])) & (np.abs(dy) < (0.5 * avb[None, :]))
-
-            pi, rj = np.nonzero(inside)  # rj はバッチ内の列インデックス
-            if pi.size:
-                out_pixel_idx.append(pi)
-                # 元の rays インデックスに戻す（valid → 全体 → バッチ内補正）
-                out_ray_idx.append(valid_idx[n1:n2][rj])
-
-        shape = eye.eye_shape
-        if shape in ("circle", "ellipse"):
-            cond = "ellipse"
-        elif shape == "rectangle":
-            cond = "rectangle"
-        else:
-            raise ValueError("eye_shape must be 'circle', 'ellipse', or 'rectangle'")
-
-        # 並列化はここ（dx/dy の計算は NumPy の ufunc でGIL解放されるので thread も効きやすい）
-        if parallel:
-            from joblib import Parallel, delayed
-            Parallel(n_jobs=parallel, backend="threading", verbose=0)(
-                delayed(process_batch)(n1, n2, cond) for n1, n2 in index_list
-            )
-        else:
-            for n1, n2 in index_list:
-                process_batch(n1, n2, cond)
-
-        if out_pixel_idx:
-            pixel_indices = np.concatenate(out_pixel_idx, axis=0)
-            ray_indices = np.concatenate(out_ray_idx, axis=0)
-        else:
-            pixel_indices = np.array([], dtype=int)
-            ray_indices = np.array([], dtype=int)
-
-        # etendue 計算は元のまま
-        etendue_per_ray = 1.0 / (rays.zoom_rate * (rays.Z ** 2))
-        etendue = self.etendue_per_subpixel(eye)[pixel_indices] * etendue_per_ray[ray_indices]
-        image_vectors = sparse.csc_matrix(
-            (etendue, (pixel_indices, ray_indices)),
-            shape=(self.N_subpixel, rays.n)
-        )
-        return image_vectors
-
-    def ray2image_grid(self, eye: Eye, rays: Rays, parallel=0, verbose=0):
-        """Convert rays to image vectors (grid-localized; consistent with ray2image)"""
-        if rays.n == 0:
+            # if no rays, return empty matrix (N_subpixel, 0)
             return sparse.csc_matrix((self.N_subpixel, 0), dtype=float)
 
         uv = self.xy2uv(rays.XY)  # (n, 2) image coords
-        spot_size = eye.eye_size[None, :] * rays.zoom_rate[:, None]  # (n, 2), same as original
+        spot_size = eye.eye_size[None, :] * rays.zoom_rate[:, None]  # (n, 2)
         half = 0.5 * spot_size
 
         # subpixel axis (must match positions())
-        U_sub, V_sub = int(self._subpixel_shape[0]), int(self._subpixel_shape[1])
-        du, dv = float(self._subpixel_size[0]), float(self._subpixel_size[1])
-        u_axis = np.linspace(du * 0.5, self._screen_size[0] - du * 0.5, U_sub)
-        v_axis = np.linspace(dv * 0.5, self._screen_size[1] - dv * 0.5, V_sub)
+        U_sub, V_sub = int(self._subpixel_shape[0]), int(self._subpixel_shape[1])  # number of sub-pixels
+        du, dv = float(self._subpixel_size[0]), float(self._subpixel_size[1])  # size of sub-pixels
+        u_axis = np.linspace(du * 0.5, self._screen_size[0] - du * 0.5, U_sub)  # u positions of sub-pixels (U_sub,)
+        v_axis = np.linspace(dv * 0.5, self._screen_size[1] - dv * 0.5, V_sub)  # v positions of sub-pixels (V_sub,)
         u_min, u_max = u_axis[0], u_axis[-1]
         v_min, v_max = v_axis[0], v_axis[-1]
-
+        # AABB means "Axis-Aligned Bounding Box"
         # pre-clip rays whose spot AABB doesn't touch the screen rect (same effect as原実装のNaN→False)
-        inside_screen = ((uv[:, 0] + half[:, 0] >= u_min) &
-                         (uv[:, 0] - half[:, 0] <= u_max) &
-                         (uv[:, 1] + half[:, 1] >= v_min) &
-                         (uv[:, 1] - half[:, 1] <= v_max))
+
+        # +----> (v-axis)
+        # |
+        # v (u-axis)
+        #
+        # uv[:, 1] - half[:, 1]         uv[:, 1] + half[:, 1]
+        # |                             |
+        # +-------- _..-===-.._ --------+-- uv[:, 0] - half[:, 0]
+        # |     .~˙             ˙~.     |
+        # |  .'                     '.  |
+        # | /                         \ |
+        # |∫                           l|
+        # ├·             + <-center    ·┤   u = uv[:, 0], v = uv[:, 1]
+        # |l                   (u,v)   ∫|   width = half[:, 0] * 2, height = half[:, 1] * 2
+        # | \                         / |
+        # |  '.                     .'  | <- Bounding Box
+        # |     ˙~.             .~˙     |
+        # +-------- ¯''-===-''¯ --------+-- uv[:, 0] + half[:, 0]
+        #
+
+        inside_screen = ((uv[:, 0] + half[:, 0] >= u_min) &  # u + half_width >= u_min -> left side of screen
+                         (uv[:, 0] - half[:, 0] <= u_max) &  # u - half_width <= u_max -> right side of screen
+                         (uv[:, 1] + half[:, 1] >= v_min) &  # v + half_height >= v_min -> top side of screen
+                         (uv[:, 1] - half[:, 1] <= v_max))  # v - half_height <= v_max -> bottom side of screen
 
         if not np.any(inside_screen):
+            # no spots on screen
             return sparse.csc_matrix((self.N_subpixel, rays.n), dtype=float)
 
-        valid = np.nonzero(inside_screen)[0]
         use_ellipse = eye.eye_shape in ("circle", "ellipse")
 
         if not (use_ellipse or eye.eye_shape == "rectangle"):
             raise ValueError("eye_shape must be 'circle', 'ellipse', or 'rectangle'")
 
-        out_pix, out_ray = [], []
+        u_center, v_center = uv[:, 0], uv[:, 1]
+        a_u, a_v = half[:, 0], half[:, 1]
+        u_low = np.clip(u_center - a_u, u_min, u_max)
+        u_high = np.clip(u_center + a_u, u_min, u_max)
+        v_low = np.clip(v_center - a_v, v_min, v_max)
+        v_high = np.clip(v_center + a_v, v_min, v_max)
 
-        def process(lo, hi):
-            for t in range(lo, hi):
-                r = valid[t]
-                uc, vc = uv[r, 0], uv[r, 1]
-                au, av = half[r, 0], half[r, 1]  # 元コードと同じ「a_u, a_v」の意味
+        valid = np.nonzero(inside_screen)[0]
 
-                # --- AABB と画面の交差を「座標」→「整数 index」へ（丸め規則が肝） ---
-                u_lo = max(uc - au, u_min)
-                u_hi = min(uc + au, u_max)
-                v_lo = max(vc - av, v_min)
-                v_hi = min(vc + av, v_max)
-                if u_lo > u_hi or v_lo > v_hi:
-                    continue
+        i_min = np.clip(np.floor(u_low / du - 0.5), 0, U_sub - 1).astype(np.int32)
+        i_max = np.clip(np.ceil(u_high / du - 0.5), 0, U_sub - 1).astype(np.int32)
+        j_min = np.clip(np.floor(v_low / dv - 0.5), 0, V_sub - 1).astype(np.int32)
+        j_max = np.clip(np.ceil(v_high / dv - 0.5), 0, V_sub - 1).astype(np.int32)
 
-                i_min = int(np.ceil((u_lo - u_axis[0]) / du))-1
-                i_max = int(np.floor((u_hi - u_axis[0]) / du))+1
-                j_min = int(np.ceil((v_lo - v_axis[0]) / dv))-1
-                j_max = int(np.floor((v_hi - v_axis[0]) / dv))+1
-                if i_min > i_max or j_min > j_max:
-                    continue
-                i_min = max(i_min, 0)
-                i_max = min(i_max, U_sub - 1)
-                j_min = max(j_min, 0)
-                j_max = min(j_max, V_sub - 1)
+        if use_ellipse:
+            @njit(cache=True)
+            def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
+                u_n_sq = ((u_ax - uc) / au) ** 2  # (I_r,)
+                v_n_sq = ((v_ax - vc) / av) ** 2  # (J_r,)
+                inside = (u_n_sq[:, None] + v_n_sq[None, :]) < 1.0
+                if not inside.any():
+                    return np.empty((0,), dtype=np.int32)
+                ii, jj = np.nonzero(inside)
+                return ((i_min_r + ii) * _V_sub + (j_min_r + jj)).astype(np.int32)
 
-                u_slice = u_axis[i_min:i_max + 1]  # (I,)
-                v_slice = v_axis[j_min:j_max + 1]  # (J,)
-
-                # --- 判定は「正規化してから」元コードと完全一致の閾値を用いる ---
-                # 楕円: ((du/au)^2 + (dv/av)^2) < 1
-                # 矩形: |du/au| < 0.5 & |dv/av| < 0.5
-                du_norm_sq = ((u_slice - uc) / au) ** 2  # (I,)
-                dv_norm_sq = ((v_slice - vc) / av) ** 2  # (J,)
-
-                if use_ellipse:
-                    inside = (dv_norm_sq[:, None] + du_norm_sq[None, :]) < 1.0
-                else:
-                    du_abs = np.abs((u_slice - uc) / au)  # (I,)
-                    dv_abs = np.abs((v_slice - vc) / av)  # (J,)
-                    ix = du_abs < 0.5
-                    iy = dv_abs < 0.5
-                    if not (np.any(ix) and np.any(iy)):
-                        continue
-                    inside = iy[:, None] & ix[None, :]
-
-                if not np.any(inside):
-                    continue
-
-                jj, ii = np.nonzero(inside)  # (K,), (K,)  ※Jが行=縦=u、Iが列=横=v
-                gi = i_min + ii  # u-axis index (0..U_sub-1)
-                gj = j_min + jj  # v-axis index (0..V_sub-1)
-
-                # ★ positions() と同じフラット順序（C-order, j が速い）：
-                pix_idx = gi * V_sub + gj
-
-                out_pix.append(pix_idx.astype(np.int32, copy=False))
-                out_ray.append(np.full(pix_idx.size, r, dtype=np.int32))
-
-        if parallel:
-            from joblib import Parallel, delayed
-            n = len(valid)
-            # 粗めに分割（CPUにより調整可）
-            chunk = max(1, n // (parallel * 8) or 1)
-            bounds = [(s, min(s + chunk, n)) for s in range(0, n, chunk)]
-            Parallel(n_jobs=parallel, backend="threading", verbose=verbose)(
-                delayed(process)(lo, hi) for (lo, hi) in bounds
-            )
         else:
-            process(0, len(valid))
+            @njit(cache=True)
+            def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
+                u_n = np.abs((u_ax - uc) / au)  # (I_r,)
+                v_n = np.abs((v_ax - vc) / av)  # (J_r,)
+                u_cond = u_n < 0.5
+                v_cond = v_n < 0.5
+                inside = u_cond[:, None] & v_cond[None, :]
+                if not inside.any():
+                    return np.empty((0,), dtype=np.int32)
+                ii, jj = np.nonzero(inside)
+                return ((i_min_r + ii) * _V_sub + (j_min_r + jj)).astype(np.int32)
 
-        if out_pix:
-            pixel_indices = np.concatenate(out_pix)
-            ray_indices = np.concatenate(out_ray)
-        else:
-            pixel_indices = np.array([], dtype=np.int32)
-            ray_indices = np.array([], dtype=np.int32)
-
-        etendue_per_ray = 1.0 / (rays.zoom_rate * (rays.Z ** 2))
-        etendue = self.etendue_per_subpixel(eye)[pixel_indices] * etendue_per_ray[ray_indices]
-        return sparse.csc_matrix((etendue, (pixel_indices, ray_indices)),
-                                 shape=(self.N_subpixel, rays.n))
+        out_pix = [indexer(u_axis[i_min[r]:i_max[r] + 1],
+                           v_axis[j_min[r]:j_max[r] + 1],
+                           uv[r, 0], uv[r, 1],
+                           half[r, 0], half[r, 1],
+                           i_min[r], j_min[r], V_sub) for r in
+                   my_tqdm(valid, desc="ray to image", disable=verbose <= 0)]
+        pix_sizes = [p.size for p in out_pix if p.size > 0]
+        pixel_indices = np.concatenate(out_pix)
+        indptr = np.zeros(rays.n + 1, dtype=np.int32)
+        indptr[valid + 1] = np.cumsum(pix_sizes)
+        etendue_per_ray = (1.0 / (rays.zoom_rate * (rays.Z ** 2))).astype(np.float32)
+        etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
+        data = etendue_per_subpixel[pixel_indices]
+        mat = sparse.csc_matrix((data, pixel_indices, indptr), shape=(self.N_subpixel, rays.n)).tocsr()
+        mat.data = mat.data * etendue_per_ray[mat.indices]
+        return mat  # (N_subpixel, n) csr matrix
 
     def xy2uv(self, xy: np.ndarray):
         """Convert uv vectors in the camera coordinate to the image coordinate
@@ -1247,11 +1016,13 @@ class Screen:
 
     def show_image(self, image: np.ndarray = None, ax: plt.Axes = None,
                    block: bool = True, pixel_image: bool = False, pm: bool = False,
-                   masked: bool = False, **kwargs):
+                   colorbar: bool = True, masked: bool = False, **kwargs):
         """Show image
 
         Parameters
         ----------
+        image : np.ndarray, optional
+            Image to show
         ax : plt.Axes, optional
             Axes to show image, by default None (new figure is created)
         block : bool, optional
@@ -1260,6 +1031,8 @@ class Screen:
             If True, given image is converted to pixel image, by default False
         pm : bool, optional
             If True, the image is shown in the range [-vmax, vmax], by default False
+        colorbar : bool, optional
+            If True, colorbar is shown, by default True
         masked : bool, optional
             If True, masked pixels are shown in gray, by default False
         **kwargs : dict
@@ -1299,7 +1072,8 @@ class Screen:
         ax.set_aspect(1)
         ax.set_xlim(0, self._screen_size[1])
         ax.set_ylim(self._screen_size[0], 0)
-        ax.figure.colorbar(_, ax=ax)
+        if colorbar:
+            ax.figure.colorbar(_, ax=ax)
         ax.set_xlabel("v (mm)")
         ax.set_ylabel("u (mm)")
 
@@ -1555,7 +1329,7 @@ class Camera:
         """
         self._apertures.append(aperture)
 
-    def calc_image_vec(self, eye_num, points, parallel: int = 0, verbose: int = 0):
+    def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True):
         """Calculate image vectors
 
         Parameters
@@ -1571,20 +1345,26 @@ class Camera:
         -------
         sparse.csc_matrix
             image vectors (shape: (N_subpixel, n))
+            Note that the returned sparse matrix only have the information about which subpixels are hit by which rays.
+            The intensity information must be calculated separately.
         """
         eye = self._eyes[eye_num]
         points_in_camera = self.world2camera(points)
-        visible_list = [stl_utils.check_visible(mesh_obj=aperture.stl_model,
-                                                start=eye.position,
-                                                grid_points=points_in_camera,
-                                                behind_start_included=True) for aperture in self._apertures]
-        visible = np.any(visible_list, axis=0)
-        rays = eye.calc_rays(points_in_camera, visible)
+        if check_visibility:
+            visible_list = [stl_utils.check_visible(mesh_obj=aperture.stl_model,
+                                                    start=eye.position,
+                                                    grid_points=points_in_camera,
+                                                    behind_start_included=True) for aperture in self._apertures]
+            visible = np.any(visible_list, axis=0)
+            rays = eye.calc_rays(points_in_camera, visible)
+        else:
+            rays = eye.calc_rays(points_in_camera)
+
         # print("ray2image start")
         # res1 = self.screen.ray2image(eye, rays, parallel=parallel)
         # res2 = self.screen.ray2image2(eye, rays, parallel=parallel)
-        res3 = self.screen.ray2image_grid(eye, rays, parallel=parallel, verbose=verbose)
-        return res3
+        mat = self.screen.ray2image_grid(eye, rays, verbose=verbose)
+        return mat
 
     def draw_optical_system(self, ax=None, show_focal_length=True, show_aperture=True, show_screen=True,
                             X_lim=None, Y_lim=None, Z_lim=None):
@@ -1638,8 +1418,11 @@ class Camera:
                       *[aperture.stl_model.y.max() if aperture.stl_model else
                         aperture.size[1] / 2 + aperture.position[1] for aperture in self._apertures],
                       self._screen.screen_size[0] / 2])) if Y_lim is None else Y_lim
-        Z_lim = (0, max([aperture.position[2] for aperture in self._apertures])) if Z_lim is None else Z_lim
-        ax.set_xlim(1.1 * Z_lim[0], 1.1 * Z_lim[1])
+        Z_lim = (0,
+                 max(*[aperture.position[2] for aperture in self._apertures],
+                     *[eye.position[2] for eye in self._eyes])) if Z_lim is None else Z_lim
+
+        ax.set_xlim(-Z_lim[1] * 0.1, Z_lim[1] * 1.1)
         ax.set_ylim(1.1 * X_lim[0], 1.1 * X_lim[1])
         ax.set_zlim(1.1 * Y_lim[0], 1.1 * Y_lim[1])
         ax.invert_yaxis()
