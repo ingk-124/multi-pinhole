@@ -1,7 +1,6 @@
 # created by virtualenv automatically
-
 */.DS_Store
 */.idea
 */.vscode
 */__pycache__
-py311/
+py312/
