@@ -504,7 +504,7 @@ def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points:
     # X: points
     # P: planes
     # X @ n_oab.T >= 0 -> X exists above the plane oab (same side as c)
-    for s in my_range(0, N, batch_size, verbose=verbose):
+    for s in my_range(0, N, batch_size, disable=verbose <= 0, desc="Delta cone apply"):
         t = min(s + batch_size, N)
         # D = np.einsum('bj,mij->bmi', end_points[s:t],
         #               planes[valid])  # (batch_size, M_valid, 3)
@@ -619,7 +619,6 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     my_print(f"{N=}, {M=}", show=verbose > 0)
 
     allow_behind = isinstance(behind_start_included, Number) or behind_start_included is True
-    my_print("delta_cone_apply start", show=verbose > 0)
     start_time = time.time()
     cand, valid = delta_cone_apply(triangles, start, grid_points,
                                    allow_behind=allow_behind,
@@ -628,9 +627,9 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     time.sleep(0.1)
     my_print(f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0)
     visible = np.ones(N, dtype=bool)
-    my_print("check_intersection start", show=verbose > 0)
+
     start_time = time.time()
-    for i in my_range(M, verbose=verbose):
+    for i in my_range(M, disable=verbose <= 0, desc="Check intersection"):
         if valid[i]:
             inside_grid_points = cand.getrow(i).nonzero()[1]  # 点 i が三角形 j のコーン内にあるインデックス
             if inside_grid_points.size > 0:
