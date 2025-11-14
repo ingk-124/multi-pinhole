@@ -122,10 +122,12 @@ class Rays:
 
     @property
     def n(self):
+        """int: Total number of sampled rays contained in this instance."""
         return self.Z.size
 
     @property
     def n_visible(self):
+        """int: Count of rays that are both in front of the eye and marked visible."""
         return self.front_and_visible.nonzero()[0].size
 
 
@@ -262,6 +264,7 @@ class Eye:
         self._camera = None
 
     def __eq__(self, other):
+        """bool: Return ``True`` when two eyes share identical intrinsic settings."""
         if isinstance(other, Eye):
             for k in self.__dict__.keys():
                 if k == "_camera":
@@ -289,7 +292,7 @@ class Eye:
         return points_in_camera - self.position.reshape((1, 3))  # (n, 3)
 
     def calc_rays(self, points_in_camera: np.ndarray, visible: np.ndarray = None, front_only: bool = True):
-        """Calculate uv coordinate from camera coordinate
+        """Rays: Project world points through the eye onto the screen plane.
 
         Parameters
         ----------
@@ -298,14 +301,13 @@ class Eye:
         visible : np.ndarray, optional
             visible points in camera coordinate (n, )
             If visible is None, all points are considered to be visible
+        front_only : bool, optional
+            If True, discard samples located behind the optical center.
 
         Returns
         -------
-        rays: Rays object
-            ray data (cosine, sigma, zoom, xy) (the number of points is n_front)
-        front_and_visible : np.ndarray
-            boolean array (n, ) True if the point is in front of the eye and visible
-            rays.n is equal to n_front (front_and_visible.nonzero()[0].size == rays.n)
+        Rays
+            Ray bundle storing axial distance, projected coordinates, zoom factor, and visibility mask.
 
         Notes
         -----
@@ -336,42 +338,57 @@ class Eye:
         return Rays(Z=Z, XY=XY, zoom_rate=zoom_rate, front_and_visible=front_and_visible)
 
     def set_camera(self, camera_obj):
+        """None: Register the parent :class:`Camera` that owns this eye.
+
+        Parameters
+        ----------
+        camera_obj : Camera
+            Camera instance providing coordinate transforms for the eye.
+        """
         self._camera = camera_obj
 
     @property
     def eye_type(self):
+        """str: Kind of optical element (``"pinhole"`` or ``"concave_lens"``)."""
         return self._eye_type
 
     @property
     def eye_size(self):
+        """np.ndarray: Aperture extents along the camera ``x`` and ``y`` axes in millimeters."""
         return self._eye_size
 
     @property
     def eye_shape(self):
+        """str: Geometric outline applied when rasterizing the pupil."""
         return self._eye_shape
 
     @property
     def focal_length(self):
+        """float: Signed focal length measured along the optical axis in millimeters."""
         return self._focal_length
 
     @property
     def position(self):
+        """np.ndarray: Eye origin expressed as ``(x, y, z)`` in camera coordinates."""
         return self._position
 
     @property
     def principal_point(self):
+        """np.ndarray: Principal point location ``(x, y, z)`` defining the imaging center."""
         return self._principal_point
 
     @property
     def camera(self):
-        """Camera object"""
+        """Camera or None: Parent camera providing transforms, or ``None`` if detached."""
         return self._camera
 
     @property
     def wavelength_range(self):
+        """Tuple[float, float]: Minimum and maximum supported wavelengths in meters."""
         return self._wavelength_range
 
     def print_settings(self):
+        """None: Print the configured eye properties for debugging."""
         print("eye_type:", self.eye_type)
         print("position:", self.position)
         print("focal_length:", self.focal_length)
@@ -430,6 +447,7 @@ class Aperture:
         # self._stl_model = stl_model
 
     def __eq__(self, other):
+        """bool: Compare aperture geometry, ignoring linked STL mesh objects."""
         if isinstance(other, Aperture):
             for k in self.__dict__.keys():
                 if k == "_stl_model":
@@ -467,26 +485,32 @@ class Aperture:
     #  properties
     @property
     def position(self):
+        """np.ndarray: Aperture center in camera coordinates as ``(x, y, z)``."""
         return self._position
 
     @property
     def direction(self):
+        """np.ndarray: Unit vector indicating aperture normal in camera space."""
         return self._direction
 
     @property
     def shape(self):
+        """str: Shape keyword such as ``"circle"``, ``"ellipse"``, ``"rectangle"`` or ``"stl"``."""
         return self._shape
 
     @property
     def size(self):
+        """np.ndarray or None: Characteristic dimensions of the aperture opening in millimeters."""
         return self._size
 
     @property
     def stl_model(self):
+        """mesh.Mesh or None: Triangulated aperture surface when generated from STL."""
         return self._stl_model
 
     #  methods
     def print_info(self):
+        """None: Print the aperture's spatial configuration and dimensions."""
         print("position:", self.position)
         print("shape:", self.shape)
         print("size:", self.size)
@@ -612,6 +636,7 @@ class Screen:
         self.subpixel_resolution = subpixel_resolution
 
     def __eq__(self, other):
+        """bool: Check if two screens share identical discretisation parameters."""
         if isinstance(other, Screen):
             for k in self.__dict__.keys():
                 if isinstance(self.__dict__[k], sparse.spmatrix):
@@ -628,38 +653,53 @@ class Screen:
     #  properties
     @property
     def screen_shape(self):
+        """str: Geometric outline of the active display surface."""
         return self._screen_shape
 
     @property
     def screen_size(self):
+        """np.ndarray: Physical height and width of the screen in millimeters."""
         return self._screen_size
 
     @property
     def pixel_shape(self):
+        """np.ndarray: Count of pixels along the ``u`` and ``v`` axes."""
         return self._pixel_shape
 
     @property
     def N_pixel(self):
+        """int: Total number of discrete pixels on the screen."""
         return self._N_pixel
 
     @property
     def pixel_size(self):
+        """np.ndarray: Pixel pitch along ``u`` and ``v`` directions in millimeters."""
         return self._pixel_size
 
     @property
     def A_pixel(self):
+        """float: Pixel area in square millimeters."""
         return self._A_pixel
 
     @property
     def pixel_position(self):
+        """np.ndarray: Coordinates of each pixel center in ``(u, v)`` order."""
         return self._pixel_position
 
     @property
     def subpixel_resolution(self):
+        """int: Number of sub-divisions applied per pixel edge."""
         return self._subpixel_resolution
 
     @subpixel_resolution.setter
     def subpixel_resolution(self, subpixel_resolution):
+        """None: Update the subpixel refinement factor and recompute caches.
+
+        Parameters
+        ----------
+        subpixel_resolution : int
+            Positive integer denoting how many subpixels subdivide each pixel axis.
+        """
         # set the subpixel resolution
         if not isinstance(subpixel_resolution, int) or subpixel_resolution < 1:
             raise ValueError("subpixel_resolution must be integer and larger than 1")
@@ -668,38 +708,47 @@ class Screen:
 
     @property
     def subpixel_shape(self):
+        """np.ndarray: Subpixel lattice dimensions in ``(u, v)`` order."""
         return self._subpixel_shape
 
     @property
     def N_subpixel(self):
+        """int: Total number of subpixels composing the discretised screen."""
         return self._N_subpixel
 
     @property
     def subpixel_size(self):
+        """np.ndarray: Size of each subpixel in millimeters along ``u`` and ``v``."""
         return self._subpixel_size
 
     @property
     def A_subpixel(self):
+        """float: Subpixel area in square millimeters."""
         return self._A_subpixel
 
     @property
     def subpixel_position(self):
+        """np.ndarray: Center coordinates for all subpixels in ``(u, v)`` order."""
         return self._subpixel_position
 
     @property
     def pixel_image_mask(self):
+        """np.ndarray: Boolean mask indicating pixels outside the active region."""
         return self._pixel_image_mask
 
     @property
     def subpixel_image_mask(self):
+        """np.ndarray: Boolean mask identifying subpixels clipped by the screen shape."""
         return self._subpixel_image_mask
 
     @property
     def transform_matrix(self):
+        """sparse.csr_matrix or None: Mapping from subpixels to their parent pixels."""
         return self._transform_matrix
 
     #  methods
     def _set_variables(self):
+        """None: Populate cached geometry derived from the current subpixel resolution."""
         # set the subpixel shape, subpixel size and subpixel position
         self._subpixel_shape = self._pixel_shape * self._subpixel_resolution
         self._N_subpixel = self._subpixel_shape[0] * self._subpixel_shape[1]
@@ -824,8 +873,8 @@ class Screen:
 
         Returns
         -------
-        image_vectors : sparse.csc_matrix
-            spot position matrix (shape: (N_subpixel, n))
+        image_vectors : sparse.csr_matrix
+            Spot position matrix (shape: (N_subpixel, n)) in compressed sparse row format.
         """
         if rays.n == 0:
             # if no rays, return empty matrix (N_subpixel, 0)
@@ -954,18 +1003,19 @@ class Screen:
             raise ValueError("xy must be 1D or 2D array")
 
     def uv2subpixel_index(self, light_points: np.ndarray, intensity: np.ndarray):
-        """Convert light points (u, v) in the image coordinate system to subpixel indices
+        """Tuple[np.ndarray, np.ndarray]: Convert image-plane samples into subpixel indices.
 
         Parameters
         ----------
         light_points : np.ndarray
             Light points (u, v) in the image coordinate system (shape: (N, 2))
+        intensity : np.ndarray
+            Corresponding light intensity values with shape ``(N,)`` or ``(N, C)``.
 
         Returns
         -------
-        np.ndarray
-            Subpixel indices (shape: (M, 2))
-            M is the number of light points that are inside the screen
+        Tuple[np.ndarray, np.ndarray]
+            Subpixel indices ``(M, 2)`` inside the screen and the filtered intensities.
         """
 
         # calculate subpixel index
@@ -1081,7 +1131,7 @@ class Screen:
         return ax
 
     def print_settings(self) -> None:
-        """Print settings"""
+        """None: Display key screen discretisation parameters."""
         print("screen_shape: {}".format(self._screen_shape))
         print("pixel_shape: {}".format(self._pixel_shape))
         print("subpixel_resolution: {}".format(self._subpixel_resolution))
@@ -1156,9 +1206,11 @@ class Camera:
         print("Camera is created.")
 
     def __repr__(self):
+        """str: Render a concise textual summary of the camera configuration."""
         return f"Camera(eye_type={self._eye_type}, camera_position={self._camera_position})"
 
     def __eq__(self, other):
+        """bool: Equality comparison based on optics, sensors, and pose."""
         if not isinstance(other, Camera):
             return False
         else:
@@ -1201,22 +1253,22 @@ class Camera:
 
     @property
     def eye_type(self):
-        """str: eye type of the camera."""
+        """str: Shared optical mode for all eyes (``"pinhole"`` or ``"concave_lens"``)."""
         return self._eye_type
 
     @property
     def eyes(self):
-        """list: list of eye objects."""
+        """List[Eye]: Collection of configured eyes mounted on the camera."""
         return self._eyes
 
     @property
     def apertures(self):
-        """list: list of aperture objects."""
+        """List[Aperture]: Aperture geometries paired with the camera."""
         return self._apertures
 
     @property
     def screen(self):
-        """Screen: screen object."""
+        """Screen: Display surface receiving projected rays."""
         return self._screen
 
     @property
@@ -1249,29 +1301,48 @@ class Camera:
 
     @rotation_matrix.setter
     def rotation_matrix(self, rotation_matrix):
+        """None: Override the world-to-camera rotation matrix.
+
+        Parameters
+        ----------
+        rotation_matrix : np.ndarray
+            ``3×3`` orthonormal rotation transforming world vectors into camera coordinates.
+        """
         self._rotation_matrix = rotation_matrix
 
     @property
     def world(self):
-        """World: world object."""
+        """World or None: Scene graph currently observed by the camera."""
         return self._world
 
     def set_world(self, world_obj):
+        """None: Register the :class:`World` scene providing geometry and emitters.
+
+        Parameters
+        ----------
+        world_obj : World
+            World instance this camera observes.
+        """
         self._world = world_obj
 
     def move_camera(self, camera_position):
-        """Move camera position in the world coordinate system
+        """Camera: Update the camera origin within the world coordinate system.
 
         Parameters
         ----------
         camera_position : Tuple[float, float, float]
             camera position in the world coordinate system
+
+        Returns
+        -------
+        Camera
+            The camera instance for fluent-style chaining.
         """
         self._camera_position = np.array(camera_position)
         return self
 
     def set_rotation_matrix(self, order, angle, degrees=True):
-        """set rotation matrix from the world coordinate system to the camera coordinate system
+        """Camera: Set the world-to-camera rotation using Euler angles.
 
         Parameters
         ----------
@@ -1281,6 +1352,11 @@ class Camera:
             angle of rotation in degree
         degrees : bool, optional
             if True, angle is in degree, else in radian, by default True
+
+        Returns
+        -------
+        Camera
+            The camera instance with the updated rotation matrix.
         """
         self._rotation_matrix = Rotation.from_euler(order, angle, degrees=degrees).as_matrix()
         return self
@@ -1330,7 +1406,7 @@ class Camera:
         self._apertures.append(aperture)
 
     def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True):
-        """Calculate image vectors
+        """sparse.csr_matrix: Assemble ray hits into a sparse image vector.
 
         Parameters
         ----------
@@ -1338,14 +1414,15 @@ class Camera:
             index of the eyes
         points : numpy.ndarray
             points in the world coordinate system (shape: (n, 3))
-        parallel : bool, optional
-            whether to use parallel calculation, by default True
+        verbose : int, optional
+            Verbosity level forwarded to progress reporters.
+        check_visibility : bool, optional
+            Whether to cull rays occluded by apertures before projection.
 
         Returns
         -------
-        sparse.csc_matrix
-            image vectors (shape: (N_subpixel, n))
-            Note that the returned sparse matrix only have the information about which subpixels are hit by which rays.
+        sparse.csr_matrix
+            Image mapping matrix ``(N_subpixel, n)`` describing which subpixels are reached by each ray.
             The intensity information must be calculated separately.
         """
         eye = self._eyes[eye_num]
@@ -1368,29 +1445,29 @@ class Camera:
 
     def draw_optical_system(self, ax=None, show_focal_length=True, show_aperture=True, show_screen=True,
                             X_lim=None, Y_lim=None, Z_lim=None):
-        """Draw the optical system.
+        """matplotlib.axes.Axes: Visualise optical elements in a 3D Matplotlib scene.
 
         Parameters
         ----------
         ax : matplotlib.axes.Axes, optional
-            matplotlib axes object
+            Target 3D axis; a new figure is created when omitted.
         show_focal_length : bool, optional
-            whether to show focal length of the eyes, by default True
+            Toggle rendering of eye focal length vectors.
         show_aperture : bool, optional
-            whether to show aperture of the eyes, by default True
+            Toggle drawing aperture planes and models.
         show_screen : bool, optional
-            whether to show screen, by default True
+            Toggle rendering of the imaging screen.
         X_lim : Tuple[float, float], optional
-            X-axis limits, by default None
+            Manual bounds for the x-axis of the plot.
         Y_lim : Tuple[float, float], optional
-            Y-axis limits, by default None
+            Manual bounds for the y-axis of the plot.
         Z_lim : Tuple[float, float], optional
-            Z-axis limits, by default None
-
+            Manual bounds for the z-axis of the plot.
+        
         Returns
         -------
         matplotlib.axes.Axes
-            matplotlib axes object
+            Axis containing the rendered optical setup.
         """
         # draw the optical system
         # note: axes in the figure are not equal to axes in the camera coordinate system
@@ -1523,7 +1600,19 @@ class Camera:
     # todo: make plotly version of draw_optical_system
 
     def draw_camera_orientation_plotly(self, fig=None, **kwargs):
-        """Draw camera orientation using plotly.
+        """go.Figure: Render camera axes within Plotly for interactive viewing.
+
+        Parameters
+        ----------
+        fig : plotly.graph_objects.Figure, optional
+            Existing figure to append orientation glyphs to.
+        **kwargs
+            Additional keyword arguments forwarded to :func:`stl_utils.plotly_show_axes`.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Figure augmented with camera orientation geometry.
         """
         fig = go.Figure() if fig is None else fig
         stl_utils.plotly_show_axes(R=self.rotation_matrix, fig=fig, origin=self.camera_position, name="camera",
@@ -1531,7 +1620,17 @@ class Camera:
         return fig
 
     def draw_camera_orientation(self, ax=None):
-        """Draw camera orientation.
+        """matplotlib.axes.Axes: Plot camera axes relative to the world frame.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Existing axis to draw on; a new orthographic subplot is created when omitted.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Axis showing both camera and world coordinate frames.
         """
         if ax is None:
             ax = plt.subplot(projection="3d", proj_type="ortho")
@@ -1568,8 +1667,7 @@ class Camera:
         return ax
 
     def print_settings(self):
-        """Print camera settings.
-        """
+        """None: Emit a formatted summary of camera, eye, screen, and aperture settings."""
         print("Camera settings:")
         print(f"Camera position: {self._camera_position}")
         print(f"Eye type: {self._eye_type}")
