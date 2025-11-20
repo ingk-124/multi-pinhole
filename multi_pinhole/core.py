@@ -1078,7 +1078,7 @@ class Screen:
 
     def show_image(self, image: np.ndarray = None, ax: plt.Axes = None,
                    block: bool = True, pixel_image: bool = False, pm: bool = False,
-                   colorbar: bool = True, masked: bool = False, **kwargs):
+                   colorbar: bool = True, masked: bool = False, show: bool = False, **kwargs) -> plt.Axes:
         """Show image
 
         Parameters
@@ -1097,6 +1097,8 @@ class Screen:
             If True, colorbar is shown, by default True
         masked : bool, optional
             If True, masked pixels are shown in gray, by default False
+        show : bool, optional
+            If True, plt.show() is called, by default False
         **kwargs : dict
             Keyword arguments for plt.pcolormesh
 
@@ -1139,7 +1141,8 @@ class Screen:
         ax.set_xlabel("v (mm)")
         ax.set_ylabel("u (mm)")
 
-        plt.show(block=block)
+        if show:
+            plt.show(block=block)
         return ax
 
     def print_settings(self) -> None:

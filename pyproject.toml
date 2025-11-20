@@ -32,4 +32,4 @@ where = ["."]
 include = ["multi_pinhole", "utils"]
 
 [project.scripts]
-multi-pinhole-sim = "multi_pinhole"
+multi-pinhole-sim = "multi_pinhole:cli"

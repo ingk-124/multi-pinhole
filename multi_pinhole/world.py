@@ -575,8 +575,8 @@ class World:
             self._inside_vertices = inside_vertices
             print(f"Inside vertices are updated. (N_inside_vertices: {np.sum(inside_vertices)})")
 
-    def _find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
-                             verbose: int = 1) -> np.ndarray:
+    def find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
+                            verbose: int = 1) -> np.ndarray:
         """Determine point visibility for a specific camera and eye selection.
 
         Parameters
@@ -699,9 +699,9 @@ class World:
                 my_print("No inside vertices. Skip calculating visible vertices.", show=verbose > 0)
             else:
                 visible_vertices[:, self.inside_vertices] \
-                    = self._find_visible_points(self.voxel.grid[self.inside_vertices],
-                                                camera_idx=c_,
-                                                verbose=verbose)  # (N_eye, N_inside_points)
+                    = self.find_visible_points(self.voxel.grid[self.inside_vertices],
+                                               camera_idx=c_,
+                                               verbose=verbose)  # (N_eye, N_inside_points)
             self._visible_vertices[c_] = visible_vertices
             my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
 
@@ -851,7 +851,7 @@ class World:
             if est_nnz == 0:
                 density = 0.01
                 est_nnz = screen.N_subpixel * density
-            batch_size = int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size))
+            batch_size = int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size) / 10)  * 10
             _chunks = [slice(_i, min(_i + batch_size, full_voxels.size)) for _i in
                        range(0, full_voxels.size, batch_size)]
             my_print(f"Processing full voxels in {len(_chunks)} chunks "
@@ -912,8 +912,8 @@ class World:
                 sample_n = np.random.choice(partial_voxels, size=min(partial_voxels.size, 20), replace=False)
                 sample_gc = np.concatenate([sv.gravity_center for sv in self.voxel.get_sub_voxel(n=sample_n)],
                                            axis=0)  # (sample_size * K, 3)
-                sample_mask = self._find_visible_points(sample_gc, camera_idx=camera_idx,
-                                                        eye_idx=eye_idx, verbose=0).squeeze()
+                sample_mask = self.find_visible_points(sample_gc, camera_idx=camera_idx,
+                                                       eye_idx=eye_idx, verbose=0).squeeze()
                 if np.any(sample_mask):
                     break
 
@@ -935,8 +935,8 @@ class World:
                     sv_gc = np.concatenate(
                         [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice])],
                         axis=0)  # (num_vox * K, 3)
-                    mask = self._find_visible_points(sv_gc, camera_idx=camera_idx,
-                                                     eye_idx=eye_idx, verbose=0).squeeze()
+                    mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
+                                                    eye_idx=eye_idx, verbose=0).squeeze()
                     S = sparse.vstack(self.voxel.sub_voxel_interpolator(n=partial_voxels[_slice], verbose=0)).tocsr()
                     data, row, col = _partial_vox_proc(sv_gc, S, mask)
                     data_buf.append(data)
@@ -967,8 +967,8 @@ class World:
                         sv_gc = np.concatenate(
                             [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice])],
                             axis=0)  # (num_vox * K, 3)
-                        mask = self._find_visible_points(sv_gc, camera_idx=camera_idx,
-                                                         eye_idx=eye_idx, verbose=0).squeeze()
+                        mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
+                                                        eye_idx=eye_idx, verbose=0).squeeze()
                         S = sparse.vstack(
                             self.voxel.sub_voxel_interpolator(n=partial_voxels[_slice], verbose=0)).tocsr()
                         futures.append(executor.submit(_partial_vox_proc, sv_gc, S, mask))

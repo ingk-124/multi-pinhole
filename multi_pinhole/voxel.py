@@ -252,72 +252,62 @@ def interpolate_matrix_from_vertices(res=None):
         return sparse.csr_matrix(matrix)
 
 
-def shifted_torus(r, theta, cx, cy):
-    """Evaluate the radial displacement for a torus shifted in the plane.
 
-    Parameters
-    ----------
-    r : np.ndarray | float
-        Radial coordinate of the original torus cross-section.
-    theta : np.ndarray | float
-        Poloidal angle corresponding to ``r``.
-    cx : float
-        X-component of the torus center offset.
-    cy : float
-        Y-component of the torus center offset.
-
-    Returns
-    -------
-    np.ndarray | float
-        Radial displacement that positions the torus according to the provided
-        offsets.
-    """
-
-    x = r * np.cos(theta)
-    y = r * np.sin(theta)
-    A = 1 - cx ** 2 - cy ** 2
-    B = cx * x + cy * y - 1
-    C = 1 - x ** 2 - y ** 2
-    c = (-B - np.sqrt(B ** 2 - A * C)) / A
-    return c
+def shifted_torus(r, theta, phi, delta):
+    R = r * np.cos(theta) + delta
+    Z = r * np.sin(theta)
+    r_shifted = np.sqrt(R ** 2 + Z ** 2)
+    theta_shifted = np.arctan2(Z, R)
+    return r_shifted, theta_shifted, phi
 
 
-def helical_island(r, theta, phi, a_i, w_i, psi_0=0, m_i=1, n_i=0, alpha=4):
-    """Evaluate a helical magnetic island perturbation field.
+def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
+    r_ = r * np.exp(m_ * theta * 1j)
+    xi = xi_0 * np.exp(-(r / r_1) ** d) * np.exp(n_ * (phi - phi_0) * 1j)
+    r_new_complex = r_ - xi
+    r_new = np.abs(r_new_complex)
+    theta = np.angle(r_new_complex)
+    phi = phi
 
-    Parameters
-    ----------
-    r : np.ndarray | float
-        Normalized minor radius where the field is sampled.
-    theta : np.ndarray | float
-        Poloidal angle coordinate.
-    phi : np.ndarray | float
-        Toroidal angle coordinate.
-    a_i : float
-        Island center radius.
-    w_i : float
-        Island half-width controlling the Gaussian envelope.
-    psi_0 : float, optional
-        Constant phase offset applied to the helical perturbation. Default is ``0``.
-    m_i : int, optional
-        Poloidal mode number. Default is ``1``.
-    n_i : int, optional
-        Toroidal mode number. Default is ``0``.
-    alpha : float, optional
-        Exponent that modulates the radial profile near the plasma edge. Default is ``4``.
+    return r_new, theta, phi
 
-    Returns
-    -------
-    np.ndarray | float
-        Perturbation amplitude evaluated at the provided coordinates.
-    """
 
-    r_i = r - a_i
-    psi = m_i * theta - n_i * phi + psi_0
-    z_1 = np.exp(-((r_i / w_i) ** 2))
-    z_2 = np.cos(psi)
-    z_3 = 1 - (1 - 2 * r) ** alpha
-    return z_1 * z_2 * z_3
+def hollow(r, A, p, q, h, w):
+    f1 = (1 - r ** p) ** q
+    f2 = np.exp(-(r / w) ** 2)
+    return A * (f1 - h * f2)
+
+def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
+    psi = n_/m_ * phi + phi_0
+    dx = r_a * np.cos(psi)
+    dy = r_a * np.sin(psi)
+    _x = r * np.cos(theta)
+    _y = r * np.sin(theta)
+    r_new = np.sqrt((_x - dx) ** 2 + (_y - dy) ** 2)
+    return r_new
+
+
+def emission_profile(r, theta, phi, allow_negative=False, **params):
+    m_ = params.get("m_", 1)
+    n_ = params.get("n_", -1)
+    delta = params.get("delta", 0)
+    phi_0 = params.get("phi_0", 0)
+    d = params.get("d", 2)
+    r_1 = params.get("r_1", 0.5)
+    xi_0 = params.get("xi_0", 0.1)
+    A = params.get("A", 1)
+    p = params.get("p", 2)
+    q = params.get("q", 3)
+    h = params.get("h", 0)
+    w = params.get("w", 0.5)
+
+    r_shifted, theta_shifted, phi_shifted = shifted_torus(r, theta, phi, delta)
+    r_new, theta_new, phi_new = helical_displacement(r_shifted, theta_shifted, phi_shifted,
+                                                     m_=m_, n_=n_, phi_0=phi_0, d=d, r_1=r_1, xi_0=xi_0)
+    y = hollow(r_new, A=A, p=p, q=q, h=h, w=w)
+    if not allow_negative:
+        y = np.maximum(y, 0)
+    return y
 
 
 class Voxel:
@@ -453,10 +443,10 @@ class Voxel:
         self._world = None
         self._coordinate_type = None
         self._coordinate_parameters = {}
-
+        coordinate_parameters = {} if coordinate_parameters is None else coordinate_parameters
         # set attributes
         self.set_coordinate(coordinate_type=coordinate_type, rotation=rotation,
-                            **self.coordinate_parameters)
+                            **coordinate_parameters)
         self.axes = axes
         self.res = sub_voxel_resolution
         self._voxel2vertices = None
