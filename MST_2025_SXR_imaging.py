@@ -9,9 +9,11 @@ from stl import mesh
 from multi_pinhole import *
 from utils import stl_utils
 
+plt.rcParams.update({'font.size': 12})
+
 
 def shifted_torus(r, theta, phi, delta):
-    R = r * np.cos(theta) - delta
+    R = r * np.cos(theta) + delta
     Z = r * np.sin(theta)
     r_shifted = np.sqrt(R ** 2 + Z ** 2)
     theta_shifted = np.arctan2(Z, R)
@@ -33,6 +35,15 @@ def hollow(r, A, p, q, h, w):
     f1 = (1 - r ** p) ** q
     f2 = np.exp(-(r / w) ** 2)
     return A * (f1 - h * f2)
+
+def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
+    psi = n_/m_ * phi + phi_0
+    dx = r_a * np.cos(psi)
+    dy = r_a * np.sin(psi)
+    _x = r * np.cos(theta)
+    _y = r * np.sin(theta)
+    r_new = np.sqrt((_x - dx) ** 2 + (_y - dy) ** 2)
+    return r_new
 
 
 def emission_profile(r, theta, phi, allow_negative=False, **params):
@@ -61,12 +72,13 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
 if __name__ == '__main__':
     file_is_exist = True
     mst_wall = mesh.Mesh.from_file("MST_wall-mesh.stl")
-    # force_rebuild = True
-    force_rebuild = False
+    force_rebuild = True
+    # force_rebuild = False
+    FILE_NAME = "MST_tangential_double-pinhole_wide2.pkl"
     try:
         if force_rebuild:
             raise FileNotFoundError
-        world = World.load_world("MST_tangential_double-pinhole_wide.pkl")
+        world = World.load_world(filename=FILE_NAME)
         print("World loaded from file.")
     except FileNotFoundError:
         file_is_exist = False
@@ -98,7 +110,7 @@ if __name__ == '__main__':
             Eye(eye_type="pinhole", eye_shape="circle", eye_size=1, focal_length=25,
                 position=[4.15, 0])
         ],
-            screen=Screen(screen_shape="rectangle", screen_size=[7.5, 16], pixel_shape=(61, 125),
+            screen=Screen(screen_shape="rectangle", screen_size=[61*0.13, 125*0.13], pixel_shape=(61, 125),
                           subpixel_resolution=5),
             apertures=[Aperture(stl_model=model_aperture, position=[0, 0, 13]),
                        # Aperture(shape="circle", size=1.8, position=[-4.15, 0, 13]).set_model(resolution=40,
@@ -142,8 +154,9 @@ if __name__ == '__main__':
     world.set_projection_matrix(res=5, verbose=1, parallel=12)
     P = world.P_matrix[0]
 
-    if not file_is_exist:
-        world.save_world(filename="MST_tangential_double-pinhole_wide.pkl")
+    if not file_is_exist or force_rebuild:
+        world.save_world(filename=FILE_NAME)
+        print("World saved to file.")
 
     # reset variables
     camera_0 = world.cameras[0]
@@ -188,41 +201,73 @@ if __name__ == '__main__':
     ax.figure.show()
 
     r, theta, phi = r_grid / 500, theta_grid, phi_grid
+    toroidal_axis_UV = [world.trace_line(toroidal_axis,
+                                         camera_idx=0, eye_idx=i, coord_type="UV") for i in range(len(camera_0.eyes))]
+    vis = world.find_visible_points(toroidal_axis, camera_idx=0, verbose=0)
+
+
+    def plot_emission_profile_sample(f):
+        fig, axes = plt.subplots(1, 2, figsize=(8, 3),
+                                 gridspec_kw={'width_ratios': [1, 2], 'wspace': 0.4})
+        axes[0].set_title("Emission Profile at Y=0")
+        cm = axes[0].contourf(voxel.cx_axis, voxel.cz_axis,
+                              f.reshape(voxel.shape)[:, voxel.shape[1] // 2, :].T,
+                              levels=15, cmap="viridis")
+        axes[0].plot(-1500 + 500 * np.cos(np.linspace(0, 2 * np.pi, 100)),
+                     500 * np.sin(np.linspace(0, 2 * np.pi, 100)), "w--", linewidth=2,
+                     label="Chamber wall")
+        axes[0].set_xlim(-2000, -1000)
+        axes[0].set_ylim(*voxel.cz_axis[[0, -1]])
+        axes[0].set_xlabel("X [mm]")
+        axes[0].set_ylabel("Z [mm]")
+        axes[0].set_aspect('equal', adjustable='box')
+        axes[0].legend(loc="upper right")
+        fig.colorbar(cm, label="Emission Intensity", ax=axes[0], fraction=0.046, pad=0.04)
+
+        im = P @ f
+        camera_0.screen.show_image(im, ax=axes[1], pm=False, cmap="viridis", colorbar=False)
+        axes[1].plot(toroidal_axis_UV[0][vis[0], 1], toroidal_axis_UV[0][vis[0], 0], "k--")
+        axes[1].plot(toroidal_axis_UV[1][vis[1], 1], toroidal_axis_UV[1][vis[1], 0], "k--")
+        fig.colorbar(axes[1]._children[0], label="Projected Intensity (a.u.)", ax=axes[1], fraction=0.046, pad=0.04)
+        return fig, axes
+
+
+    # --- Plot sample emission profiles ---
+    # sample 0: axisymmetric
+    sample_params = {"m_": 0, "n_": 0, "delta": 0.,
+                     "d": 3, "r_1": 0.8, "xi_0": 0.,
+                     "A": 1, "p": 2, "q": 17, "h": 0, "w": 0.2}
+    symmetric_f = emission_profile(r, theta, phi, **sample_params)
+    fig, axes = plot_emission_profile_sample(symmetric_f)
+    fig.suptitle("Sample Emission Profile: Axisymmetric")
+    fig.show()
+
+    # sample 1: hollow tube
+    sample_params = {"m_": 1, "n_": 0, "delta": 0.,
+                     "d": 3, "r_1": 0.8, "xi_0": 0.,
+                     "A": 1, "p": 2, "q": 17, "h": 1, "w": 0.2}
+    tube_f = emission_profile(r, theta, phi, **sample_params)
+    fig, axes = plot_emission_profile_sample(tube_f)
+    fig.suptitle("Sample Emission Profile: Hollow Tube")
+    fig.show()
+
+    # sample 2: helical
+    sample_params = {"m_": 1, "n_": 1, "delta": 0.1,
+                     "d": 3, "r_1": 0.8, "xi_0": 0.3,
+                     "A": 1, "p": 2, "q": 9, "h": 0., "w": 0.2}
+    helical_f = emission_profile(r, theta, phi, **sample_params)
+    fig, axes = plot_emission_profile_sample(helical_f)
+    fig.suptitle("Sample Emission Profile: Helical Structure")
+    fig.show()
 
     # --- Plot sample emission profile ---
 
-    sample_params = {"m_": 1, "n_": -1, "delta": 0.1,
-                     "d": 2, "r_1": 0.6, "xi_0": 0.4,
-                     "A": 1, "p": 3, "q": 7, "h": 0, "w": 1.0}
-
-    sample_f = emission_profile(r, theta, phi, **sample_params)
-    plt.contourf(voxel.cx_axis, voxel.cz_axis,
-                 sample_f.reshape(voxel.shape)[:, voxel.shape[1] // 2, :].T,
-                 levels=15, cmap="viridis")
-    plt.plot(-1500 + 500 * np.cos(np.linspace(0, 2 * np.pi, 100)),
-             500 * np.sin(np.linspace(0, 2 * np.pi, 100)), "w--", linewidth=2,
-             label="Chamber wall")
-    plt.xlim(*voxel.cx_axis[[0, -1]])
-    plt.ylim(*voxel.cz_axis[[0, -1]])
-    plt.title("Sample Emission Profile Slice at Y=0")
-    plt.xlabel("X [mm]")
-    plt.ylabel("Z [mm]")
-    plt.gca().set_aspect('equal', adjustable='box')
-    plt.legend()
-    plt.colorbar(label="Emission Intensity")
-    plt.show()
-
-    fig = go.Figure()
-    camera_0.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
-    stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey", linearg={'width': 0.5, 'color': 'black'},
-                              opacity=0.1, show_fig=False)
-    fig.add_trace(go.Volume(x=X, y=Y, z=Z, value=sample_f,
-                            isomin=0.01 * np.max(sample_f), isomax=np.max(sample_f),
-                            colorscale="Jet", opacity=0.5, surface_count=21,
-                            # opacityscale=[[0, 0], [0.1, 0.05], [0.3, 0.1], [0.6, 0.3], [1, 0.6]],
-                            opacityscale="extreme",
-                            caps=dict(x_show=True, y_show=False, z_show=False),  # no caps
-                            ))
+    sample_params = {"m_": 1, "n_": 1, "delta": 0.1,
+                     "d": 3, "r_1": 0.8, "xi_0": 0.3,
+                     "A": 1, "p": 2, "q": 9, "h": 0.8, "w": 0.2}
+    hellical_hollow_f = emission_profile(r, theta, phi, **sample_params)
+    fig, axes = plot_emission_profile_sample(hellical_hollow_f)
+    fig.suptitle("Sample Emission Profile: Helical Hollow Structure")
     fig.show()
 
     fig, axes = plt.subplots(3, 4, figsize=(12, 9))
@@ -239,4 +284,17 @@ if __name__ == '__main__':
                 bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=2))
     fig.colorbar(_._children[0],
                  ax=axes, location='right', fraction=0.02, pad=0.04, label="Projected Intensity (a.u.)")
+    fig.show()
+
+    fig = go.Figure()
+    camera_0.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
+    stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey", linearg={'width': 0.5, 'color': 'black'},
+                              opacity=0.1, show_fig=False)
+    fig.add_trace(go.Volume(x=X, y=Y, z=Z, value=hellical_hollow_f,
+                            isomin=0.01 * np.max(hellical_hollow_f), isomax=np.max(hellical_hollow_f),
+                            colorscale="Jet", opacity=0.5, surface_count=21,
+                            # opacityscale=[[0, 0], [0.1, 0.05], [0.3, 0.1], [0.6, 0.3], [1, 0.6]],
+                            opacityscale="extreme",
+                            caps=dict(x_show=True, y_show=False, z_show=False),  # no caps
+                            ))
     fig.show()
