@@ -273,7 +273,7 @@ def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
 
 
 def hollow(r, A, p, q, h, w):
-    f1 = (1 - r ** p) ** q
+    f1 = np.maximum(1 - r ** p, 0) ** q
     f2 = np.exp(-(r / w) ** 2)
     return A * (f1 - h * f2)
 
@@ -287,7 +287,7 @@ def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
     return r_new
 
 
-def emission_profile(r, theta, phi, allow_negative=False, **params):
+def emission_profile(r, theta, phi, allow_negative=False, flat_inside=False, **params):
     m_ = params.get("m_", 1)
     n_ = params.get("n_", -1)
     delta = params.get("delta", 0)
@@ -305,6 +305,9 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
     r_new, theta_new, phi_new = helical_displacement(r_shifted, theta_shifted, phi_shifted,
                                                      m_=m_, n_=n_, phi_0=phi_0, d=d, r_1=r_1, xi_0=xi_0)
     y = hollow(r_new, A=A, p=p, q=q, h=h, w=w)
+    if flat_inside:
+        r_flat = np.clip(hollow(r_shifted, A=A, p=p, q=q, h=h, w=w), 0, hollow(r_1, A=A, p=p, q=q, h=h, w=w))
+        y = np.maximum(y, r_flat)
     if not allow_negative:
         y = np.maximum(y, 0)
     return y
