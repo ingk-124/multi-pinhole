@@ -1,5 +1,6 @@
 from .core import Rays, Eye, Aperture, Screen, Camera
-from .voxel import Voxel, shifted_torus, helical_displacement, hollow, emission_profile
+from .profiles import emission_profile, helical_axis, helical_displacement, hollow, shifted_torus
+from .voxel import Voxel
 from .world import World
 
 

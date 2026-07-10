@@ -69,6 +69,32 @@ def test_public_imports_are_available():
     assert multi_pinhole.World is World
 
 
+def test_profile_helpers_keep_public_import_paths():
+    import multi_pinhole
+    from multi_pinhole import emission_profile
+    from multi_pinhole.profiles import emission_profile as profile_module_emission_profile
+    from multi_pinhole.voxel import emission_profile as voxel_module_emission_profile
+
+    assert multi_pinhole.emission_profile is profile_module_emission_profile
+    assert emission_profile is profile_module_emission_profile
+    assert voxel_module_emission_profile is profile_module_emission_profile
+
+
+def test_voxel_vertex_coordinate_properties_initialize_vertices_lazily():
+    voxel = Voxel(
+        x_axis=np.array([0.0, 1.0]),
+        y_axis=np.array([2.0, 3.0]),
+        z_axis=np.array([4.0, 5.0]),
+    )
+
+    assert voxel.vx.shape == (1, 8)
+    assert voxel.vy.shape == (1, 8)
+    assert voxel.vz.shape == (1, 8)
+    np.testing.assert_allclose(voxel.vx, voxel.vertices[..., 0], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(voxel.vy, voxel.vertices[..., 1], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(voxel.vz, voxel.vertices[..., 2], rtol=0.0, atol=0.0)
+
+
 def test_screen_print_settings_does_not_require_color_image_attribute():
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
 
