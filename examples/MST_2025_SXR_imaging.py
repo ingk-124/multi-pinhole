@@ -3,6 +3,8 @@ import gc
 
 import numpy as np
 import plotly.graph_objects as go
+from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
 from matplotlib import pyplot as plt
 from stl import mesh
 
@@ -10,6 +12,8 @@ from multi_pinhole import *
 from multi_pinhole.utils import stl_utils
 
 plt.rcParams.update({'font.size': 12})
+plt.rcParams['xtick.direction'] = 'in'
+plt.rcParams['ytick.direction'] = 'in'
 
 
 def shifted_torus(r, theta, phi, delta):
@@ -36,8 +40,9 @@ def hollow(r, A, p, q, h, w):
     f2 = np.exp(-(r / w) ** 2)
     return A * (f1 - h * f2)
 
+
 def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
-    psi = n_/m_ * phi + phi_0
+    psi = n_ / m_ * phi + phi_0
     dx = r_a * np.cos(psi)
     dy = r_a * np.sin(psi)
     _x = r * np.cos(theta)
@@ -72,6 +77,7 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
 if __name__ == '__main__':
     file_is_exist = True
     mst_wall = mesh.Mesh.from_file("MST_wall-mesh.stl")
+    # mst_wall = mesh.Mesh.from_file("MST_wall-mesh_PG=0.stl")
     force_rebuild = True
     # force_rebuild = False
     FILE_NAME = "MST_tangential_double-pinhole_wide2.pkl"
@@ -151,6 +157,12 @@ if __name__ == '__main__':
         del camera_0, voxel
         gc.collect()
 
+        fig = go.Figure()
+        stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey",
+                                  opacity=0.2, show_fig=False, show_edges=False)
+        world.cameras[0].draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
+        fig.show()
+
     world.set_projection_matrix(res=5, verbose=1, parallel=12)
     P = world.P_matrix[0]
 
@@ -161,6 +173,32 @@ if __name__ == '__main__':
     # reset variables
     camera_0 = world.cameras[0]
     voxel = world.voxel
+
+    # plot field of view
+    cmap_bw2 = ListedColormap(["white", "gray"])
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    ax.pcolormesh(voxel.cx_axis, voxel.cy_axis,
+                  world.visible_voxels[0][0].reshape(voxel.shape)[:, :, voxel.shape[2] // 2].T,
+                  cmap=cmap_bw2, rasterized=True)
+    ax.plot(2000 * np.cos(np.linspace(0, 2 * np.pi)),
+            2000 * np.sin(np.linspace(0, 2 * np.pi)), "k-", lw=2)
+    ax.plot(1000 * np.cos(np.linspace(0, 2 * np.pi)),
+            1000 * np.sin(np.linspace(0, 2 * np.pi)), "k-", lw=2)
+    ax.plot(1500 * np.cos(np.linspace(0, 2 * np.pi)),
+            1500 * np.sin(np.linspace(0, 2 * np.pi)), "k--", lw=1.5, label="toroidal axis")
+    ax.plot(np.array([2000, 1000]) * np.cos(np.radians(255 - 90)),
+            np.array([2000, 1000]) * np.sin(np.radians(255 - 90)), "r--", lw=2, label="FIR")
+    ax.set_aspect(1)
+    ax.set_xlabel("x [mm]")
+    ax.set_ylabel("y [mm]")
+    ax.legend(loc="upper right")
+    fov_patch = Patch(facecolor="gray", edgecolor="k", label="Camera FoV")
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(fov_patch)
+    ax.legend(handles=handles, loc="upper right")
+    fig.tight_layout()
+    fig.savefig("FoV.pdf", bbox_inches="tight")
+    plt.show()
 
     R_grid = np.sqrt(voxel.gravity_center[:, 0] ** 2 + voxel.gravity_center[:, 1] ** 2)
     phi_grid = np.arctan2(voxel.gravity_center[:, 1], voxel.gravity_center[:, 0])
@@ -186,6 +224,60 @@ if __name__ == '__main__':
     ax.set_ylabel("u [mm]")
     ax.set_xlim(0, camera_0.screen.screen_size[1])
     ax.set_ylim(camera_0.screen.screen_size[0], 0)
+    fig.show()
+
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    for i, R_ in enumerate([1300, 1400, 1500, 1600, 1700]):
+        toroidal_axis_x = R_ * np.cos(np.linspace(np.pi / 2, 3 / 2 * np.pi, 200))
+        toroidal_axis_y = R_ * np.sin(np.linspace(np.pi / 2, 3 / 2 * np.pi, 200))
+        toroidal_axis_z = np.zeros_like(toroidal_axis_x)
+        toroidal_axis = np.vstack([toroidal_axis_x, toroidal_axis_y, toroidal_axis_z]).T
+        toroidal_axis_UV = world.trace_line(toroidal_axis,
+                                            camera_idx=0, eye_idx=0, coord_type="UV")
+        visible = world.find_visible_points(toroidal_axis, camera_idx=0, eye_idx=0, verbose=0)[0]
+        lines = np.split(toroidal_axis_UV, np.where(np.diff(visible))[0] + 1)
+
+        flag_first = True
+        for line, vis in zip(lines, np.split(visible, np.where(np.diff(visible))[0] + 1)):
+            if len(line) <= 1:
+                continue
+            if vis[0]:
+                if flag_first:
+                    ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
+                            linestyle="-", label=f"R={R_} mm")
+                    flag_first = False
+                else:
+                    ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
+                            linestyle="-")
+            else:
+                ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
+                        linestyle="--")
+
+    X_axis_x = np.linspace(-2000, -1000, 100)
+    X_axis = np.vstack([X_axis_x, np.zeros_like(X_axis_x), np.zeros_like(X_axis_x)]).T
+    X_axis_UV = world.trace_line(X_axis, camera_idx=0, eye_idx=0, coord_type="UV")
+    visible = world.find_visible_points(X_axis, camera_idx=0, eye_idx=0, verbose=0)[0]
+    lines = np.split(X_axis_UV, np.where(np.diff(visible))[0] + 1)
+    for line, vis in zip(lines, np.split(visible, np.where(np.diff(visible))[0] + 1)):
+        if len(line) <= 1:
+            continue
+        if vis[0]:
+            ax.plot(line[:, 1], line[:, 0], 'k-', label="X axis")
+        else:
+            ax.plot(line[:, 1], line[:, 0], 'k--')
+
+    t = np.linspace(0, 2 * np.pi, 50)
+    edge_points = np.vstack([1.8 * np.cos(t) - 4.15, 1.8 * np.sin(t), np.zeros_like(t) + 13]).T
+    edge_points_UV = camera_0.screen.xy2uv(camera_0.eyes[0].calc_rays(edge_points, front_only=False).XY)
+    ax.plot(edge_points_UV[:, 1], edge_points_UV[:, 0], 'k-', lw=2)
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlabel("v [mm]")
+    ax.set_ylabel("u [mm]")
+    ax.set_xlim(0, camera_0.screen.screen_size[1] / 2)
+    ax.set_ylim(camera_0.screen.screen_size[0], 0)
+    ax.legend(loc="lower right", fontsize=8, bbox_to_anchor=(1, 0))
+    fig.tight_layout()
+    fig.savefig("toroidal_axes.pdf", bbox_inches="tight")
     fig.show()
 
     # fig = go.Figure()
