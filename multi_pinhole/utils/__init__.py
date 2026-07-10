@@ -3,7 +3,6 @@
 Import as ``multi_pinhole.utils`` (previously a top-level ``utils`` package
 before the layout reorganization). Submodules:
 
-* :mod:`multi_pinhole.utils.filter` -- X-ray filter transmission lookup/fitting.
 * :mod:`multi_pinhole.utils.my_stdio` -- thin ``tqdm``-aware progress/print wrappers.
 * :mod:`multi_pinhole.utils.stl_utils` -- STL mesh construction, transforms, and
   ray/visibility geometry primitives.
@@ -14,11 +13,10 @@ small normalization helper used throughout :mod:`multi_pinhole.world` and
 """
 
 # utils package
-from . import filter
 from . import my_stdio
 from . import stl_utils
 
-__all__ = ["filter", "my_stdio", "stl_utils", "type_check_and_list"]
+__all__ = ["my_stdio", "stl_utils", "type_check_and_list"]
 
 
 def type_check_and_list(obj, type_, default=None):

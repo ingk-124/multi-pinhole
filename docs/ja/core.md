@@ -39,10 +39,6 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 `Rays` インスタンスは `Eye.calc_rays`（これを生成する側）と `Screen` のラスタライザ（これを消費する側）の間に位置します——純粋なデータであり、生成元の `Eye` や `Camera` への参照は持ちません。
 
-## フィルタ透過率（`Filter` クラスは存在しない）
-
-現在の `multi_pinhole.core` には **`Filter` クラスは存在しません**（本ドキュメントの以前のバージョンには存在すると書かれていましたが、現在のコードベースには存在しません。唯一残っている痕跡は、`core.py` の `if __name__ == "__main__"` デモブロック末尾にある、到達不能な `Filter(...)` 呼び出しです）。【F:multi_pinhole/core.py†L1698-L1727】フィルタ／透過率の計算は、代わりに `multi_pinhole.utils.filter` の単純な関数として提供されています：`get_data`／`get_data_from_CXRO` は CXRO の表形式の透過率データを取得します（ローカルキャッシュ付き）。`characteristic(material, d)` は、フィットされた指数減衰モデルによって任意の厚さ・光子エネルギーでの透過率を評価する呼び出し可能オブジェクトを返します。計算の詳細は `docs/utilities.md` を参照してください。
-
 ## Eye：pinhole 投影
 
 `Eye` は、すでにカメラ座標系で表現された3次元の点を、screen 上の2次元の着地点へ変換します。`Eye.calc_rays` はこれを次の4ステップで行います（ドキュメント文字列自身の要約に対応します）。【F:multi_pinhole/core.py†L289-L333】

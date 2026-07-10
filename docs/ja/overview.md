@@ -90,4 +90,4 @@ subpixel_image = world.projection[0][0] @ emission  # 形状 (N_subpixel,)
 
 ## 拡張性
 
-このプロジェクトは、STL 処理（`multi_pinhole.utils.stl_utils`）、フィルタ透過率の検索（`multi_pinhole.utils.filter`）、進捗表示に対応したロギング（`multi_pinhole.utils.my_stdio`）といったユーティリティ関数を主要クラスの下層に配置しています。そのため、新しい光学要素やカスタムのワークフローは、既存の座標変換・可視性判定・可視化ルーチンを再利用でき、内部のジオメトリ計算を一から実装し直す必要はありません。これらの構成要素の詳細は `docs/utilities.md` を参照してください。
+このプロジェクトは、STL 処理（`multi_pinhole.utils.stl_utils`）、進捗表示に対応したロギング（`multi_pinhole.utils.my_stdio`）といったユーティリティ関数を主要クラスの下層に配置しています。そのため、新しい光学要素やカスタムのワークフローは、既存の座標変換・可視性判定・可視化ルーチンを再利用でき、内部のジオメトリ計算を一から実装し直す必要はありません。これらの構成要素の詳細は `docs/utilities.md` を参照してください。

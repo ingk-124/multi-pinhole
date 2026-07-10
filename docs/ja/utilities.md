@@ -1,6 +1,6 @@
 # ユーティリティ概要
 
-`multi_pinhole.utils` パッケージ（`from multi_pinhole.utils import ...` や `from multi_pinhole.utils import stl_utils` のようにインポートします——無関係なトップレベルの `utils` パッケージとの衝突を避けるために `multi_pinhole` の下に配置されています）は、コアのカメラロジックを煩雑にすることなくシミュレーションを支えるヘルパー関数を集めたものです。中でも計算的にもっとも興味深いのは STL ジオメトリのツールキットで、`multi_pinhole.core` と `multi_pinhole.world` の両方で使われる実際のレイ・メッシュ遮蔽判定アルゴリズムを実装しています。本ドキュメントではまずこのアルゴリズムを詳しく説明し、その後により単純な、コレクション操作・ロギング・フィルタ透過率のヘルパーを説明します。
+`multi_pinhole.utils` パッケージ（`from multi_pinhole.utils import ...` や `from multi_pinhole.utils import stl_utils` のようにインポートします——無関係なトップレベルの `utils` パッケージとの衝突を避けるために `multi_pinhole` の下に配置されています）は、コアのカメラロジックを煩雑にすることなくシミュレーションを支えるヘルパー関数を集めたものです。中でも計算的にもっとも興味深いのは STL ジオメトリのツールキットで、`multi_pinhole.core` と `multi_pinhole.world` の両方で使われる実際のレイ・メッシュ遮蔽判定アルゴリズムを実装しています。本ドキュメントではまずこのアルゴリズムを詳しく説明し、その後により単純な、コレクション操作・ロギングのヘルパーを説明します。
 
 ## コレクションヘルパー
 
@@ -41,12 +41,4 @@
 
 `show_stl`／`plotly_show_stl` はデバッグ用にメッシュを Matplotlib／Plotly で描画し、`torus`／`sphere`／`meshed_surface` は壁のジオメトリとして使える単純なパラメトリックサーフェス生成関数です。
 
-## フィルタ透過率データ
-
-`multi_pinhole.utils.filter` は、X 線フィルタの透過率カーブの取得と補間を自動化します——例えば検出器の手前にある、光子エネルギーごとに異なる減衰を示す薄膜フィルタをモデル化するために使われます。
-
-* `get_data_from_CXRO(material, thickness)` はヘッドレス Chrome ブラウザ（Selenium）を操作して CXRO/Henke の「filter transmission」フォームに指定した材質・厚さを送信し（10〜30000 eV、500点の固定スイープ）、ダウンロードされたデータファイルから `(energy, transmission)` の表を解析します。【F:multi_pinhole/utils/filter.py†L37-L106】これにはネットワーク接続とローカルの Chrome／Selenium 環境が必要で、フォールバックとしてのみ呼び出されます。
-* `get_data(material, thickness)` はまずローカルキャッシュ（`<DATA_PATH>/<material>/<material>_<thickness>.dat`）を確認し、キャッシュミス（または `force=True`）の場合にのみ `get_data_from_CXRO` を呼びます。そのため同じ材質・厚さでの再実行は実質的に無料です。【F:multi_pinhole/utils/filter.py†L109-L142】
-* `characteristic(material, d)` はエネルギーごとの指数減衰モデルを構築します。Beer-Lambert 則に基づく薄膜の透過率は `T(E, d) = exp(c(E)·d)` としてモデル化されるため、`exp_fit` は2つの参照厚さ `d/10` と `d/5`（どちらも `get_data` で取得）から係数 `c(E)` を導出します：`c(E) = ln(T₁(E)/T₂(E)) / (d₁ − d₂)`。【F:multi_pinhole/utils/filter.py†L145-L171】`characteristic` はクロージャ `transparent(d_, E)` を返し、これはフィットされた `c(E)` を任意のエネルギー `E` で線形補間し、任意の厚さ `d_` に対して `exp(c(E)·d_)` を評価します——つまり、2つの参照測定値さえあれば、（一定組成の材質であれば真である）減衰が厚さに対して厳密に指数的であるというモデル上の仮定のもとで、任意の厚さでの透過率を予測できます。【F:multi_pinhole/utils/filter.py†L174-L223】
-
-注：現在の `multi_pinhole.core` には、これらの関数をラップする `Filter` クラスは存在しません（本ドキュメントおよび `docs/core.md` の以前のバージョンにはそのようなクラスがあると書かれていましたが、ドキュメントを修正しないままコードから削除されていました）。フィルタ透過率が必要な呼び出し側は、`multi_pinhole.utils.filter.get_data`／`characteristic` を直接呼び出す必要があります。
+これらのルーチンは `World` と `Camera` が投影中の aperture・壁の遮蔽判定を効率的に行うために利用しています。

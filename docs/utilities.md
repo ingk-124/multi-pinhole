@@ -8,8 +8,7 @@ simulation without cluttering the core camera logic. The most
 computationally interesting piece is the STL geometry toolkit, which
 implements the actual ray/mesh occlusion test used throughout
 `multi_pinhole.core` and `multi_pinhole.world`; this document explains that
-algorithm in detail, plus the simpler collection, logging, and
-filter-transmission helpers.
+algorithm in detail, plus the simpler collection and logging helpers.
 
 ## Collection Helpers
 `multi_pinhole.utils.type_check_and_list` normalizes optional constructor
@@ -120,39 +119,4 @@ why it was superseded beyond the evident performance motivation.
 debugging, and `torus`/`sphere`/`meshed_surface` are simple parametric
 surface generators usable as wall geometry.
 
-## Filter Transmission Data
-
-`multi_pinhole.utils.filter` automates retrieval and interpolation of X-ray
-filter transparency curves — used to model, e.g., a thin foil in front of a
-detector that attenuates different photon energies differently.
-
-* `get_data_from_CXRO(material, thickness)` drives a headless Chrome browser
-  (Selenium) to submit the CXRO/Henke "filter transmission" web form for the
-  given material and thickness over a fixed photon-energy sweep (10-30000
-  eV, 500 points), and parses the resulting `(energy, transmission)` table
-  from the downloaded data file.【F:multi_pinhole/utils/filter.py†L37-L106】
-  This requires network access and a local Chrome/Selenium installation; it
-  is only invoked as a fallback.
-* `get_data(material, thickness)` checks a local cache
-  (`<DATA_PATH>/<material>/<material>_<thickness>.dat`) first and only calls
-  `get_data_from_CXRO` on a cache miss (or when `force=True`), so repeat
-  runs against the same material/thickness are
-  free.【F:multi_pinhole/utils/filter.py†L109-L142】
-* `characteristic(material, d)` builds a per-energy exponential attenuation
-  model. Beer-Lambert-style thin-film transparency is modeled as
-  `T(E, d) = exp(c(E)·d)`, so `exp_fit` derives the coefficient `c(E)` from
-  two reference thicknesses `d/10` and `d/5` (both fetched via `get_data`):
-  `c(E) = ln(T₁(E)/T₂(E)) / (d₁ − d₂)`.【F:multi_pinhole/utils/filter.py†L145-L171】
-  `characteristic` returns a closure `transparent(d_, E)` that
-  linearly interpolates the fitted `c(E)` at arbitrary energies `E` and
-  evaluates `exp(c(E)·d_)` for arbitrary thicknesses `d_` — so the two
-  reference measurements are enough to predict transparency at any
-  thickness, under the modeling assumption that attenuation is exactly
-  exponential in thickness (true for a fixed-composition
-  material).【F:multi_pinhole/utils/filter.py†L174-L223】
-
-Note: there is currently no `Filter` class in `multi_pinhole.core` that
-wraps these functions (an earlier version of this document, and of
-`docs/core.md`, described one, but it was removed from the code without
-being removed from the docs). Callers that need filter transmission today
-should call `multi_pinhole.utils.filter.get_data`/`characteristic` directly.
+These routines are consumed by `World` and `Camera` to test aperture and wall occlusion efficiently during projection.

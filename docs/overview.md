@@ -197,8 +197,7 @@ validated plasma models.
 ## Extensibility
 
 The project layers utility functions (STL processing in
-`multi_pinhole.utils.stl_utils`, filter-transmission lookups in
-`multi_pinhole.utils.filter`, progress-aware logging in
+`multi_pinhole.utils.stl_utils`, progress-aware logging in
 `multi_pinhole.utils.my_stdio`) beneath the main classes, so new optical
 elements or custom workflows can reuse the existing coordinate transforms,
 visibility checks, and visualization routines without re-implementing the

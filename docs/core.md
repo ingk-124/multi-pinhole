@@ -90,20 +90,6 @@ A `Rays` instance sits between `Eye.calc_rays` (which produces it) and the
 `Screen` rasterizers (which consume it) — it is pure data, with no reference
 back to the `Eye` or `Camera` that created it.
 
-## Filter transmission (no `Filter` class)
-
-There is currently **no `Filter` class** in `multi_pinhole.core` (an earlier
-version of this document described one, but it does not exist in the current
-codebase; the only remaining reference is a leftover, unreachable
-`Filter(...)` call in `core.py`'s `if __name__ == "__main__"` demo
-block).【F:multi_pinhole/core.py†L1698-L1727】 Filter/transmission calculations
-are instead exposed as plain functions in `multi_pinhole.utils.filter`:
-`get_data`/`get_data_from_CXRO` retrieve tabulated CXRO transmission curves
-(with local caching), and `characteristic(material, d)` returns a callable
-that evaluates transparency at arbitrary thickness and photon energy via a
-fitted exponential attenuation model. See `docs/utilities.md` for the
-computation details.
-
 ## Eye: the pinhole projection
 
 An `Eye` converts a 3D point already expressed in camera coordinates into a
