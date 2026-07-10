@@ -257,6 +257,58 @@ def test_projection_matrix_is_stable_when_subvoxel_resolution_changes():
     np.testing.assert_allclose(totals, np.full(3, totals[0]), rtol=5e-2, atol=0.0)
 
 
+def test_partial_voxel_inside_mask_scales_integrated_light():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0))
+
+    def make_world():
+        voxel = Voxel(
+            x_axis=np.array([-0.1, 0.1]),
+            y_axis=np.array([-0.1, 0.1]),
+            z_axis=np.array([30.0, 30.2]),
+        )
+        return World(voxel=voxel, cameras=[camera], verbose=0)
+
+    full_world = make_world()
+    full_world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    full_world.set_projection_matrix(res=2, partial_res=2, verbose=0, parallel=1)
+    full_total = float(full_world.P_matrix[0][:, 0].sum())
+
+    half_world = make_world()
+    half_world.set_inside_vertices(lambda x, y, z: x >= 0.0)
+    half_world.set_projection_matrix(res=2, partial_res=2, verbose=0, parallel=1)
+    half_total = float(half_world.P_matrix[0][:, 0].sum())
+
+    assert full_world.visible_voxels[0][0, 0] == 2
+    assert half_world.visible_voxels[0][0, 0] == 1
+    np.testing.assert_allclose(half_total / full_total, 0.5, rtol=2e-2, atol=0.0)
+
+
+def test_partial_res_refines_only_partial_voxel_quadrature():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel(
+        x_axis=np.array([-0.1, 0.1]),
+        y_axis=np.array([-0.1, 0.1]),
+        z_axis=np.array([30.0, 30.2]),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: x >= 0.0)
+
+    totals = []
+    for partial_res in [2, 4]:
+        world.set_projection_matrix(res=1, partial_res=partial_res, verbose=0, parallel=1, force=True)
+        totals.append(float(world.P_matrix[0][:, 0].sum()))
+
+    assert world.projection[0][0].shape == (screen.N_subpixel, voxel.N_voxel)
+    assert world.P_matrix[0].shape == (screen.N_pixel, voxel.N_voxel)
+    np.testing.assert_allclose(totals[1], totals[0], rtol=3e-2, atol=0.0)
+
+
 def test_small_voxel_projection_example_draws_outputs(tmp_path):
     example_path = Path(__file__).resolve().parents[1] / "examples" / "small_voxel_projection.py"
     spec = importlib.util.spec_from_file_location("small_voxel_projection", example_path)

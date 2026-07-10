@@ -182,6 +182,8 @@ class World:
         self.walls = walls
 
         # initialize other attributes
+        self._inside_function = None
+        self._inside_kwargs = {}
         self._inside_vertices = None
         self._visible_vertices = {i: None for i in self._cameras.keys()}
         self._visible_voxels = {i: None for i in self._cameras.keys()}
@@ -339,6 +341,12 @@ class World:
         else:
             return self._inside_vertices
 
+    def _invalidate_visibility_cache(self) -> None:
+        self._visible_vertices = {i: None for i in self._cameras.keys()}
+        self._visible_voxels = {i: None for i in self._cameras.keys()}
+        self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
+        self._P_matrix = {i: None for i in self._cameras.keys()}
+
     # MARK: Setters
     @inside_vertices.setter
     def inside_vertices(self, inside_vertices: np.ndarray):
@@ -361,7 +369,10 @@ class World:
             raise TypeError(f"inside_voxels should be a np.ndarray, not {type(inside_vertices)}")
         if inside_vertices.size != self.voxel.N_grid:
             raise ValueError("inside_voxels should be a np.ndarray with the length of the number of grid points.")
+        self._inside_function = None
+        self._inside_kwargs = {}
         self._inside_vertices = inside_vertices.astype(bool)
+        self._invalidate_visibility_cache()
 
     @cameras.setter
     def cameras(self, cameras: list[Camera] | Camera):
@@ -573,9 +584,18 @@ class World:
             raise ValueError("The return value of the function should be a boolean array with the length of the number "
                              "of grid points.")
         else:
+            self._inside_function = function
+            self._inside_kwargs = dict(kwargs)
             self._inside_vertices = inside_vertices
+            self._invalidate_visibility_cache()
             my_print(f"Inside vertices are updated. (N_inside_vertices: {np.sum(inside_vertices)})",
                      show=self.verbose > 0)
+
+    def _inside_points(self, points: np.ndarray) -> np.ndarray:
+        """Evaluate the stored inside mask at arbitrary points when available."""
+        if self._inside_function is None:
+            return np.ones(points.shape[0], dtype=bool)
+        return self._inside_function(*points.T, **self._inside_kwargs).astype(bool)
 
     def find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
                             verbose: int = 1) -> np.ndarray:
@@ -747,7 +767,8 @@ class World:
         my_print("Finding visible voxels is done.", show=verbose > 0)
 
     def _calc_voxel_image_for_eye(self, camera_idx: int, eye_idx: int, res: int, n_jobs: int = -2,
-                                  verbose: int = None, max_nnz: int = 100_000_000):
+                                  verbose: int = None, max_nnz: int = 100_000_000,
+                                  partial_res: int | tuple[int, int, int] = None):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -768,6 +789,9 @@ class World:
         max_nnz : int, optional
             Upper bound on the allowed number of non-zero elements in the
             projection matrix before chunking is used to control memory usage.
+        partial_res : int or (int, int, int), optional
+            Sub-voxel resolution used only for partially visible voxels.
+            ``None`` reuses ``res``.
 
         Notes
         -----
@@ -781,6 +805,10 @@ class World:
         screen = _camera.screen
         N_vox = self.voxel.N
         self.voxel.res = res
+        full_subvoxel_res = self.voxel.res
+        self.voxel.res = partial_res
+        partial_subvoxel_res = self.voxel.res
+        self.voxel.res = full_subvoxel_res
         self.voxel.set_voxel2vertices(exist_ok=True, n_jobs=n_jobs, verbose=verbose)
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
@@ -816,9 +844,9 @@ class World:
             gc.collect()
             return res.data, res.row, res.col
 
-        def _sub_voxel_interpolator_matrix(voxel_indices):
+        def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res):
             voxel_indices = np.atleast_1d(voxel_indices)
-            interpolator = self.voxel.sub_voxel_interpolator(n=voxel_indices, verbose=0)
+            interpolator = self.voxel.sub_voxel_interpolator(n=voxel_indices, res=subvoxel_res, verbose=0)
             matrix = interpolator.tocsr() if sparse.issparse(interpolator) else sparse.vstack(interpolator).tocsr()
             samples_per_voxel = int(np.prod(self.voxel.res))
             # Convert interpolated sub-voxel samples into an integral over each
@@ -863,7 +891,8 @@ class World:
         else:
             # random sample voxels to estimate n_step
             sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
-            sample_gc = np.concatenate([sv.gravity_center for sv in self.voxel.get_sub_voxel(n=sample_n)],
+            sample_gc = np.concatenate([sv.gravity_center
+                                        for sv in self.voxel.get_sub_voxel(n=sample_n, res=full_subvoxel_res)],
                                        axis=0)  # (sample_size * K, 3)
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
                                               check_visibility=False)  # (N_subpixel, sample_size * K)
@@ -883,9 +912,10 @@ class World:
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
                     sv_gc = np.concatenate(
-                        [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice])],
+                        [sv.gravity_center
+                         for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice], res=full_subvoxel_res)],
                         axis=0)  # (num_vox * K, 3)
-                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice])
+                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -914,9 +944,10 @@ class World:
                     for _slice in my_tqdm(_chunks, desc="Submitting full voxel tasks",
                                           disable=verbose <= 0, leave=False):
                         sv_gc = np.concatenate(
-                            [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice])],
+                            [sv.gravity_center
+                             for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice], res=full_subvoxel_res)],
                             axis=0)  # (num_vox * K, 3)
-                        S = _sub_voxel_interpolator_matrix(full_voxels[_slice])
+                        S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
                         futures.append(executor.submit(_full_vox_proc, sv_gc, S))
 
                 full_res = _process_tasks(futures, desc="Processing full voxels")
@@ -927,18 +958,24 @@ class World:
             my_print("Skipping partial voxels processing.", show=verbose > 0)
         else:
             # random sample voxels to estimate n_step
-            while True:  # to avoid all non-visible samples (just in case)
+            sample_mask = None
+            for _ in range(10):  # avoid all non-visible samples without risking an infinite loop
                 sample_n = np.random.choice(partial_voxels, size=min(partial_voxels.size, 20), replace=False)
-                sample_gc = np.concatenate([sv.gravity_center for sv in self.voxel.get_sub_voxel(n=sample_n)],
+                sample_gc = np.concatenate([sv.gravity_center
+                                            for sv in self.voxel.get_sub_voxel(n=sample_n, res=partial_subvoxel_res)],
                                            axis=0)  # (sample_size * K, 3)
                 sample_mask = self.find_visible_points(sample_gc, camera_idx=camera_idx,
                                                        eye_idx=eye_idx, verbose=0).squeeze()
+                sample_mask = sample_mask & self._inside_points(sample_gc)
                 if np.any(sample_mask):
                     break
 
-            sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
-                                              check_visibility=False)  # (N_subpixel, num_visible)
-            est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
+            if sample_mask is not None and np.any(sample_mask):
+                sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
+                                                  check_visibility=False)  # (N_subpixel, num_visible)
+                est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
+            else:
+                est_nnz = 0
             if est_nnz == 0:
                 density = 0.01
                 est_nnz = screen.N_subpixel * density
@@ -954,11 +991,13 @@ class World:
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing partial voxels", disable=verbose <= 0)):
                     sv_gc = np.concatenate(
-                        [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice])],
+                        [sv.gravity_center
+                         for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice], res=partial_subvoxel_res)],
                         axis=0)  # (num_vox * K, 3)
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
-                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice])
+                    mask = mask & self._inside_points(sv_gc)
+                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
                     data, row, col = _partial_vox_proc(sv_gc, S, mask)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -987,11 +1026,13 @@ class World:
                     for _slice in my_tqdm(_chunks, desc="Submitting partial voxel tasks",
                                           disable=verbose <= 0, leave=False):
                         sv_gc = np.concatenate(
-                            [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice])],
+                            [sv.gravity_center
+                             for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice], res=partial_subvoxel_res)],
                             axis=0)  # (num_vox * K, 3)
                         mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                         eye_idx=eye_idx, verbose=0).squeeze()
-                        S = _sub_voxel_interpolator_matrix(partial_voxels[_slice])
+                        mask = mask & self._inside_points(sv_gc)
+                        S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
                         futures.append(executor.submit(_partial_vox_proc, sv_gc, S, mask))
 
                 partial_res = _process_tasks(futures, desc="Processing partial voxels")
@@ -1041,6 +1082,7 @@ class World:
             raise ValueError("coord_type should be 'XY' or 'UV'")
 
     def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
+                              partial_res: int | tuple[int, int, int] = None,
                               force: bool = False):
         """Populate voxel-to-screen projection matrices for all cameras.
 
@@ -1055,6 +1097,9 @@ class World:
             Degree of parallelism forwarded to
             :meth:`_calc_voxel_image_for_eye`. Negative values are interpreted
             relative to available CPU cores. Defaults to ``-1``.
+        partial_res : int or (int, int, int), optional
+            Sub-voxel resolution used only for partially visible voxels.
+            ``None`` reuses ``res``.
         force : bool, optional
             When ``True`` (default ``False``) forces recalculation even if
             cached matrices already exist with matching shapes.
@@ -1076,7 +1121,8 @@ class World:
                     my_print(f"Calculating projection matrix for camera {_c + 1}/{len(self.cameras)}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
                     self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
-                                                   verbose=verbose, max_nnz=100_000_000)
+                                                   verbose=verbose, max_nnz=100_000_000,
+                                                   partial_res=partial_res)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)}, "
