@@ -4,212 +4,20 @@ import numpy as np
 from scipy import sparse
 from scipy.spatial.transform import Rotation
 
+from .coordinates import (
+    COORDINATE_PARAMETER_KEYS,
+    COORDINATE_TYPES,
+    cartesian_coordinates,
+    coordinate_transform,
+    cylindrical_coordinates,
+    spherical_coordinates,
+    torus_coordinates,
+    torus_inverse_coordinates,
+)
 from .utils.my_stdio import *
 
 # TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
 # TODO: refactor variable names
-
-COORDINATE_TYPES = ["cartesian", "torus", "cylindrical", "spherical"]
-COORDINATE_PARAMETER_KEYS = {"cartesian": [["width", "depth", "height"],
-                                           ["X", "Y", "Z"]],
-                             "torus": [["major_radius", "minor_radius"],
-                                       ["R_0", "a"]],
-                             "cylindrical": [["radius", "height"],
-                                             ["a", "h"]],
-                             "spherical": [["radius"],
-                                           ["a"]]}  # {coordinate_type: [keys, aliases]}
-
-
-def cartesian_coordinates(width: float, depth: float, height: float):
-    """Return the normalized coordinates for cartesian coordinates
-
-    Parameters
-    ----------
-    width: float
-        The length along the x-axis (width)
-    depth: float
-        The length along the y-axis (depth)
-    height: float
-        The length along the z-axis (height)
-
-    Returns
-    -------
-    normalized_coordinates: function
-        The normalized coordinates function
-    """
-    para = np.abs([width / 2, depth / 2, height / 2])
-
-    def normalized_coordinates(points: np.ndarray):
-        """Return the normalized coordinates (cartesian coordinates)
-
-        Parameters
-        ----------
-        points: np.ndarray
-            The points in the world coordinate system (n_points, 3)
-
-        Returns
-        -------
-        normalized_points: np.ndarray
-            The normalized points (n_points, 3)
-
-        Notes
-        -----
-        The points are normalized by the length of the axes as:
-            x = x / X
-            y = y / Y
-            z = z / Z
-        If necessary, check the lengths of the axes.
-        (self.coordinate_parameters["X"], self.coordinate_parameters["Y"], self.coordinate_parameters["Z"])
-        """
-        return points / para[None, :]
-
-    return normalized_coordinates
-
-
-def torus_coordinates(major_radius: float, minor_radius: float):
-    """Return the normalized coordinates for torus coordinates
-
-    Parameters
-    ----------
-    major_radius: float
-        The major radius of the torus
-    minor_radius: float
-        The minor radius of the torus
-
-    Returns
-    -------
-    normalized_coordinates: function
-        The normalized coordinates function
-
-    Notes
-    -----
-    Define torus coordinate as
-        x = (R_0 + a * r * cos(theta)) * cos(phi),
-        y = (R_0 + a * r * cos(theta)) * sin(phi),
-        z = a * r * sin(theta),
-    where a=minor_radius and R_0=major_radius.
-    """
-    R_0 = major_radius
-    a = minor_radius
-
-    def normalized_coordinates(points: np.ndarray):
-        """Return the normalized coordinates (torus coordinates)
-
-        Parameters
-        ----------
-        points: np.ndarray
-            The points in the world coordinate system (n_points, 3)
-
-        Returns
-        -------
-        normalized_points: np.ndarray
-            The normalized points (n_points, 3)
-
-        Notes
-        -----
-        The normalized coordinates are calculated by the following equations:
-            R = sqrt(x^2 + y^2)
-            r = sqrt((R - R_0)^2 + z^2) / a
-            theta = arctan(z / R)
-            phi = arctan(y / x)
-        """
-        R = np.linalg.norm(points[:, :2], axis=1)
-        r = np.linalg.norm([R - R_0, points[:, 2]], axis=0) / a
-        theta = np.arctan2(points[:, 2], R_0 - R)
-        phi = np.arctan2(points[:, 1], points[:, 0])
-        return np.stack([r, theta, phi], axis=1)
-
-    return normalized_coordinates
-
-
-def cylindrical_coordinates(radius: float, height: float):
-    """Return the normalized coordinates for cylindrical coordinates
-
-    Parameters
-    ----------
-    radius: float
-        The radius of the cylinder
-    height: float
-        The height of the cylinder
-
-    Returns
-    -------
-    normalized_coordinates: function
-        The normalized coordinates function
-    """
-    a = radius
-    h = height
-
-    def normalized_coordinates(points: np.ndarray):
-        """Return the normalized coordinates (cylindrical coordinates)
-
-        Parameters
-        ----------
-        points: np.ndarray
-            The points in the world coordinate system (n_points, 3)
-
-        Returns
-        -------
-        normalized_points: np.ndarray
-            The normalized points (n_points, 3)
-
-        Notes
-        -----
-        The normalized coordinates are calculated by the following equations:
-            r = sqrt(x^2 + y^2) / a
-            theta = arctan(y / x)
-            z = z / (h / 2)
-        """
-        r = np.linalg.norm(points[:, :2], axis=1) / a
-        theta = np.arctan2(points[:, 1], points[:, 0])
-        z = points[:, 2] / (h / 2)
-        return np.stack([r, theta, z], axis=1)
-
-    return normalized_coordinates
-
-
-def spherical_coordinates(radius: float):
-    """Return the normalized coordinates for spherical coordinates
-
-    Parameters
-    ----------
-    radius: float
-        The radius of the sphere
-
-    Returns
-    -------
-    normalized_coordinates: function
-        The normalized coordinates function
-    """
-    a = radius
-
-    def normalized_coordinates(points: np.ndarray):
-        """Return the normalized coordinates (spherical coordinates)
-
-        Parameters
-        ----------
-        points: np.ndarray
-            The points in the world coordinate system (n_points, 3)
-
-        Returns
-        -------
-        normalized_points: np.ndarray
-            The normalized points (n_points, 3)
-
-        Notes
-        -----
-        The normalized coordinates are calculated by the following equations:
-            r = sqrt(x^2 + y^2 + z^2) / radius
-            theta = arccos(z / r)
-            phi = arctan(y / x)
-        """
-        r = np.linalg.norm(points, axis=1) / a
-        theta = np.arccos(points[:, 2] / r)
-        phi = np.arctan2(points[:, 1], points[:, 0])
-        return np.stack([r, theta, phi], axis=1)
-
-    return normalized_coordinates
-
 
 def interpolate_matrix_from_vertices(res=None):
     """Build an interpolation matrix from voxel vertex contributions.
@@ -397,12 +205,15 @@ class Voxel:
             z axis for grid
         coordinate_type : str
             The type of coordinates.
-            The supported types are "cartesian", "torus", "cylindrical", and "spherical".
+            The supported types are "cartesian", "torus", "torus_inverse", "cylindrical", and "spherical".
         coordinate_parameters : dict
             The parameters for the coordinates. If it is None, all parameters are set to 1.
 
             - cartesian: {"X": float, "Y": float, "Z": float}
             - torus: {"major_radius": float, "minor_radius": float} or {"R_0": float, "a": float}
+              Standard right-handed convention with theta from outboard to up and phi clockwise from +x.
+            - torus_inverse: {"major_radius": float, "minor_radius": float} or {"R_0": float, "a": float}
+              Inverse-angle right-handed convention with theta from inboard to up and phi counter-clockwise from +x.
             - cylindrical: {"radius": float, "height": float} or {"a": float, "h": float}
             - spherical: {"radius": float} or {"a": float}
         """
@@ -644,7 +455,7 @@ class Voxel:
         ----------
         coordinate_type : str
             The type of coordinates.
-            The supported types are "cartesian", "torus", "cylindrical", and "spherical".
+            The supported types are "cartesian", "torus", "torus_inverse", "cylindrical", and "spherical".
         rotation : Rotation | np.ndarray
             The Rotation object or rotation matrix (3, 3).
         show : bool
@@ -654,6 +465,9 @@ class Voxel:
 
             - cartesian: {"width": float, "depth": float, "height": float} (alias: {"X": float, "Y": float, "Z": float})
             - torus: {"major_radius": float, "minor_radius": float} (alias: {"R_0": float, "a": float})
+              Standard right-handed convention with theta from outboard to up and phi clockwise from +x.
+            - torus_inverse: {"major_radius": float, "minor_radius": float} (alias: {"R_0": float, "a": float})
+              Inverse-angle right-handed convention with theta from inboard to up and phi counter-clockwise from +x.
             - cylindrical: {"radius": float, "height": float} (alias: {"a": float, "h": float})
             - spherical: {"radius": float} (alias: {"a": float})
 
@@ -711,15 +525,21 @@ class Voxel:
     def normalized_coordinates(self, points=None):
         """
 
+        Convert Cartesian points to the configured normalized coordinate system.
+
+        The voxel grid itself remains Cartesian. This helper is intended for
+        evaluating profiles on voxel centers or arbitrary Cartesian points.
+        When ``points`` is ``None``, the voxel gravity centers are used.
+
         Parameters
         ----------
-        points: np.ndarray
-            The points in the world coordinate system (n_points, 3)
+        points : np.ndarray, optional
+            Cartesian points in world coordinates with shape ``(n_points, 3)``.
 
         Returns
         -------
-        normalized_points: np.ndarray
-            The normalized points (n_points, 3)
+        np.ndarray
+            Normalized coordinates with shape ``(n_points, 3)``.
         """
         if points is None:
             return self._normalized_coordinates(self.gravity_center.dot(self._rotation_matrix.T))
@@ -911,8 +731,7 @@ class Voxel:
             # fixed offsets for the 8 vertex corners
             offset = np.array([0, 1, Gz, Gz + 1, Gz * Gy,
                                Gz * Gy + 1, Gz * Gy + Gz, Gz * Gy + Gz + 1])
-            self._vertices_indices = np.array([base[:, None] + offset[None, :]],
-                                              dtype=np.uint64).squeeze()  # (N_voxel,8)
+            self._vertices_indices = (base[:, None] + offset[None, :]).astype(np.uint64)  # (N_voxel, 8)
 
             # Per-voxel cell sizes (N_voxel, 3) without building full 3D stacks
             # Use meshgrid on 1D diffs and 1D centers to create compact 3D then flatten.
@@ -925,15 +744,7 @@ class Voxel:
             # # Volumes (N_voxel,)
             # self._volume = (DX * DY * DZ).reshape(-1)
 
-        # normalized coordinate function refresh (same as update())
-        if self._coordinate_type == "cartesian":
-            self._normalized_coordinates = cartesian_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "torus":
-            self._normalized_coordinates = torus_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "cylindrical":
-            self._normalized_coordinates = cylindrical_coordinates(**self._coordinate_parameters)
-        elif self._coordinate_type == "spherical":
-            self._normalized_coordinates = spherical_coordinates(**self._coordinate_parameters)
+        self._normalized_coordinates = coordinate_transform(self._coordinate_type, self._coordinate_parameters)
 
         return
 
