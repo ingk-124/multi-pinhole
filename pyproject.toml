@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,19 +8,20 @@ dynamic = ["version"]
 description = "Multi-pinhole imaging simulation code"
 readme = "Readme.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "Shinichiro Inagaki", email = "inagaki.shinichiro.7z@kyoto-u.ac.jp" }
 ]
 
 dependencies = [
-    "numpy>=2.3.4",
-    "numpy-stl>=3.2.0",
-    "scipy>=1.16.3",
-    "plotly>=6.4.0",
-    "matplotlib>=3.10.7",
-    "tqdm>=4.67.1",
-    "dill>=0.4.0"
+    "numpy>=1.23",
+    "numpy-stl>=3.0",
+    "scipy>=1.9",
+    "plotly>=5.0",
+    "matplotlib>=3.5",
+    "tqdm>=4.64",
+    "dill>=0.3.6",
+    "numba>=0.58"
 ]
 
 [tool.setuptools.dynamic]
@@ -29,7 +30,7 @@ version = { attr = "multi_pinhole.__about__.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["multi_pinhole", "utils"]
+include = ["multi_pinhole*", "utils*"]
 
 [project.scripts]
 multi-pinhole-sim = "multi_pinhole:cli"

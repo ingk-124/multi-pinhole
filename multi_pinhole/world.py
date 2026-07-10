@@ -11,10 +11,11 @@ from matplotlib import pyplot as plt
 from scipy import sparse
 from stl import mesh
 
-from multi_pinhole import Camera, Voxel, Eye, Screen, Aperture
-from utils import stl_utils
-from utils import type_check_and_list
-from utils.my_stdio import *
+from .core import Aperture, Camera, Eye, Screen
+from .voxel import Voxel
+from .utils import stl_utils
+from .utils import type_check_and_list
+from .utils.my_stdio import *
 
 
 def type_list(obj, type_):

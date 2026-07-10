@@ -99,7 +99,7 @@ class Plasma(Voxel):
 
 
 if __name__ == '__main__':
-    from utils import plot
+    from multi_pinhole.utils import plot
 
     plasma = Plasma().uniform_axes(ranges=[[-750, 750], [-750, 750], [-250, 250]], shape=[40, 40, 20], show_info=True)
     r, theta, phi = torus_coordinates(major_radius=500, minor_radius=250)(plasma.gravity_center).T

@@ -4,7 +4,7 @@ import numpy as np
 from scipy import sparse
 from scipy.spatial.transform import Rotation
 
-from utils.my_stdio import *
+from .utils.my_stdio import *
 
 # TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
 # TODO: refactor variable names
