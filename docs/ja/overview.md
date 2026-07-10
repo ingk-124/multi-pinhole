@@ -72,14 +72,14 @@ subpixel_image = world.projection[0][0] @ emission  # 形状 (N_subpixel,)
 
 ### プロファイル評価のための座標変換
 
-グリッド自体は常にデカルト座標です。`Voxel.normalized_coordinates()` は、デカルト座標の点（デフォルトではボクセルの重心）を任意で別の座標系に**再解釈**します。これは `emission_profile(r, theta, phi, ...)` のようなプロファイル関数を、その装置の対称性に自然な形で記述できるようにするためです。【F:multi_pinhole/voxel.py†L749-L772】`multi_pinhole.coordinates` はそのような変換を5種類実装しており、いずれもデカルト座標 `(x, y, z)` を受け取って正規化座標を返します。
+グリッド自体は常にデカルト座標です。`Voxel.normalized_coordinates()` は、デカルト座標の点（デフォルトではボクセルの重心）を任意で別の座標系に**再解釈**します。これはトーラス座標や円筒座標で書いたプロファイル関数を、その装置の対称性に自然な形で評価できるようにするためです。【F:multi_pinhole/voxel.py†L749-L772】`multi_pinhole.coordinates` はそのような変換を5種類実装しており、いずれもデカルト座標 `(x, y, z)` を受け取って正規化座標を返します。
 
 * **cartesian（デカルト）** —— 各軸を、その設定された半分の範囲でスケーリングするだけです。
 * **cylindrical（円筒）** `(r, theta, z)` —— `r = sqrt(x²+y²)/a`、`theta = atan2(y, x)`、`z` は `h/2` でスケーリングされます。
 * **torus（トーラス）** `(r, theta, phi)` —— 主半径 `R_0`、副半径 `a` のトーラスに対して：`R = sqrt(x²+y²)`、`r = sqrt((R−R_0)² + z²)/a`、`theta = atan2(z, R−R_0)`（poloidal 角、outboard 中間面で `0`）、`phi = atan2(−y, x)`（toroidal 角、`+z` 側から見て時計回りに増加）。`torus_inverse` は同じ構成で両方の角度の符号／基準を反転したもの（`theta` は inboard 中間面基準、`phi` は反時計回り）で、いずれも右手系の `(r, theta, phi)` です。【F:multi_pinhole/coordinates.py†L32-L82】
 * **spherical（球）** `(r, theta, phi)` —— 通常の物理の慣習どおり、`r = |x|/a`、`theta = arccos(z/r)`、`phi = atan2(y, x)`。
 
-`multi_pinhole.voxel` は、これらの座標系の上でトーラス状のテスト用プロファイルを合成するための、組み合わせ可能なヘルパー関数も提供しています——`shifted_torus`（Shafranov シフトのような径方向シフト）、`helical_displacement`（poloidal／toroidal モード数を持つ摂動。磁気アイランドのような構造をモデル化する）、`hollow`（べき乗則の山からガウス型のへこみを引いた、ドーナツ状の径方向プロファイル）、そしてこれら3つを組み合わせる `emission_profile` です。これらは撮像パイプラインのテスト・デモ用に存在するものであり、物理的に検証されたプラズマモデルではありません。
+`multi_pinhole.profiles` は、これらの座標系の上で合成プロファイルを評価するための、組み合わせ可能なヘルパー関数を提供します。shifted polar 座標、kinked/flattened な径方向座標、そして torus 座標の `Voxel` から直接 profile 関数を評価する薄い wrapper を含みます。描画、フィッティング、実験固有の診断は core profile API の外側に置く想定です。
 
 ## 注目すべき機能
 

@@ -41,7 +41,8 @@ frames; `docs/core.md` walks through that chain in detail.
 
 1. **Describe the scene.** Build a `Voxel` grid — either directly from axis
    arrays, or with `Voxel.uniform_voxel(ranges, shape)` for an evenly-spaced
-   Cartesian box. Optionally load STL `walls` that should occlude rays.
+   Cartesian box. Optionally evaluate toroidal or poloidal profiles through
+   `multi_pinhole.profiles`, and load STL `walls` that should occlude rays.
 2. **Configure optics.** Create one or more `Eye` objects (pinhole position,
    focal length, aperture size/shape), pair them with `Aperture` geometry,
    and attach them to a `Screen` (physical size, pixel grid, subpixel
@@ -146,9 +147,9 @@ loops over voxels):【F:multi_pinhole/voxel.py†L924-L992】
 
 The grid itself is always Cartesian; `Voxel.normalized_coordinates()`
 optionally *reinterprets* Cartesian points (by default, the voxel gravity
-centers) in a different coordinate system, purely so that a profile
-function like `emission_profile(r, theta, phi, ...)` can be written in terms
-that are natural for the device's symmetry.【F:multi_pinhole/voxel.py†L749-L772】
+centers) in a different coordinate system, purely so that profile functions
+can be written in terms that are natural for the device's symmetry.
+【F:multi_pinhole/voxel.py†L749-L772】
 `multi_pinhole.coordinates` implements five such transforms (all taking
 Cartesian `(x, y, z)` and returning normalized coordinates):
 
@@ -166,14 +167,13 @@ Cartesian `(x, y, z)` and returning normalized coordinates):
 * **Spherical** `(r, theta, phi)` — the usual physics convention,
   `r = |x|/a`, `theta = arccos(z/r)`, `phi = atan2(y, x)`.
 
-`multi_pinhole.voxel` also ships composable helpers for synthesizing
-toroidal test profiles on top of these coordinates —
-`shifted_torus` (Shafranov-like radial shift), `helical_displacement`
-(poloidal/toroidal mode perturbation, for magnetic-island-like structure),
-`hollow` (a clipped power-law bump minus a Gaussian dip, for donut-shaped
-radial profiles), and `emission_profile`, which composes all three. These
-exist for testing/demonstrating the imaging pipeline, not as physically
-validated plasma models.
+`multi_pinhole.profiles` provides composable helpers for evaluating synthetic
+toroidal and poloidal profiles on top of these coordinates, including shifted
+polar coordinates, kinked/flattened radial coordinates, and thin wrappers that
+evaluate profile functions directly on torus-coordinate `Voxel` instances.
+These helpers are meant for test profiles and reusable profile models; plotting,
+fitting, and experiment-specific diagnostics should live outside the core
+profile API.
 
 ## Notable Capabilities
 

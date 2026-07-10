@@ -8,9 +8,8 @@ needed to build multi-pinhole camera simulations, so most users only need
   :class:`~multi_pinhole.core.Screen`, :class:`~multi_pinhole.core.Camera`, and the
   :class:`~multi_pinhole.rays.Rays` data container returned by ray tracing.
 * Scene modeling: :class:`~multi_pinhole.voxel.Voxel` (the Cartesian voxel grid)
-  together with the emission-profile helpers :func:`~multi_pinhole.voxel.shifted_torus`,
-  :func:`~multi_pinhole.voxel.helical_displacement`, :func:`~multi_pinhole.voxel.hollow`,
-  and :func:`~multi_pinhole.voxel.emission_profile`.
+  and :mod:`multi_pinhole.profiles` helpers for evaluating synthetic toroidal
+  and poloidal profiles.
 * Orchestration: :class:`~multi_pinhole.world.World`, which binds voxels, cameras,
   and optional walls into a simulation-ready scene.
 
@@ -18,7 +17,7 @@ See ``docs/overview.md`` for a walkthrough of the typical workflow.
 """
 
 from .core import Rays, Eye, Aperture, Screen, Camera
-from .voxel import Voxel, shifted_torus, helical_displacement, hollow, emission_profile
+from .voxel import Voxel
 from .world import World
 
 

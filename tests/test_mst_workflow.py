@@ -7,7 +7,8 @@ import numpy as np
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 
-from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World, emission_profile
+from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
+from multi_pinhole import profiles
 from multi_pinhole.utils import stl_utils
 
 
@@ -26,6 +27,21 @@ def make_double_pinhole_aperture(size=0.8, offset=1.2, max_size=6.0, resolution=
         return c1 | c2
 
     return stl_utils.make_2D_surface(points, condition)
+
+
+def make_test_profile(voxel):
+    return profiles.evaluate_poloidal_profile(
+        voxel,
+        profiles.flattening_profile,
+        A=1.0,
+        delta=0.1,
+        alpha=2,
+        beta=3,
+        xi_0=0.1,
+        rho_s=0.5,
+        d=2,
+        w=0.2,
+    )
 
 
 def make_mst_like_world():
@@ -111,8 +127,7 @@ def test_mst_like_double_pinhole_projection_workflow_runs():
     assert projection.nnz > 0
     assert np.all(projection.tocsc().getnnz(axis=0) > 0)
 
-    r, theta, phi = voxel.normalized_coordinates().T
-    f = emission_profile(r, theta, phi)
+    f = make_test_profile(voxel)
     image = projection @ f
 
     assert image.shape == (camera.screen.N_pixel,)
@@ -137,8 +152,7 @@ def test_mst_like_trace_line_and_show_image_paths_are_finite():
     assert uv.shape == (3, 2)
     assert np.isfinite(uv).all()
 
-    r, theta, phi = world.voxel.normalized_coordinates().T
-    image = world.P_matrix[0] @ emission_profile(r, theta, phi)
+    image = world.P_matrix[0] @ make_test_profile(world.voxel)
     fig, ax = plt.subplots()
     try:
         returned_ax = camera.screen.show_image(image, ax=ax, colorbar=False, show=False)
