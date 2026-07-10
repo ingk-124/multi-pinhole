@@ -167,13 +167,6 @@ class Eye:
         wavelength_range : Tuple[float, float], optional (default is (0.01, 0.1))
             wavelength range of the light in nanometers
 
-        Attributes
-        ----------
-        T : numpy.ndarray
-            transportation matrix
-        P : numpy.ndarray
-            projection matrix
-
         Raises
         ------
         ValueError
@@ -182,43 +175,33 @@ class Eye:
             if eye_size is not float when eye_shape is "circle"
             if eye_size is not float or tuple of two floats when eye_shape is "rectangle"
 
+        Notes
+        -----
+        Earlier revisions of this docstring described ``T``/``P`` "transportation"
+        and "projection" matrix attributes; those were never implemented as
+        attributes on this class (position/frame conversion is done directly in
+        :meth:`camera2eye` and :meth:`calc_rays` instead), so they have been
+        removed from this docstring to avoid documenting nonexistent behavior.
+
         Examples
         --------
         >>> pinhole = Eye(eye_type="pinhole", position=(5, 0), focal_length=20, eye_size=0.5, eye_shape="circle")
         >>> pinhole.print_settings()
         eye_type: pinhole
-        position: (5, 0, 0)
+        position: [ 5  0 20]
         focal_length: 20
-        eye_size: 0.5
+        eye_size: [0.5 0.5]
         eye_shape: circle
-        principal_point: (5, 0, 20)
-        >>> pinhole.T
-        array([[ 1.,  0.,  0., -5.],
-                [ 0.,  1.,  0.,  0.],
-                [ 0.,  0.,  1., -20.],
-                [ 0.,  0.,  0.,  1.]])
-        >>> pinhole.P
-        array([[ -20.,    0.,    0.,    0.],
-                [   0.,  -20.,    0.,    0.],
-                [   0.,    0.,    1.,    0.]])
-        >>> lens = Eye(eye_type="concave_lens", position=(5, 0), focal_length=40,
-        >>>             eye_size=(10, 12), eye_shape="rectangle")
+        principal_point: [ 5  0 20]
+        >>> lens = Eye(eye_type="concave_lens", position=(5, 0), focal_length=-40,
+        ...            eye_size=(10, 12), eye_shape="rectangle")
         >>> lens.print_settings()
         eye_type: concave_lens
-        position: (5, 0, 0)
-        focal_length: 40
-        eye_size: (10, 12)
+        position: [5 0 0]
+        focal_length: -40
+        eye_size: [10 12]
         eye_shape: rectangle
-        principal_point: (5, 0, 40)
-        >>> lens.T
-        array([[ 1.,  0.,  0., -5.],
-                [ 0.,  1.,  0.,  0.],
-                [ 0.,  0.,  1.,  -40.],
-                [ 0.,  0.,  0.,  1.]])
-        >>> lens.P
-        array([[ 40.,    0.,    0.,    0.],
-                [   0.,  40.,    0.,    0.],
-                [   0.,    0.,    1.,    0.]])
+        principal_point: [ 5  0 40]
         """
 
         if eye_type == "pinhole" or eye_type == 1:
