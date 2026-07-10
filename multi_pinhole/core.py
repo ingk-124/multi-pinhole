@@ -1,6 +1,24 @@
-# PYTHON CODE
-# this code is based on PEP8 style guide
-# docstrings are based NumPy style
+"""Core optics classes for the multi-pinhole camera simulation.
+
+This module defines the classes that model a single optical channel and the
+camera that groups them together:
+
+* :class:`Eye` -- a pinhole or concave-lens optical element that projects
+  points from the camera coordinate system onto the screen.
+* :class:`Aperture` -- an analytic (circle/ellipse/rectangle) or STL-mesh
+  opening that limits which rays reach an eye.
+* :class:`Screen` -- the detector plane, including pixel/subpixel
+  discretization and the rasterizers that turn ray bundles into sparse
+  image vectors.
+* :class:`Camera` -- ties one or more eyes, apertures, and a screen together,
+  and positions/orients the assembly within the world coordinate system.
+
+See the module-level comments below for the four coordinate systems (world,
+camera, pinhole/eye, and image) that these classes convert between, and
+``docs/core.md`` for a narrative overview.
+
+PEP 8 style guide is followed; docstrings use the NumPy style.
+"""
 from numbers import Number
 from typing import Tuple, List, Union
 
@@ -106,6 +124,15 @@ from .rays import Rays
 # transportation matrix T is used to transport 3D points in the camera coordinate system to 3D points in the coordinate system of the pinhole
 # projection matrix P is used to project 3D points in the coordinate system of the pinhole to 2D points in the screen coordinate system
 class Eye:
+    """A single pinhole or concave-lens optical channel of a camera.
+
+    An ``Eye`` is used to calculate the matrices for transportation and
+    projection: it converts points already expressed in the camera
+    coordinate system into rays landing on the screen (see
+    :meth:`camera2eye` and :meth:`calc_rays`). See ``__init__`` below for the
+    full parameter and attribute reference.
+    """
+
     def __init__(self,
                  position: Vector2DLike,
                  focal_length: float,
@@ -372,6 +399,15 @@ class Eye:
 # if geometry information is given, stl model is generated automatically.
 # if you set stl model, geometry is not used
 class Aperture:
+    """The physical opening that limits light reaching an :class:`Eye`.
+
+    An ``Aperture`` is described either by an analytic shape (circle,
+    ellipse, or rectangle) or by an explicit STL mesh. When an analytic
+    shape is given, the STL geometry used for visibility/occlusion checks is
+    generated on demand via :meth:`set_model`. See ``__init__`` below for the
+    full parameter reference.
+    """
+
     def __init__(self,
                  shape: Literal["circle", "ellipse", "rectangle"] = None,
                  size: Union[Number, Vector2DLike] = None,
@@ -1134,6 +1170,18 @@ class Screen:
 # if the look vector and z-axis of the world coordinate system are parallel:
 #   right is set to be the x-axis
 class Camera:
+    """A multi-pinhole camera combining eyes, apertures, and a screen.
+
+    A ``Camera`` groups one or more :class:`Eye` instances (all sharing the
+    same ``eye_type``), their :class:`Aperture` geometries, and a single
+    :class:`Screen`, and positions/orients the whole assembly within the
+    world coordinate system (see :meth:`world2camera`). Ray bundles are
+    produced per eye via :meth:`calc_image_vec`, which projects world points
+    through the requested eye, applies aperture visibility checks, and
+    rasterizes the result onto the screen. See ``__init__`` below for the
+    full parameter reference.
+    """
+
     def __init__(self,
                  eyes: List[Eye],
                  apertures: Union[Aperture, List[Aperture]],

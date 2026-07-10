@@ -1,3 +1,18 @@
+"""Internal utility helpers for the multi-pinhole simulation package.
+
+Import as ``multi_pinhole.utils`` (previously a top-level ``utils`` package
+before the layout reorganization). Submodules:
+
+* :mod:`multi_pinhole.utils.filter` -- X-ray filter transmission lookup/fitting.
+* :mod:`multi_pinhole.utils.my_stdio` -- thin ``tqdm``-aware progress/print wrappers.
+* :mod:`multi_pinhole.utils.stl_utils` -- STL mesh construction, transforms, and
+  ray/visibility geometry primitives.
+
+This package's own namespace also exposes :func:`type_check_and_list`, a
+small normalization helper used throughout :mod:`multi_pinhole.world` and
+:mod:`multi_pinhole.core` to accept either a single object or a list.
+"""
+
 # utils package
 from . import filter
 from . import my_stdio

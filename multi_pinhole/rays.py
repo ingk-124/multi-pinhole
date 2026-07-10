@@ -39,12 +39,25 @@ class Rays:
 
     # allow indexing and slicing
     def __getitem__(self, key):
-        # for slicing
+        """Rays: Return the subset of rays selected by ``key``.
+
+        Parameters
+        ----------
+        key : int, slice, or array-like
+            Index, slice, or boolean/integer mask applied identically to
+            ``Z``, ``XY``, ``zoom_rate``, and ``front_and_visible``.
+
+        Returns
+        -------
+        Rays
+            New ``Rays`` instance containing only the selected entries.
+        """
         return Rays(Z=self.Z[key],
                     XY=self.XY[key],
                     zoom_rate=self.zoom_rate[key],
                     front_and_visible=self.front_and_visible[key])
 
     def __len__(self):
+        """int: Total number of rays, same as :attr:`n`."""
         return self.n
 

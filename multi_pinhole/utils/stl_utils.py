@@ -1,4 +1,18 @@
-# Numpy-style docstring
+"""STL mesh construction, transforms, and ray/visibility geometry primitives.
+
+Used by :class:`multi_pinhole.core.Aperture` and
+:class:`multi_pinhole.world.World` to build analytic aperture/screen meshes
+(:func:`shape_check`, :func:`generate_aperture_stl`), duplicate/transform
+meshes (:func:`rotate_model`, :func:`copy_model`), and test ray occlusion
+against mesh geometry (:func:`check_intersection`, :func:`check_visible`,
+combining a fast bounding-cone prefilter with Moeller-Trumbore
+ray-triangle intersection). Also includes Matplotlib/Plotly visualization
+helpers (:func:`show_stl`, :func:`plotly_show_stl`) and simple parametric
+surface generators (:func:`torus`, :func:`sphere`, :func:`meshed_surface`).
+
+Numpy-style docstrings are used throughout this module.
+"""
+
 import time
 from numbers import Number
 from typing import Tuple, Callable, Union, List
@@ -129,6 +143,7 @@ def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolut
 
     if shape == 'circle' or shape == 'ellipse':
         def condition(x, y):
+            """bool ndarray: True where ``(x, y)`` lies inside the circle/ellipse."""
             return (x / size[0]) ** 2 + (y / size[1]) ** 2 <= 1
 
         t = np.linspace(0, 2 * np.pi, resolution)
@@ -136,6 +151,7 @@ def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolut
 
     elif shape == 'rectangle':
         def condition(x, y):
+            """bool ndarray: True where ``(x, y)`` lies inside the rectangle."""
             return np.all([np.abs(x) <= size[0] / 2, np.abs(y) <= size[1] / 2], axis=0)
 
         x_edge = np.linspace(-size[0] / 2, size[0] / 2, resolution)
@@ -539,6 +555,18 @@ def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points:
 
 
 def delta_cone_apply_test():
+    """Manual/interactive check of :func:`delta_cone_apply` on one triangle.
+
+    Builds a single test triangle and a 3D grid of sample points, runs
+    :func:`delta_cone_apply`, and opens an interactive Plotly figure showing
+    which points fall inside the triangle's projection cone. Not part of the
+    automated test suite; intended to be run manually for visual debugging.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        The interactive debug figure (also displayed via ``fig.show()``).
+    """
     triangles = np.array([[[-1, -1, 1], [-1, 2, 1], [2, -1, 1]], ], dtype=np.float32)
     start_point = np.array([0, 0, 0], dtype=np.float32)
     points = np.meshgrid(np.linspace(-2, 2, 25),
@@ -642,6 +670,19 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
 
 
 def check_visible_test():
+    """Manual/interactive check of :func:`check_visible` on one triangle.
+
+    Builds a single-triangle mesh and a 3D grid of sample points, compares
+    :func:`check_visible` with and without ``behind_start_included``, and
+    opens an interactive Plotly figure highlighting the occluded points.
+    Not part of the automated test suite; intended to be run manually for
+    visual debugging.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        The interactive debug figure (also displayed via ``fig.show()``).
+    """
     vertices = np.array([[-1, -1, 1], [-1, 2, 1], [2, -1, 1]], dtype=np.float32)
     faces = np.array([[0, 2, 1]])
     model = make_stl(vertices, faces)

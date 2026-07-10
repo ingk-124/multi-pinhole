@@ -1,3 +1,20 @@
+"""Cartesian voxel grid and torus-based synthetic emission-profile helpers.
+
+:class:`Voxel` is the primary Cartesian grid container used throughout the
+package: it stores axis coordinates, derives grid/voxel indexing, vertex
+positions, cell volumes, and sub-voxel interpolation matrices, and exposes
+:meth:`Voxel.normalized_coordinates` to evaluate profiles in a configured
+coordinate system (Cartesian, torus, torus-inverse, cylindrical, or
+spherical -- see :mod:`multi_pinhole.coordinates`) while the grid itself
+remains Cartesian.
+
+The module-level functions (:func:`shifted_torus`, :func:`helical_displacement`,
+:func:`hollow`, :func:`helical_axis`, :func:`emission_profile`) are composable
+building blocks for synthesizing toroidal plasma-like emission profiles
+(e.g. hollow radial profiles perturbed by a helical magnetic island) that are
+convenient for testing and demonstrating the imaging pipeline.
+"""
+
 from itertools import chain
 
 import numpy as np
@@ -62,6 +79,31 @@ def interpolate_matrix_from_vertices(res=None):
 
 
 def shifted_torus(r, theta, phi, delta):
+    """Apply a radial (Shafranov-like) shift to normalized torus coordinates.
+
+    Re-expresses the poloidal cross-section point ``(r, theta)`` after
+    displacing the local Cartesian ``R`` coordinate by ``delta`` in the
+    poloidal plane, then converts back to polar ``(r, theta)``. ``phi`` is
+    passed through unchanged.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Normalized minor-radius coordinate (as returned by
+        :func:`multi_pinhole.coordinates.torus_coordinates`).
+    theta : np.ndarray
+        Poloidal angle in radians.
+    phi : np.ndarray
+        Toroidal angle in radians (returned unchanged).
+    delta : float or np.ndarray
+        Radial shift applied in the poloidal plane, in the same normalized
+        units as ``r``.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        ``(r_shifted, theta_shifted, phi)`` after applying the shift.
+    """
     R = r * np.cos(theta) + delta
     Z = r * np.sin(theta)
     r_shifted = np.sqrt(R ** 2 + Z ** 2)
@@ -70,6 +112,46 @@ def shifted_torus(r, theta, phi, delta):
 
 
 def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
+    """Perturb a poloidal cross-section point by a helical (m, n) displacement.
+
+    The poloidal position is represented as the complex number
+    ``r * exp(i * m_ * theta)`` and displaced by a complex helical
+    perturbation ``xi`` whose amplitude is largest near ``r = r_1`` (envelope
+    ``exp(-(r / r_1) ** d)``) and whose phase rotates with the toroidal angle
+    ``phi`` at rate ``n_`` relative to a reference angle ``phi_0``. This is
+    used to model magnetic-island-like perturbations of an otherwise
+    axisymmetric radial profile.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Normalized minor-radius coordinate.
+    theta : np.ndarray
+        Poloidal angle in radians.
+    phi : np.ndarray
+        Toroidal angle in radians (returned unchanged).
+    m_ : int
+        Poloidal mode number of the perturbation.
+    n_ : int
+        Toroidal mode number of the perturbation.
+    phi_0 : float
+        Reference toroidal angle (phase offset) of the perturbation, in
+        radians.
+    d : float
+        Exponent controlling how quickly the perturbation envelope decays
+        away from ``r_1``.
+    r_1 : float
+        Normalized radius at which the perturbation amplitude is largest.
+    xi_0 : float
+        Peak amplitude of the helical displacement.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        ``(r_new, theta_new, phi)`` after applying the helical displacement,
+        where ``r_new`` and ``theta_new`` are the magnitude and angle of the
+        displaced complex position.
+    """
     r_ = r * np.exp(m_ * theta * 1j)
     xi = xi_0 * np.exp(-(r / r_1) ** d) * np.exp(n_ * (phi - phi_0) * 1j)
     r_new_complex = r_ - xi
@@ -81,11 +163,74 @@ def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
 
 
 def hollow(r, A, p, q, h, w):
+    """Evaluate a radial profile shaped like a clipped power-law bump minus a Gaussian dip.
+
+    The base shape ``A * max(1 - r ** p, 0) ** q`` is a bell-shaped profile
+    that is zero for ``r >= 1``. Subtracting ``A * h * exp(-(r / w) ** 2)``
+    carves a Gaussian dip centered at ``r = 0``, which produces a hollow
+    (donut-like) radial profile when ``h > 0``.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Normalized radius (or perturbed radius from
+        :func:`helical_displacement`).
+    A : float
+        Overall amplitude of the profile.
+    p : float
+        Exponent controlling the steepness of the outer edge.
+    q : float
+        Exponent controlling the flatness of the profile near the peak.
+    h : float
+        Depth of the central dip, as a fraction of ``A``. ``h = 0`` disables
+        the dip (no hollowing).
+    w : float
+        Width of the central Gaussian dip, in the same normalized units as
+        ``r``.
+
+    Returns
+    -------
+    np.ndarray
+        Profile values evaluated at ``r``. May be negative where the dip
+        exceeds the bump; see :func:`emission_profile` for clipping options.
+    """
     f1 = np.maximum(1 - r ** p, 0) ** q
     f2 = np.exp(-(r / w) ** 2)
     return A * (f1 - h * f2)
 
 def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
+    """Return the distance from ``(r, theta)`` to a helically rotating axis.
+
+    The reference axis is offset from the torus axis by a fixed radius
+    ``r_a`` in the poloidal plane, at an angle ``psi = (n_ / m_) * phi +
+    phi_0`` that rotates with the toroidal angle ``phi``. This is useful for
+    evaluating profiles relative to a displaced (e.g. helically perturbed)
+    magnetic axis instead of the geometric torus axis.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Normalized minor-radius coordinate.
+    theta : np.ndarray
+        Poloidal angle in radians.
+    phi : np.ndarray
+        Toroidal angle in radians.
+    m_ : int
+        Poloidal mode number used to set the axis rotation rate.
+    n_ : int
+        Toroidal mode number used to set the axis rotation rate.
+    r_a : float
+        Radial offset of the helical axis from the torus axis, in the same
+        normalized units as ``r``.
+    phi_0 : float
+        Reference toroidal angle (phase offset) of the axis, in radians.
+
+    Returns
+    -------
+    np.ndarray
+        Distance from each ``(r, theta)`` point to the helical axis at the
+        corresponding ``phi``.
+    """
     psi = n_/m_ * phi + phi_0
     dx = r_a * np.cos(psi)
     dy = r_a * np.sin(psi)
@@ -96,6 +241,44 @@ def helical_axis(r, theta, phi, m_, n_, r_a, phi_0):
 
 
 def emission_profile(r, theta, phi, allow_negative=False, flat_inside=False, **params):
+    """Synthesize a toroidal emission profile with an optional helical perturbation.
+
+    Composes :func:`shifted_torus` (Shafranov-like radial shift, ``delta``),
+    :func:`helical_displacement` (poloidal/toroidal mode perturbation), and
+    :func:`hollow` (radial bump/dip shape) to build a synthetic emission
+    profile suitable for testing the imaging pipeline. All shape parameters
+    are supplied through ``**params`` and fall back to the defaults listed
+    below when omitted.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Normalized minor-radius coordinate, e.g. from
+        :meth:`~multi_pinhole.voxel.Voxel.normalized_coordinates` with
+        ``coordinate_type="torus"``.
+    theta : np.ndarray
+        Poloidal angle in radians.
+    phi : np.ndarray
+        Toroidal angle in radians.
+    allow_negative : bool, optional
+        If ``False`` (default), negative profile values are clipped to zero.
+    flat_inside : bool, optional
+        If ``True``, the profile inside the perturbation radius ``r_1`` is
+        floored at the unperturbed (``delta``-shifted only) hollow profile
+        value at ``r_1``, which avoids an artificial dip from the helical
+        displacement inside the island region. Default is ``False``.
+    **params
+        Shape parameters forwarded to the composed helper functions, each
+        with the following default when omitted: ``m_=1``, ``n_=-1``,
+        ``delta=0``, ``phi_0=0``, ``d=2``, ``r_1=0.5``, ``xi_0=0.1``
+        (:func:`shifted_torus` / :func:`helical_displacement`); ``A=1``,
+        ``p=2``, ``q=3``, ``h=0``, ``w=0.5`` (:func:`hollow`).
+
+    Returns
+    -------
+    np.ndarray
+        Emission profile values evaluated at ``(r, theta, phi)``.
+    """
     m_ = params.get("m_", 1)
     n_ = params.get("n_", -1)
     delta = params.get("delta", 0)
@@ -267,13 +450,16 @@ class Voxel:
         self.update()
 
     def __repr__(self):
+        """str: Compact summary of ranges, voxel count/shape, and coordinate settings."""
         return f"Voxel(ranges={self.ranges}, N_voxel={self.N_voxel}, voxel_shape={self.voxel_shape}, " \
                f"coordinate_type={self.coordinate_type}, coordinate_parameters={self.coordinate_parameters})"
 
     def __getitem__(self, key):
+        """np.ndarray: Return ``self.vertices[key]`` (voxel vertex coordinates at ``key``)."""
         return self.vertices[key]
 
     def __eq__(self, other):
+        """bool: True when ``other`` is a Voxel with matching grid shape and axes."""
         if isinstance(other, Voxel) and (other.grid_shape == self.grid_shape):
             return all([np.all(axis1 == axis2) for axis1, axis2 in zip(self.axes, other.axes)])
         else:
@@ -452,10 +638,12 @@ class Voxel:
 
     @property
     def coordinate_type(self):
+        """str: Configured normalized-coordinate system (see :func:`set_coordinate`)."""
         return self._coordinate_type
 
     @property
     def res(self):
+        """tuple[int, int, int]: Current sub-voxel resolution ``(x_res, y_res, z_res)``."""
         return self._res
 
     @res.setter
@@ -555,6 +743,7 @@ class Voxel:
 
     @property
     def coordinate_parameters(self):
+        """dict: Resolved parameters for the configured :attr:`coordinate_type` (see :func:`set_coordinate`)."""
         return self._coordinate_parameters
 
     def normalized_coordinates(self, points=None):
@@ -593,18 +782,28 @@ class Voxel:
 
     @axes.setter
     def axes(self, axes):
+        """Set ``[x_axis, y_axis, z_axis]``, converting each entry to ``np.ndarray``.
+
+        Note
+        ----
+        This only stores the raw axis arrays; call :meth:`update` afterwards
+        to recompute derived grid/voxel indexing and coordinate transforms.
+        """
         self._axes = [np.array(axis) for axis in axes]
 
     @property
     def x_axis(self):
+        """np.ndarray: Grid coordinates along x, shape ``(N_x + 1,)``."""
         return self.axes[0]
 
     @property
     def y_axis(self):
+        """np.ndarray: Grid coordinates along y, shape ``(N_y + 1,)``."""
         return self.axes[1]
 
     @property
     def z_axis(self):
+        """np.ndarray: Grid coordinates along z, shape ``(N_z + 1,)``."""
         return self.axes[2]
 
     @property
@@ -689,6 +888,15 @@ class Voxel:
         return self._voxel2vertices
 
     def set_world(self, world_obj):
+        """Register the owning :class:`~multi_pinhole.world.World` instance.
+
+        Parameters
+        ----------
+        world_obj : multi_pinhole.world.World
+            World that this voxel grid is attached to. Called automatically
+            by :class:`~multi_pinhole.world.World` when it takes ownership of
+            a voxel.
+        """
         self._world = world_obj
 
     @staticmethod
@@ -876,6 +1084,7 @@ class Voxel:
         return 0.5 * (z[:-1] + z[1:])
 
     def show_info(self):
+        """None: Print axis ranges and grid/voxel shape information."""
         print(f"{self.__class__.__name__} info:")
         print(f"ranges: {self.ranges}")
         print(f"x_axis: {self.axes[0]}")

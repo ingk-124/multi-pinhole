@@ -1,3 +1,18 @@
+"""World container that ties voxels, cameras, and walls into a scene.
+
+:class:`World` is the top-level orchestration object: it owns a
+:class:`~multi_pinhole.voxel.Voxel` grid, one or more
+:class:`~multi_pinhole.core.Camera` instances, and optional STL ``walls``
+that occlude visibility. It computes and caches per-camera, per-eye
+visibility masks (:meth:`World.find_visible_voxels`) and sparse
+voxel-to-screen projection matrices (:meth:`World.set_projection_matrix`),
+and provides persistence (:meth:`World.save_world` /
+:meth:`World.load_world`) and 3D visualization
+(:meth:`World.draw_camera_orientation`) helpers.
+
+See ``docs/world.md`` for a narrative overview of the module.
+"""
+
 import gc
 import os
 import time
@@ -20,6 +35,13 @@ from .utils.my_stdio import *
 
 def type_list(obj, type_):
     """Normalize an input object into a list of a specific type.
+
+    Note
+    ----
+    This helper is not currently called anywhere in this module; setters on
+    :class:`World` (cameras, walls, ``inside_vertices``-related indices) use
+    :func:`multi_pinhole.utils.type_check_and_list` instead, which offers the
+    same normalization plus an optional ``default`` fallback for ``None``.
 
     Parameters
     ----------
@@ -127,6 +149,16 @@ def _slice_blocks(
 
 
 class World:
+    """Scene container binding a voxel grid, cameras, and optional walls.
+
+    ``World`` maintains the bookkeeping needed to simulate imaging of a
+    voxelized volume by one or more multi-pinhole cameras: it normalizes
+    camera/wall inputs, tracks which voxel vertices are "inside" the modeled
+    volume, caches per-camera visibility results, and builds the sparse
+    projection matrices used to render synthetic images. See ``__init__``
+    below for the full parameter reference.
+    """
+
     def __init__(self,
                  voxel: Voxel = None,
                  cameras: list[Camera] | Camera = None,
@@ -342,6 +374,13 @@ class World:
             return self._inside_vertices
 
     def _invalidate_visibility_cache(self) -> None:
+        """Clear cached visibility and projection data for every camera.
+
+        Resets :attr:`_visible_vertices`, :attr:`_visible_voxels`,
+        :attr:`_projection`, and :attr:`_P_matrix` to ``None`` placeholders so
+        that the next visibility/projection query recomputes from scratch.
+        Called whenever the inside-vertex mask changes.
+        """
         self._visible_vertices = {i: None for i in self._cameras.keys()}
         self._visible_voxels = {i: None for i in self._cameras.keys()}
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
@@ -824,6 +863,19 @@ class World:
             return
 
         def _full_vox_proc(sv_gc, S):
+            """Project sub-voxel centers for fully-visible voxels and integrate to voxel resolution.
+
+            ``sv_gc`` are sub-voxel gravity centers and ``S`` is the matching
+            sub-voxel interpolator/integration matrix from
+            :func:`_sub_voxel_interpolator_matrix`; visibility checks are
+            skipped since these voxels are already known to be fully visible.
+
+            Returns
+            -------
+            tuple[np.ndarray, np.ndarray, np.ndarray]
+                COO ``(data, row, col)`` triplet of the resulting
+                ``(N_subpixel, N_vox)`` sparse contribution.
+            """
             I = _camera.calc_image_vec(eye_idx, points=sv_gc, verbose=0,
                                        check_visibility=False)  # (N_subpixel, num_vox * K)
             res = (I @ S).tocoo()  # (N_subpixel, N_vox)
@@ -832,6 +884,18 @@ class World:
             return res.data, res.row, res.col
 
         def _partial_vox_proc(sv_gc, S, mask):
+            """Project only the visible sub-voxel centers for partially-visible voxels.
+
+            Same as :func:`_full_vox_proc`, but restricted to the sub-voxel
+            samples where ``mask`` (per-sample visibility) is ``True``; ``S``
+            is sliced accordingly before integration.
+
+            Returns
+            -------
+            tuple[np.ndarray, np.ndarray, np.ndarray]
+                COO ``(data, row, col)`` triplet, empty when ``mask`` has no
+                ``True`` entries.
+            """
             if not np.any(mask):
                 return np.array([]), np.array([], dtype=np.int32), np.array([], dtype=np.int32)
             I = _camera.calc_image_vec(eye_idx, points=sv_gc[mask], verbose=0,
@@ -843,6 +907,28 @@ class World:
             return res.data, res.row, res.col
 
         def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res):
+            """Build the sub-voxel-to-image integration matrix for the given voxels.
+
+            Combines the vertex-to-sub-voxel interpolation weights for
+            ``voxel_indices`` at resolution ``subvoxel_res`` with a per-row
+            scaling by ``voxel.volume / samples_per_voxel`` so that summing
+            over a voxel's sub-voxel rows approximates an integral over the
+            voxel (independent of ``subvoxel_res``) rather than scaling with
+            the sample count.
+
+            Parameters
+            ----------
+            voxel_indices : int or array-like of int
+                Voxel numbers to build sub-voxel samples for.
+            subvoxel_res : int or (int, int, int)
+                Sub-voxel resolution; temporarily assigned to ``self.voxel.res``.
+
+            Returns
+            -------
+            scipy.sparse.csr_matrix
+                Matrix mapping voxel values to weighted sub-voxel samples,
+                shape ``(len(voxel_indices) * samples_per_voxel, N_voxel)``.
+            """
             voxel_indices = np.atleast_1d(voxel_indices)
             self.voxel.res = subvoxel_res
             sub_voxel_matrix = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
@@ -863,6 +949,27 @@ class World:
             return sparse.diags(row_weights, format="csr") @ matrix
 
         def _process_tasks(futures, desc):
+            """Collect completed executor futures into one sparse ``(N_subpixel, N_vox)`` matrix.
+
+            Drains ``futures`` as they complete (via
+            ``concurrent.futures.as_completed``), periodically consolidating
+            buffered COO triplets into ``res`` to bound peak memory usage,
+            and shows a progress bar labeled ``desc`` when verbose.
+
+            Parameters
+            ----------
+            futures : list[concurrent.futures.Future]
+                Futures each resolving to a ``(data, row, col)`` COO triplet,
+                e.g. as produced by :func:`_full_vox_proc` or
+                :func:`_partial_vox_proc`.
+            desc : str
+                Progress-bar label.
+
+            Returns
+            -------
+            scipy.sparse.coo_matrix
+                Sum of all future results, shape ``(screen.N_subpixel, N_vox)``.
+            """
             res = sparse.coo_matrix((screen.N_subpixel, N_vox))
             data_buf, row_buf, col_buf = [], [], []
             with tqdm(desc=desc, total=len(futures), disable=verbose <= 0) as pbar:

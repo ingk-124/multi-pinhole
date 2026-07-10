@@ -1,3 +1,12 @@
+"""Fourier-Bessel basis functions for expanding fields on a torus cross-section.
+
+:func:`torus_fourier_bessel` builds a single Fourier-Bessel mode
+``f_{n,m,k}(r, theta, phi)`` (radial Bessel function times poloidal/toroidal
+Fourier factors) evaluated on normalized torus coordinates.
+:func:`basis_params` enumerates ``(k, m, n)`` index triples for building a
+truncated basis set.
+"""
+
 import itertools
 
 import numpy as np
