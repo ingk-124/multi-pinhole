@@ -1693,4 +1693,3 @@ if __name__ == '__main__':
     # test3.show_stl(ax, aper.stl_model, azim=0, elev=90)
     # ax.scatter(aper.stl_model.x, aper.stl_model.y, aper.stl_model.z, c="r", marker="o", s=10)
     # plt.show()
-    f = Filter(material="Al", thickness=1, photon_energy_range=[10, 1e4])

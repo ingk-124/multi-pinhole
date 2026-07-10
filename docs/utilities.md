@@ -1,6 +1,6 @@
 # Utilities Overview
 
-The `utils` package collects helper functions that support the optical simulation without cluttering the core camera logic. These utilities cover input validation, progress-aware logging, STL mesh processing, and filter-transmission lookup.
+The `utils` package collects helper functions that support the optical simulation without cluttering the core camera logic. These utilities cover input validation, progress-aware logging, and STL mesh processing.
 
 ## Collection Helpers
 `utils.type_check_and_list` normalizes optional constructor arguments into lists while validating element types. It also accepts a default fallback when `None` is provided, allowing world and camera constructors to treat single objects and lists uniformly.【F:utils/__init__.py†L1-L38】
@@ -16,6 +16,3 @@ The `utils` package collects helper functions that support the optical simulatio
 - Visibility primitives such as `check_intersection` and `check_visible`, combining fast cone tests with Möller–Trumbore ray-triangle intersection to determine whether rays between an eye and grid points are occluded by geometry.【F:utils/stl_utils.py†L218-L643】
 
 These routines are consumed by `World` and `Camera` to test aperture and wall occlusion efficiently during projection.
-
-## Filter Transmission Data
-`utils.filter` automates retrieval and interpolation of X-ray filter transparency curves. `get_data_from_CXRO` drives the CXRO website via Selenium to download tabulated transmission data, while `get_data` caches the results locally for repeat runs. The `exp_fit` helper fits an exponential attenuation law, and `characteristic` returns a callable that predicts transparency across energies for arbitrary film thicknesses using interpolated coefficients.【F:utils/filter.py†L1-L135】 This data feeds into `Filter.get_data` within the core module to model spectral filtering accurately.

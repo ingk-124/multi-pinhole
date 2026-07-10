@@ -1,9 +1,8 @@
 # utils package
-from . import filter
 from . import my_stdio
 from . import stl_utils
 
-__all__ = ["filter", "my_stdio", "stl_utils", "type_check_and_list"]
+__all__ = ["my_stdio", "stl_utils", "type_check_and_list"]
 
 
 def type_check_and_list(obj, type_, default=None):
