@@ -574,7 +574,8 @@ class World:
                              "of grid points.")
         else:
             self._inside_vertices = inside_vertices
-            print(f"Inside vertices are updated. (N_inside_vertices: {np.sum(inside_vertices)})")
+            my_print(f"Inside vertices are updated. (N_inside_vertices: {np.sum(inside_vertices)})",
+                     show=self.verbose > 0)
 
     def find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
                             verbose: int = 1) -> np.ndarray:
@@ -629,17 +630,22 @@ class World:
             my_print("-" * 15, show=verbose > 0)
             # get conditions for each aperture and wall
             my_print(f"--- checking for apertures ---", show=verbose > 0)
+            aperture_visible = []
             for a, aperture in enumerate(_camera.apertures):
                 if aperture.stl_model is None:
                     aperture.set_model()
-                visible[i] *= stl_utils.check_visible(mesh_obj=aperture.stl_model,
-                                                      start=_eye.position,
-                                                      grid_points=camera_points,
-                                                      verbose=verbose,
-                                                      behind_start_included=True)  # (N_points, )
+                aperture_visible.append(stl_utils.check_visible(mesh_obj=aperture.stl_model,
+                                                                start=_eye.position,
+                                                                grid_points=camera_points,
+                                                                verbose=verbose,
+                                                                behind_start_included=True))  # (N_points, )
                 my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
                 my_print("-" * 15, show=verbose > 0)
                 time.sleep(0.1)
+            if aperture_visible:
+                # Apertures are blocking surfaces, matching Camera.calc_image_vec():
+                # intersecting any aperture makes the ray invisible.
+                visible[i] &= np.all(aperture_visible, axis=0)
 
             my_print("--- checking for walls ---", show=verbose > 0)
             for w, wall_in_camera in enumerate(walls_in_camera):
@@ -782,6 +788,8 @@ class World:
         vis_flag = self.visible_voxels[camera_idx][eye_idx]  # (N_vox, )
         partial_voxels = np.flatnonzero(vis_flag == 1)
         full_voxels = np.flatnonzero(vis_flag == 2)
+        full_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
+        partial_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
 
         # No visible voxels
         if partial_voxels.size + full_voxels.size == 0:
@@ -799,7 +807,7 @@ class World:
 
         def _partial_vox_proc(sv_gc, S, mask):
             if not np.any(mask):
-                return sparse.csr_matrix((screen.N_subpixel, N_vox))
+                return np.array([]), np.array([], dtype=np.int32), np.array([], dtype=np.int32)
             I = _camera.calc_image_vec(eye_idx, points=sv_gc[mask], verbose=0,
                                        check_visibility=False)  # (N_subpixel, num_visible*K)
             S = S[mask, :]
@@ -807,6 +815,17 @@ class World:
             del I, sv_gc, mask
             gc.collect()
             return res.data, res.row, res.col
+
+        def _sub_voxel_interpolator_matrix(voxel_indices):
+            voxel_indices = np.atleast_1d(voxel_indices)
+            interpolator = self.voxel.sub_voxel_interpolator(n=voxel_indices, verbose=0)
+            matrix = interpolator.tocsr() if sparse.issparse(interpolator) else sparse.vstack(interpolator).tocsr()
+            samples_per_voxel = int(np.prod(self.voxel.res))
+            # Convert interpolated sub-voxel samples into an integral over each
+            # selected voxel, so changing res refines the quadrature instead of
+            # multiplying the total signal by the number of samples.
+            row_weights = np.repeat(self.voxel.volume[voxel_indices] / samples_per_voxel, samples_per_voxel)
+            return sparse.diags(row_weights, format="csr") @ matrix
 
         def _process_tasks(futures, desc):
             res = sparse.coo_matrix((screen.N_subpixel, N_vox))
@@ -852,7 +871,7 @@ class World:
             if est_nnz == 0:
                 density = 0.01
                 est_nnz = screen.N_subpixel * density
-            batch_size = int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size) / 10)  * 10
+            batch_size = max(1, int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size)))
             _chunks = [slice(_i, min(_i + batch_size, full_voxels.size)) for _i in
                        range(0, full_voxels.size, batch_size)]
             my_print(f"Processing full voxels in {len(_chunks)} chunks "
@@ -861,14 +880,12 @@ class World:
 
             if n_jobs == 1:
                 # initialize result matrix for full voxels
-                full_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
-
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
                     sv_gc = np.concatenate(
                         [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice])],
                         axis=0)  # (num_vox * K, 3)
-                    S = sparse.vstack(self.voxel.sub_voxel_interpolator(n=full_voxels[_slice], verbose=0)).tocsr()
+                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice])
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -883,8 +900,9 @@ class World:
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
                 # summarize remaining buffer
-                if data_buf.size > 0:
-                    sum_of_buf = sparse.coo_matrix((data_buf, (row_buf, col_buf)),
+                if data_buf:
+                    sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
+                                                    (np.concatenate(row_buf), np.concatenate(col_buf))),
                                                    shape=(screen.N_subpixel, N_vox))
                     full_res = full_res + sum_of_buf
                     del data_buf, row_buf, col_buf
@@ -898,7 +916,7 @@ class World:
                         sv_gc = np.concatenate(
                             [sv.gravity_center for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice])],
                             axis=0)  # (num_vox * K, 3)
-                        S = sparse.vstack(self.voxel.sub_voxel_interpolator(n=full_voxels[_slice], verbose=0)).tocsr()
+                        S = _sub_voxel_interpolator_matrix(full_voxels[_slice])
                         futures.append(executor.submit(_full_vox_proc, sv_gc, S))
 
                 full_res = _process_tasks(futures, desc="Processing full voxels")
@@ -921,7 +939,10 @@ class World:
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
                                               check_visibility=False)  # (N_subpixel, num_visible)
             est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
-            batch_size = int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, partial_voxels.size))
+            if est_nnz == 0:
+                density = 0.01
+                est_nnz = screen.N_subpixel * density
+            batch_size = max(1, int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, partial_voxels.size)))
             _chunks = [slice(_i, min(_i + batch_size, partial_voxels.size)) for _i in
                        range(0, partial_voxels.size, batch_size)]
             my_print(f"Processing partial voxels in {len(_chunks)} chunks "
@@ -930,7 +951,6 @@ class World:
 
             if n_jobs == 1:
                 # initialize result matrix for partial voxels
-                partial_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing partial voxels", disable=verbose <= 0)):
                     sv_gc = np.concatenate(
@@ -938,7 +958,7 @@ class World:
                         axis=0)  # (num_vox * K, 3)
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
-                    S = sparse.vstack(self.voxel.sub_voxel_interpolator(n=partial_voxels[_slice], verbose=0)).tocsr()
+                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice])
                     data, row, col = _partial_vox_proc(sv_gc, S, mask)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -953,8 +973,9 @@ class World:
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
                 # summarize remaining buffer
-                if data_buf.size > 0:
-                    sum_of_buf = sparse.coo_matrix((data_buf, (row_buf, col_buf)),
+                if data_buf:
+                    sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
+                                                    (np.concatenate(row_buf), np.concatenate(col_buf))),
                                                    shape=(screen.N_subpixel, N_vox))
                     partial_res = partial_res + sum_of_buf
                     del data_buf, row_buf, col_buf
@@ -970,8 +991,7 @@ class World:
                             axis=0)  # (num_vox * K, 3)
                         mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                         eye_idx=eye_idx, verbose=0).squeeze()
-                        S = sparse.vstack(
-                            self.voxel.sub_voxel_interpolator(n=partial_voxels[_slice], verbose=0)).tocsr()
+                        S = _sub_voxel_interpolator_matrix(partial_voxels[_slice])
                         futures.append(executor.submit(_partial_vox_proc, sv_gc, S, mask))
 
                 partial_res = _process_tasks(futures, desc="Processing partial voxels")

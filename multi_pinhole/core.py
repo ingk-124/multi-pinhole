@@ -904,13 +904,17 @@ class Screen:
 
         valid = np.nonzero(inside_screen)[0]
 
-        i_min = np.clip(np.floor(u_low / du - 0.5), 0, U_sub - 1).astype(np.int32)
-        i_max = np.clip(np.ceil(u_high / du - 0.5), 0, U_sub - 1).astype(np.int32)
-        j_min = np.clip(np.floor(v_low / dv - 0.5), 0, V_sub - 1).astype(np.int32)
-        j_max = np.clip(np.ceil(v_high / dv - 0.5), 0, V_sub - 1).astype(np.int32)
+        i_min = np.zeros(rays.n, dtype=np.int32)
+        i_max = np.zeros(rays.n, dtype=np.int32)
+        j_min = np.zeros(rays.n, dtype=np.int32)
+        j_max = np.zeros(rays.n, dtype=np.int32)
+        i_min[valid] = np.clip(np.floor(u_low[valid] / du - 0.5), 0, U_sub - 1).astype(np.int32)
+        i_max[valid] = np.clip(np.ceil(u_high[valid] / du - 0.5), 0, U_sub - 1).astype(np.int32)
+        j_min[valid] = np.clip(np.floor(v_low[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
+        j_max[valid] = np.clip(np.ceil(v_high[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
 
         if use_ellipse:
-            @njit(cache=True)
+            @njit(cache=False)
             def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
                 u_n_sq = ((u_ax - uc) / au) ** 2  # (I_r,)
                 v_n_sq = ((v_ax - vc) / av) ** 2  # (J_r,)
@@ -921,7 +925,7 @@ class Screen:
                 return ((i_min_r + ii) * _V_sub + (j_min_r + jj)).astype(np.int32)
 
         else:
-            @njit(cache=True)
+            @njit(cache=False)
             def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
                 u_n = np.abs((u_ax - uc) / au)  # (I_r,)
                 v_n = np.abs((v_ax - vc) / av)  # (J_r,)
@@ -941,11 +945,17 @@ class Screen:
                    my_tqdm(valid, desc="ray to image", disable=verbose <= 0)]
         pix_sizes = [p.size for p in out_pix]
         pixel_indices = np.concatenate(out_pix)
-        indptr = np.zeros(rays.n + 1, dtype=np.int32)
-        indptr[valid + 1] = np.cumsum(pix_sizes)
-        last_filled = np.nonzero(indptr)[0][-1]
-        indptr[last_filled + 1:] = indptr[last_filled]
-        etendue_per_ray = (1.0 / (rays.zoom_rate * (rays.Z ** 2))).astype(np.float32)
+        counts = np.zeros(rays.n, dtype=np.int32)
+        counts[valid] = pix_sizes
+        indptr = np.concatenate([np.array([0], dtype=np.int32), np.cumsum(counts, dtype=np.int32)])
+        # The spot area grows as zoom_rate**2 on the detector.  Dividing by
+        # that factor keeps the integrated signal equal to the point-source
+        # solid angle of the pinhole.  The extra ray_cosine converts the
+        # subpixel cos**4 factor to the source-side cos**3 solid-angle factor.
+        ray_offset = rays.XY - eye.position[None, :2]
+        ray_tangent = np.linalg.norm(ray_offset, axis=-1) / eye.focal_length
+        ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
+        etendue_per_ray = (1.0 / ((rays.zoom_rate ** 2) * (rays.Z ** 2) * ray_cosine)).astype(np.float32)
         etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
         data = etendue_per_subpixel[pixel_indices]
         mat = sparse.csc_matrix((data, pixel_indices, indptr), shape=(self.N_subpixel, rays.n)).tocsr()
@@ -1108,7 +1118,6 @@ class Screen:
         print("screen_shape: {}".format(self._screen_shape))
         print("pixel_shape: {}".format(self._pixel_shape))
         print("subpixel_resolution: {}".format(self._subpixel_resolution))
-        print("color_image: {}".format(self._color_image))
         print("pixel_size: {}".format(self._pixel_size))
         print("subpixel_size: {}".format(self._subpixel_size))
 
@@ -1168,15 +1177,11 @@ class Camera:
         self._screen = screen
         self._camera_position = np.array(camera_position)
         self._rotation_matrix = np.eye(3) if rotation_matrix is None else rotation_matrix
-        if self._screen.subpixel_size.max() < np.min([eye.eye_size for eye in self._eyes]):
-            print("ok")
-        else:
+        if self._screen.subpixel_size.max() >= np.min([eye.eye_size for eye in self._eyes]):
             # warning
             raise ValueError(f"subpixel size of the screen must be smaller than eye size of all eyes "
                              f"(subpixel_size: {self._screen.subpixel_size}, "
                              f"smallest eye size: {np.min([eye.eye_size for eye in self._eyes])})")
-
-        print("Camera is created.")
 
     def __repr__(self):
         """str: Render a concise textual summary of the camera configuration."""
@@ -1401,11 +1406,13 @@ class Camera:
         eye = self._eyes[eye_num]
         points_in_camera = self.world2camera(points)
         if check_visibility:
+            # Apertures are treated as blocking surfaces: a ray is usable only
+            # when it avoids every aperture mesh.
             visible_list = [stl_utils.check_visible(mesh_obj=aperture.stl_model,
                                                     start=eye.position,
                                                     grid_points=points_in_camera,
                                                     behind_start_included=True) for aperture in self._apertures]
-            visible = np.any(visible_list, axis=0)
+            visible = np.all(visible_list, axis=0) if visible_list else np.ones(points_in_camera.shape[0], dtype=bool)
             rays = eye.calc_rays(points_in_camera, visible)
         else:
             rays = eye.calc_rays(points_in_camera)

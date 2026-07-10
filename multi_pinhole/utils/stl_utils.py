@@ -973,7 +973,6 @@ def show_stl(model, ax=None, fsz=10, elev=30, azim=30, facecolors="lightblue", e
 
     ls = LightSource(azdeg=225.0, altdeg=45.0)
     if full_model:
-        print("full_model")
         vectors = model.vectors
     else:
         # Get the vectors that are inside the limits
