@@ -7,7 +7,7 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
-from utils.my_stdio import my_print
+from .my_stdio import my_print
 
 ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' \
      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.1 Safari/605.1.15'

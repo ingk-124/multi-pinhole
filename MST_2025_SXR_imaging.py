@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from stl import mesh
 
 from multi_pinhole import *
-from utils import stl_utils
+from multi_pinhole.utils import stl_utils
 
 plt.rcParams.update({'font.size': 12})
 

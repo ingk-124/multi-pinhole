@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation
 from stl import mesh
 from tqdm.auto import trange
 
-from utils.my_stdio import *
+from .my_stdio import *
 
 pio.renderers.default = "firefox"
 

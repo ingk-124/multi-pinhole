@@ -1,7 +1,6 @@
 # PYTHON CODE
 # this code is based on PEP8 style guide
 # docstrings are based NumPy style
-from dataclasses import dataclass
 from numbers import Number
 from typing import Tuple, List, Union
 
@@ -17,8 +16,8 @@ from scipy import sparse
 from scipy.spatial.transform import Rotation
 from typing_extensions import Literal
 
-from utils import stl_utils
-from utils.my_stdio import my_tqdm
+from .utils import stl_utils
+from .utils.my_stdio import my_tqdm
 
 # TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
 # TODO: refactor variable names
@@ -98,48 +97,7 @@ MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[Li
 #  - Aperture
 
 # MARK: rays class
-@dataclass(frozen=True)
-class Rays:
-    """Rays class
-
-    Parameters
-    ----------
-    Z : np.ndarray
-        distance from eye to light source along the main optical axis (n, )
-    XY : np.ndarray
-        position of the light spot on the screen (n, 2)
-    zoom_rate : np.ndarray
-        zoom rate of the light spot on the screen (n, )
-        It expressed as 1 + f / Z.
-    front_and_visible : np.ndarray
-        boolean array (n, ) True if the point is in front of the eye and visible
-    """
-
-    Z: np.ndarray
-    XY: np.ndarray
-    zoom_rate: np.ndarray
-    front_and_visible: np.ndarray
-
-    @property
-    def n(self):
-        """int: Total number of sampled rays contained in this instance."""
-        return self.Z.size
-
-    @property
-    def n_visible(self):
-        """int: Count of rays that are both in front of the eye and marked visible."""
-        return self.front_and_visible.nonzero()[0].size
-
-    # allow indexing and slicing
-    def __getitem__(self, key):
-        # for slicing
-        return Rays(Z=self.Z[key],
-                    XY=self.XY[key],
-                    zoom_rate=self.zoom_rate[key],
-                    front_and_visible=self.front_and_visible[key])
-
-    def __len__(self):
-        return self.n
+from .rays import Rays
 
 # MARK: Eye class
 # --------------------------------
