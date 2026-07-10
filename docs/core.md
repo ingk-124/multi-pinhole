@@ -3,17 +3,17 @@
 This document summarizes the key classes defined in `multi_pinhole.core` and how they collaborate to simulate a multi-eye imaging system.
 
 ## Rays
-`Rays` is an immutable dataclass that carries the geometric result of tracing scene points through an eye. It records:
+`Rays` is an immutable dataclass, defined in `multi_pinhole.rays` and re-exported through `multi_pinhole.core`/`multi_pinhole`, that carries the geometric result of tracing scene points through an eye. It records:
 
-* `Z`: the optical-axis distance from the eye to each point, preserving the sign so callers can distinguish front- and back-facing samples.【F:multi_pinhole/core.py†L101-L123】
-* `XY`: projected impact locations on the screen in camera Cartesian coordinates, with samples behind the eye left as `NaN` to simplify masking.【F:multi_pinhole/core.py†L101-L123】【F:multi_pinhole/core.py†L366-L370】
-* `zoom_rate`: the magnification factor `(1 + f/Z)` needed to dilate the eye footprint before rasterization.【F:multi_pinhole/core.py†L101-L123】【F:multi_pinhole/core.py†L368-L370】
-* `front_and_visible`: Boolean flags that encode both geometric visibility and aperture occlusion checks.【F:multi_pinhole/core.py†L101-L130】【F:multi_pinhole/core.py†L363-L372】
+* `Z`: the optical-axis distance from the eye to each point, preserving the sign so callers can distinguish front- and back-facing samples.【F:multi_pinhole/rays.py†L8-L28】
+* `XY`: projected impact locations on the screen in camera Cartesian coordinates, with samples behind the eye left as `NaN` to simplify masking.【F:multi_pinhole/rays.py†L8-L28】【F:multi_pinhole/core.py†L316-L333】
+* `zoom_rate`: the magnification factor `(1 + f/Z)` needed to dilate the eye footprint before rasterization.【F:multi_pinhole/rays.py†L8-L28】【F:multi_pinhole/core.py†L316-L333】
+* `front_and_visible`: Boolean flags that encode both geometric visibility and aperture occlusion checks.【F:multi_pinhole/rays.py†L8-L28】【F:multi_pinhole/core.py†L316-L333】
 
-Light-weight helpers (`n`, `n_visible`) expose counts of the total rays created and the subset that will contribute to the final image, making it easy for screening code to size sparse buffers or short-circuit empty jobs.【F:multi_pinhole/core.py†L124-L130】 As a pure data object, `Rays` sits between `Eye.calc_rays` and the `Screen` rasterizers.
+Light-weight helpers (`n`, `n_visible`) expose counts of the total rays created and the subset that will contribute to the final image, making it easy for screening code to size sparse buffers or short-circuit empty jobs.【F:multi_pinhole/rays.py†L30-L38】 As a pure data object, `Rays` sits between `Eye.calc_rays` and the `Screen` rasterizers.
 
-## Filter
-`Filter` stores the transmissive element mounted ahead of the eyes. Construction captures the material name, physical thickness, and either wavelength or photon-energy bounds, converting wavelengths to energy on the fly so the rest of the pipeline can work in a single energy domain.【F:multi_pinhole/core.py†L133-L165】  If neither bound is supplied, it defaults to a wide hard-coded energy range suited to X-ray simulations.【F:multi_pinhole/core.py†L159-L165】  Calling `get_data` lazily fetches a tabulated attenuation curve from `utils.filter`, caching it on the instance for reuse in later optical calculations.【F:multi_pinhole/core.py†L167-L168】
+## Filter transmission (no `Filter` class)
+There is currently **no `Filter` class** in `multi_pinhole.core` (an earlier version of this document described one, but it does not exist in the current codebase; the only remaining reference is a leftover, unreachable `Filter(...)` call at the end of `core.py`'s `if __name__ == "__main__"` demo block). Filter/transmission calculations are instead exposed as plain functions in `multi_pinhole.utils.filter`: `get_data`/`get_data_from_CXRO` retrieve tabulated CXRO transmission curves (with local caching), and `characteristic(material, d)` returns a callable that evaluates transparency at arbitrary thickness and photon energy via a fitted exponential attenuation model. See `docs/utilities.md` for details.
 
 ## Eye
 An `Eye` models a single pinhole or concave lens, encapsulating its placement, field-of-view, and spectral band. During initialization it:

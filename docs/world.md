@@ -7,11 +7,17 @@ assembling sparse projection matrices, persisting scenarios, and visualising the
 setup.
 
 ## Helper Utilities
-Two internal helpers smooth over array book-keeping:
+Internal helpers smooth over array book-keeping:
 
-* `type_list` coerces a single object or list into a list while enforcing a
-  required element type. It backs several setters so that callers can supply
-  either single instances or collections.
+* `multi_pinhole.utils.type_check_and_list` (imported from `multi_pinhole.utils`,
+  not defined in this module) coerces a single object or list into a list while
+  enforcing a required element type, with an optional default for `None`. It
+  backs the `cameras`, `walls`, and related index setters/methods so that
+  callers can supply either single instances or collections.
+* `type_list`, defined locally in this module, offers similar single-object-or-list
+  normalization but is not currently called anywhere in `world.py`; it is
+  effectively dead code left over from before `type_check_and_list` was
+  factored out into `multi_pinhole.utils`.
 * `_blocks_lengths` and `_slice_blocks` operate on collections of point and
   sparse-matrix blocks, exposing lightweight slicing for later projection work.
 
@@ -37,7 +43,7 @@ invalidate stale matrices so dependent calculations stay coherent.
 
 ## Visibility Evaluation
 `set_inside_vertices` lets callers define the active volume by passing a
-callable evaluated over the voxel grid. `_find_visible_points` converts points
+callable evaluated over the voxel grid. `find_visible_points` (public) converts points
 into a camera’s frame, tests them against each eye, aperture, and wall, and
 returns a boolean mask. `_find_visible_vertices` iterates that routine across
 all cameras (or a specific one) and caches the per-eye, per-vertex results.

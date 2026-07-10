@@ -9,7 +9,7 @@ The multi-pinhole project simulates imaging systems that combine multiple pinhol
 - **World orchestration** – `multi_pinhole.world` binds voxels, cameras, and optional walls into a simulation-ready environment, manages visibility checks, and exposes helpers for summarizing or persisting a scenario.【F:multi_pinhole/world.py†L70-L167】
 
 ## Typical Workflow
-1. **Describe the scene** by instantiating a `Voxel` (or using helpers such as `shifted_torus` or `helical_island`) and optional STL meshes that bound the environment.【F:multi_pinhole/voxel.py†L10-L160】【F:multi_pinhole/world.py†L70-L118】
+1. **Describe the scene** by instantiating a `Voxel` (or using helpers such as `shifted_torus` or `helical_displacement`) and optional STL meshes that bound the environment.【F:multi_pinhole/voxel.py†L10-L160】【F:multi_pinhole/world.py†L70-L118】
 2. **Configure optics** by creating one or more `Eye` objects, pairing them with `Aperture` geometries, and attaching them to a `Screen` that defines pixel and subpixel sampling.【F:multi_pinhole/core.py†L177-L1041】
 3. **Assemble a camera** by combining the eyes, apertures, and screen, positioning and orienting the rig in world space, and linking it to the world container.【F:multi_pinhole/core.py†L1330-L1560】【F:multi_pinhole/world.py†L97-L118】
 4. **Project world points** using `Camera.calc_image_vec`, which converts world coordinates to camera coordinates, filters visibility through apertures, computes rays per eye, and rasterizes their footprint onto the screen’s sparse image representation.【F:multi_pinhole/core.py†L1558-L1587】
