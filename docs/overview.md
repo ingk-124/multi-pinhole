@@ -5,7 +5,7 @@ The multi-pinhole project simulates imaging systems that combine multiple pinhol
 
 ## Key Components
 - **Core optics** – `multi_pinhole.core` defines reusable classes for rays, eyes, apertures, screens, and cameras, along with utilities for projecting 3D world points onto image planes and visualizing the optical layout.【F:multi_pinhole/core.py†L101-L1804】
-- **Voxel modeling** – `multi_pinhole.voxel` provides coordinate transforms (Cartesian, toroidal, cylindrical, spherical) and voxel grid logic for representing plasma or other volumetric targets inside the world.【F:multi_pinhole/voxel.py†L10-L160】
+- **Voxel modeling** – `multi_pinhole.voxel` provides Cartesian voxel grid logic, while `multi_pinhole.coordinates` defines normalized coordinate transforms (Cartesian, toroidal, inverse toroidal, cylindrical, spherical) for evaluating plasma or other volumetric profiles inside the world.【F:multi_pinhole/voxel.py†L180-L760】【F:multi_pinhole/coordinates.py†L1-L120】
 - **World orchestration** – `multi_pinhole.world` binds voxels, cameras, and optional walls into a simulation-ready environment, manages visibility checks, and exposes helpers for summarizing or persisting a scenario.【F:multi_pinhole/world.py†L70-L167】
 
 ## Typical Workflow
@@ -16,7 +16,7 @@ The multi-pinhole project simulates imaging systems that combine multiple pinhol
 5. **Inspect results** by converting subpixel responses to pixel images or plotting camera and optical layouts for debugging and presentation.【F:multi_pinhole/core.py†L1042-L1804】
 
 ## Notable Capabilities
-- Multiple coordinate systems (Cartesian, cylindrical, toroidal, spherical) make it easier to model devices with complex symmetries while still rendering them through a consistent camera interface.【F:multi_pinhole/core.py†L38-L90】【F:multi_pinhole/voxel.py†L10-L160】
+- Multiple coordinate systems (Cartesian, cylindrical, toroidal, inverse toroidal, spherical) make it easier to model devices with complex symmetries while still rendering them through a consistent Cartesian camera interface.【F:multi_pinhole/coordinates.py†L1-L120】
 - Aperture support accepts analytic shapes or STL meshes, allowing detailed mechanical masks to gate light paths.【F:multi_pinhole/core.py†L425-L544】
 - Screen sampling uses sparse matrices to efficiently accumulate contributions from millions of rays while supporting subpixel refinement and etendue-aware weighting.【F:multi_pinhole/core.py†L546-L1320】
 - Camera utilities include 3D Matplotlib and Plotly visualizations that show optical axes, screen geometry, and apertures for alignment checks.【F:multi_pinhole/core.py†L1589-L1786】

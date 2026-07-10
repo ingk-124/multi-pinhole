@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "multi-pinhole"
 dynamic = ["version"]
 description = "Multi-pinhole imaging simulation code"
-readme = "Readme.md"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -30,7 +30,10 @@ version = { attr = "multi_pinhole.__about__.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["multi_pinhole*", "utils*"]
+include = ["multi_pinhole*"]
+
+[tool.setuptools.package-data]
+multi_pinhole = ["data/*.stl"]
 
 [project.scripts]
 multi-pinhole-sim = "multi_pinhole:cli"

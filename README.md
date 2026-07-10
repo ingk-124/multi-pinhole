@@ -5,8 +5,8 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 ## Contents
 - `multi_pinhole/`: Python package to simulate multi-pinhole imaging.
 - `multi_pinhole/utils/`: Package-internal utility functions for data processing and visualization.
-- `doc/`: Documentation files and user guides.
-- `example.py`: Example script demonstrating how to use the package.
+- `docs/`: Documentation files and user guides.
+- `examples/`: Example and analysis scripts demonstrating how to use the package.
 
 ## Installation
 To install the package, clone the repository and run:
@@ -54,6 +54,26 @@ print(world)
 - `Eye`: Models of the pinholes and their arrangement in the camera.
 - `Screen`: Represents the imaging sensor where the projections are captured.
 - `Aperture`: Models of the apertures to control an image size.
+
+## Voxel Coordinates
+`Voxel` grids are Cartesian. The `coordinate_type` option controls only how
+Cartesian points are converted by `voxel.normalized_coordinates()` for profile
+evaluation:
+
+```python
+voxel = Voxel.uniform_voxel(
+    ranges=[[-2010, 2010], [-2010, 2010], [-510, 510]],
+    shape=[201, 201, 51],
+    coordinate_type="torus",
+    coordinate_parameters=dict(R_0=1500, a=500),
+)
+r, theta, phi = voxel.normalized_coordinates().T
+```
+
+For `coordinate_type="torus"`, `theta=0` is the outboard midplane and `phi`
+increases clockwise when viewed from `+z`, making `(r, theta, phi)` right-handed.
+Use `coordinate_type="torus_inverse"` when both angular directions should be
+reversed: `theta=0` at the inboard midplane and counter-clockwise `phi`.
 
 ## Refactoring notes
 - `utils` has been moved under `multi_pinhole.utils` to avoid collisions with unrelated top-level packages named `utils`.
