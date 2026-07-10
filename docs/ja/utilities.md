@@ -1,0 +1,52 @@
+# ユーティリティ概要
+
+`multi_pinhole.utils` パッケージ（`from multi_pinhole.utils import ...` や `from multi_pinhole.utils import stl_utils` のようにインポートします——無関係なトップレベルの `utils` パッケージとの衝突を避けるために `multi_pinhole` の下に配置されています）は、コアのカメラロジックを煩雑にすることなくシミュレーションを支えるヘルパー関数を集めたものです。中でも計算的にもっとも興味深いのは STL ジオメトリのツールキットで、`multi_pinhole.core` と `multi_pinhole.world` の両方で使われる実際のレイ・メッシュ遮蔽判定アルゴリズムを実装しています。本ドキュメントではまずこのアルゴリズムを詳しく説明し、その後により単純な、コレクション操作・ロギング・フィルタ透過率のヘルパーを説明します。
+
+## コレクションヘルパー
+
+`multi_pinhole.utils.type_check_and_list` は、オプションのコンストラクタ引数を、要素の型を検証しながらリストへ正規化します。`None` が渡された場合のデフォルト値も指定でき、world や camera のコンストラクタが単一オブジェクトとリストを同じように扱えるようにしています。【F:multi_pinhole/utils/__init__.py†L24-L54】
+
+## コンソールラッパー
+
+`multi_pinhole.utils.my_stdio` は、共通のイテレーションプリミティブに、任意で進捗表示を付加するラッパーです。`my_print` は `show` フラグでログメッセージの出力を制御し、`my_range` と `my_tqdm` は詳細出力が有効なときに `tqdm` 版へ委譲し、`my_zip` は `tzip` によって進捗バー付きでイテラブルをペアリングします。これらのアダプタにより、時間のかかるジオメトリ処理ルーチンは、呼び出し側のコードに `tqdm` への直接的な依存を持ち込まずに進捗表示を提供できます。
+
+## STL ジオメトリツールキット
+
+`multi_pinhole.utils.stl_utils` は、aperture やワールドの壁で使われる三角形メッシュの構築・解析を担います。
+
+### aperture メッシュの構築
+
+`shape_check(shape, size)` は、形状キーワード（`circle`、`ellipse`、`rectangle`、`square`）とそのサイズ指定を、正規化された `(shape, (height, width))` のペアに変換し、スカラー1つが渡された場合は両軸に展開します。【F:multi_pinhole/utils/stl_utils.py†L49-L111】続いて `generate_aperture_stl(shape, size, resolution, max_size)` が `z = 0` 平面上に実際のメッシュを構築します。【F:multi_pinhole/utils/stl_utils.py†L114-L171】
+
+1. 形状の境界（楕円ならパラメトリックな `(a·cos t, b·sin t)`、矩形なら4辺）に沿って `resolution` 個の点をサンプリングします。
+2. `max_size`（デフォルトは aperture サイズの1.5倍）まで広がる `10×10` の粗い背景グリッド点を敷き、そのうち aperture の内側にある点は除外します。これにより、開口部の周囲にある「不透明な」材質もメッシュ上に表現されます——これが、このメッシュを単なる輪郭ではなく遮蔽物として使える理由です。
+3. 境界点と背景点をすべて `make_2D_surface` に渡し、`scipy.spatial.Delaunay` で Delaunay 三角形分割を行い、重心が開口部の**外側**にある三角形だけを残します（`condition` 述語）——つまりこのメッシュは開口部そのものではなく、その周囲の**不透明な**材質をモデル化します。開口部に到達する光線は、このメッシュのどの三角形とも交差しません。【F:multi_pinhole/utils/stl_utils.py†L1139-L1161】
+
+`rotate_model` と `copy_model` は、元のメッシュを変更せずに複製し、平行移動やオイラー角回転を適用します。【F:multi_pinhole/utils/stl_utils.py†L174-L231】
+
+### 可視性／遮蔽判定
+
+あるメッシュが、eye から候補点までの視線を遮っているかどうかを判定するのは、このパッケージ内でもっとも性能に敏感な計算です（すべてのボクセル頂点に対して実行され、さらに部分的に可視なボクセルのすべてのサブボクセルサンプルに対しても実行されます。`docs/world.md` を参照）。これは、すべての三角形に対してすべての点に対する厳密なレイ・三角形交差判定を実行することを避けるため、2段階のテストとして実装されています。
+
+**第1段階 —— バウンディングコーンによる事前フィルタ（`delta_cone_apply` / `delta_cone_prepare`）。** 各三角形 `(a, b, c)` と共通の頂点（eye の位置）に対して、その頂点と各辺を通る3つの「コーン」平面（`oa×ob`、`ob×oc`、`oc×oa`）を計算し、それらが定める半空間が三角形自身の残りの頂点と一致する向きになるよう符号を揃えます。ある候補点がその三角形の張るコーンの内側にあるのは、それがちょうど三角形の内部と同じ側に3つの平面すべてに対してある場合です（すべての向き付けられた法線に対して `p · n ≥ 0`）。【F:multi_pinhole/utils/stl_utils.py†L328-L554】これは（`einsum`／行列積による）安価でバッチ化されたテストであり、（三角形, 点）の組の大部分を一度に棄却できます——ある点があるトライアングルに遮蔽され得るのは、eye から見てその三角形の張るコーンの内側にある場合に限られるからです。結果は疎な `(M_triangles, N_points)` の真偽値行列として保存され、メモリを抑えるために点についてバッチ化されます。
+
+**第2段階 —— 厳密なレイ・三角形交差判定（`check_intersection`）。** 第1段階を生き残った（三角形, 点）の組に対してのみ、`check_intersection` が標準的な **Möller–Trumbore アルゴリズム**を実行します。三角形の辺を `e₁ = b−a`、`e₂ = c−a`、線分の方向を `d = point−start`、オフセットを `r = start−a` として、`start + t·d = a + u·e₁ + v·e₂` を解いて重心座標 `(u, v)` とパラメトリックな距離 `t` を
+`u = (r·(d×e₂))/det`、`v = (r·(e₁×d))/det`、`t = (r·(e₁×e₂))/det`（`det = −d·(e₁×e₂)`）として求めます。線分が三角形を横切るのは `u ≥ 0`、`v ≥ 0`、`u+v ≤ 1`、かつ `0 < t ≤ 1` のときです（すべての比較には数値誤差の許容値 `eps` が適用されます）。【F:multi_pinhole/utils/stl_utils.py†L235-L326】`behind_start_included` フラグは、この `t > 0` という下限を緩和します——`True`（真偽値）なら `-inf` に（これにより aperture の遮蔽判定は、eye の**後方**を通る光路もブロックするようになり、`Camera.calc_image_vec` が aperture を扱う方法と一致します）、数値を渡した場合はその値から計算される符号付き距離に緩和されます（apex の後方に有限の範囲を許容するために使われ、例えばレンズのすぐ後ろにある screen 面が自己遮蔽しないようにします）。
+
+**`check_visible(mesh_obj, start, grid_points, ...)`** はこの2段階を組み合わせます。まずメッシュ全体に対してコーンによる事前フィルタを一度に実行し、候補点を1つでもコーン内に持つ三角形についてのみ、その候補点だけを対象に `check_intersection` を実行して、**いずれか**の三角形と交差する点を遮蔽（`visible=False`）としてマークします。どの三角形のコーンにも一度も入らなかった点は、厳密な交差判定を一度も実行することなく可視のままです。【F:multi_pinhole/utils/stl_utils.py†L593-L669】これは `Camera.calc_image_vec`（aperture ごとの遮蔽判定。`docs/core.md`）と `World.find_visible_points`（aperture・壁ごとの遮蔽判定。`docs/world.md`）の両方が呼び出しているものです。
+
+より古く単純な実装（`check_visible_old`）もモジュール内に残っていますが、現在のパイプラインでは使われていません。コーンによる事前フィルタなしで同じ Möller–Trumbore テストを実行するものであり、性能上の理由で置き換えられたと考えられますが、その経緯についてモジュール自体には明記されていません。
+
+### 可視化とパラメトリックサーフェス
+
+`show_stl`／`plotly_show_stl` はデバッグ用にメッシュを Matplotlib／Plotly で描画し、`torus`／`sphere`／`meshed_surface` は壁のジオメトリとして使える単純なパラメトリックサーフェス生成関数です。
+
+## フィルタ透過率データ
+
+`multi_pinhole.utils.filter` は、X 線フィルタの透過率カーブの取得と補間を自動化します——例えば検出器の手前にある、光子エネルギーごとに異なる減衰を示す薄膜フィルタをモデル化するために使われます。
+
+* `get_data_from_CXRO(material, thickness)` はヘッドレス Chrome ブラウザ（Selenium）を操作して CXRO/Henke の「filter transmission」フォームに指定した材質・厚さを送信し（10〜30000 eV、500点の固定スイープ）、ダウンロードされたデータファイルから `(energy, transmission)` の表を解析します。【F:multi_pinhole/utils/filter.py†L37-L106】これにはネットワーク接続とローカルの Chrome／Selenium 環境が必要で、フォールバックとしてのみ呼び出されます。
+* `get_data(material, thickness)` はまずローカルキャッシュ（`<DATA_PATH>/<material>/<material>_<thickness>.dat`）を確認し、キャッシュミス（または `force=True`）の場合にのみ `get_data_from_CXRO` を呼びます。そのため同じ材質・厚さでの再実行は実質的に無料です。【F:multi_pinhole/utils/filter.py†L109-L142】
+* `characteristic(material, d)` はエネルギーごとの指数減衰モデルを構築します。Beer-Lambert 則に基づく薄膜の透過率は `T(E, d) = exp(c(E)·d)` としてモデル化されるため、`exp_fit` は2つの参照厚さ `d/10` と `d/5`（どちらも `get_data` で取得）から係数 `c(E)` を導出します：`c(E) = ln(T₁(E)/T₂(E)) / (d₁ − d₂)`。【F:multi_pinhole/utils/filter.py†L145-L171】`characteristic` はクロージャ `transparent(d_, E)` を返し、これはフィットされた `c(E)` を任意のエネルギー `E` で線形補間し、任意の厚さ `d_` に対して `exp(c(E)·d_)` を評価します——つまり、2つの参照測定値さえあれば、（一定組成の材質であれば真である）減衰が厚さに対して厳密に指数的であるというモデル上の仮定のもとで、任意の厚さでの透過率を予測できます。【F:multi_pinhole/utils/filter.py†L174-L223】
+
+注：現在の `multi_pinhole.core` には、これらの関数をラップする `Filter` クラスは存在しません（本ドキュメントおよび `docs/core.md` の以前のバージョンにはそのようなクラスがあると書かれていましたが、ドキュメントを修正しないままコードから削除されていました）。フィルタ透過率が必要な呼び出し側は、`multi_pinhole.utils.filter.get_data`／`characteristic` を直接呼び出す必要があります。
