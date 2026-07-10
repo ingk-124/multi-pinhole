@@ -257,6 +257,19 @@ def test_projection_matrix_is_stable_when_subvoxel_resolution_changes():
     np.testing.assert_allclose(totals, np.full(3, totals[0]), rtol=5e-2, atol=0.0)
 
 
+def test_sub_voxel_centers_match_sub_voxel_objects():
+    voxel = Voxel(
+        x_axis=np.array([-1.0, 0.0, 2.0]),
+        y_axis=np.array([-2.0, 1.0, 3.0]),
+        z_axis=np.array([10.0, 11.0, 13.0]),
+    )
+    indices = np.array([0, 3, 5])
+    expected = np.concatenate([sv.gravity_center for sv in voxel.get_sub_voxel(n=indices, res=(2, 3, 4))], axis=0)
+    actual = voxel.get_sub_voxel_centers(n=indices, res=(2, 3, 4))
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-12)
+
+
 def test_partial_voxel_inside_mask_scales_integrated_light():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)

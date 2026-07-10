@@ -404,6 +404,41 @@ class Voxel:
         cz = self.cz_axis[indices[:, 2]]
         return np.stack([cx, cy, cz], axis=1)
 
+    def get_sub_voxel_centers(self, n=None, res=None):
+        """Return sub-voxel center points without constructing Voxel objects.
+
+        Parameters
+        ----------
+        n : int, list[int], slice, optional
+            Voxel numbers to subdivide.
+        res : int or (int, int, int), optional
+            Sub-voxel resolution.
+
+        Returns
+        -------
+        np.ndarray
+            Center coordinates with shape ``(N_selected * prod(res), 3)``.
+            The row order matches :meth:`sub_voxel_interpolator`.
+        """
+        self.res = res
+        n = self._type_check_n_voxel(n)
+        indices = np.atleast_2d(self.get_voxel_position(n)).astype(int)
+        i, j, k = indices.T
+
+        x0, x1 = self.x_axis[i], self.x_axis[i + 1]
+        y0, y1 = self.y_axis[j], self.y_axis[j + 1]
+        z0, z1 = self.z_axis[k], self.z_axis[k + 1]
+
+        fx, fy, fz = [(np.arange(r, dtype=float) + 0.5) / r for r in self.res]
+        xx, yy, zz = np.meshgrid(fx, fy, fz, indexing="ij")
+        fractions = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+
+        centers = np.empty((indices.shape[0], fractions.shape[0], 3), dtype=float)
+        centers[..., 0] = x0[:, None] + (x1 - x0)[:, None] * fractions[None, :, 0]
+        centers[..., 1] = y0[:, None] + (y1 - y0)[:, None] * fractions[None, :, 1]
+        centers[..., 2] = z0[:, None] + (z1 - z0)[:, None] * fractions[None, :, 2]
+        return centers.reshape(-1, 3)
+
     @property
     def volume(self):
         """

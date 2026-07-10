@@ -625,7 +625,6 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
                                    allow_behind=allow_behind,
                                    batch_size=batch_points, verbose=verbose,
                                    eps=1e-6)  # (M, N)
-    time.sleep(0.1)
     my_print(f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0)
     visible = np.ones(N, dtype=bool)
 

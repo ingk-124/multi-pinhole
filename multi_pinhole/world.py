@@ -661,7 +661,6 @@ class World:
                                                                 behind_start_included=True))  # (N_points, )
                 my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
                 my_print("-" * 15, show=verbose > 0)
-                time.sleep(0.1)
             if aperture_visible:
                 # Apertures are blocking surfaces, matching Camera.calc_image_vec():
                 # intersecting any aperture makes the ray invisible.
@@ -675,7 +674,6 @@ class World:
                                                       verbose=verbose)  # (N_points, )
                 my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
                 my_print("-" * 15, show=verbose > 0)
-                time.sleep(0.1)
         return visible  # (N_eye, N_points)
 
     def _find_visible_vertices(self, force: bool = False, verbose: int = None, camera_idx: int = None) -> None:
@@ -846,9 +844,18 @@ class World:
 
         def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res):
             voxel_indices = np.atleast_1d(voxel_indices)
-            interpolator = self.voxel.sub_voxel_interpolator(n=voxel_indices, res=subvoxel_res, verbose=0)
-            matrix = interpolator.tocsr() if sparse.issparse(interpolator) else sparse.vstack(interpolator).tocsr()
-            samples_per_voxel = int(np.prod(self.voxel.res))
+            self.voxel.res = subvoxel_res
+            sub_voxel_matrix = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
+            samples_per_voxel = sub_voxel_matrix.shape[0]
+            vertex_indices = self.voxel.vertices_indices[voxel_indices].reshape(-1)
+            selector = sparse.coo_matrix((np.ones(vertex_indices.size, dtype=bool),
+                                          (np.arange(vertex_indices.size), vertex_indices)),
+                                         shape=(vertex_indices.size, self.voxel.N_grid),
+                                         dtype=bool).tocsr()
+            vertex_to_voxel = selector @ self.voxel.voxel2vertices
+            block_interp = sparse.kron(sparse.eye(voxel_indices.size, format="csr"),
+                                       sub_voxel_matrix, format="csr")
+            matrix = block_interp @ vertex_to_voxel
             # Convert interpolated sub-voxel samples into an integral over each
             # selected voxel, so changing res refines the quadrature instead of
             # multiplying the total signal by the number of samples.
@@ -891,9 +898,7 @@ class World:
         else:
             # random sample voxels to estimate n_step
             sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
-            sample_gc = np.concatenate([sv.gravity_center
-                                        for sv in self.voxel.get_sub_voxel(n=sample_n, res=full_subvoxel_res)],
-                                       axis=0)  # (sample_size * K, 3)
+            sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=full_subvoxel_res)
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
                                               check_visibility=False)  # (N_subpixel, sample_size * K)
             est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
@@ -911,10 +916,7 @@ class World:
                 # initialize result matrix for full voxels
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
-                    sv_gc = np.concatenate(
-                        [sv.gravity_center
-                         for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice], res=full_subvoxel_res)],
-                        axis=0)  # (num_vox * K, 3)
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
                     S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
@@ -943,10 +945,7 @@ class World:
                     # submit tasks
                     for _slice in my_tqdm(_chunks, desc="Submitting full voxel tasks",
                                           disable=verbose <= 0, leave=False):
-                        sv_gc = np.concatenate(
-                            [sv.gravity_center
-                             for sv in self.voxel.get_sub_voxel(n=full_voxels[_slice], res=full_subvoxel_res)],
-                            axis=0)  # (num_vox * K, 3)
+                        sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
                         S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
                         futures.append(executor.submit(_full_vox_proc, sv_gc, S))
 
@@ -961,9 +960,7 @@ class World:
             sample_mask = None
             for _ in range(10):  # avoid all non-visible samples without risking an infinite loop
                 sample_n = np.random.choice(partial_voxels, size=min(partial_voxels.size, 20), replace=False)
-                sample_gc = np.concatenate([sv.gravity_center
-                                            for sv in self.voxel.get_sub_voxel(n=sample_n, res=partial_subvoxel_res)],
-                                           axis=0)  # (sample_size * K, 3)
+                sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=partial_subvoxel_res)
                 sample_mask = self.find_visible_points(sample_gc, camera_idx=camera_idx,
                                                        eye_idx=eye_idx, verbose=0).squeeze()
                 sample_mask = sample_mask & self._inside_points(sample_gc)
@@ -990,10 +987,7 @@ class World:
                 # initialize result matrix for partial voxels
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing partial voxels", disable=verbose <= 0)):
-                    sv_gc = np.concatenate(
-                        [sv.gravity_center
-                         for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice], res=partial_subvoxel_res)],
-                        axis=0)  # (num_vox * K, 3)
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
                     mask = mask & self._inside_points(sv_gc)
@@ -1025,10 +1019,7 @@ class World:
                     # submit tasks
                     for _slice in my_tqdm(_chunks, desc="Submitting partial voxel tasks",
                                           disable=verbose <= 0, leave=False):
-                        sv_gc = np.concatenate(
-                            [sv.gravity_center
-                             for sv in self.voxel.get_sub_voxel(n=partial_voxels[_slice], res=partial_subvoxel_res)],
-                            axis=0)  # (num_vox * K, 3)
+                        sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
                         mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                         eye_idx=eye_idx, verbose=0).squeeze()
                         mask = mask & self._inside_points(sv_gc)
