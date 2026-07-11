@@ -1,5 +1,7 @@
 import contextlib
 import io
+import importlib.util
+from pathlib import Path
 
 import matplotlib
 import numpy as np
@@ -65,6 +67,34 @@ def make_mst_like_world():
     world = World(voxel=voxel, cameras=[camera], verbose=0)
     world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
     return world
+
+
+def test_mst_2025_example_builds_two_independent_cad_positioned_cameras():
+    example_path = Path(__file__).resolve().parents[1] / "examples" / "MST_2025_SXR_imaging.py"
+    spec = importlib.util.spec_from_file_location("mst_2025_sxr_imaging", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    aperture_model = stl_utils.generate_aperture_stl(
+        shape="circle",
+        size=1.8,
+        resolution=40,
+        max_size=25.0,
+    )
+    cameras = module.build_mst_cameras(aperture_model)
+    left, right = cameras["left"], cameras["right"]
+    center = np.array([1550.7, -1552.4, 210.7])
+
+    assert set(cameras) == {"left", "right"}
+    np.testing.assert_allclose((left.camera_position + right.camera_position) / 2, center, atol=1e-12)
+    np.testing.assert_allclose(right.camera_position - left.camera_position, 8.3 * right.camera_x, atol=1e-12)
+    np.testing.assert_allclose(left.rotation_matrix, right.rotation_matrix, atol=1e-12)
+    np.testing.assert_allclose(left.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12)
+    np.testing.assert_allclose(right.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12)
+    np.testing.assert_allclose(left.screen.screen_size, np.array([7.5, 7.5]), atol=1e-12)
+    np.testing.assert_array_equal(left.screen.pixel_shape, np.array([61, 61]))
+    np.testing.assert_allclose(left.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12)
+    np.testing.assert_allclose(right.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12)
 
 
 def test_standard_torus_normalized_coordinates_are_right_handed_by_convention():

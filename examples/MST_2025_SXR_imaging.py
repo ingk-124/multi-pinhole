@@ -74,13 +74,47 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
     return y
 
 
+def build_mst_cameras(model_aperture):
+    """Build independent left/right 61x61 cameras from the CAD reference pose."""
+    camera_center = np.array([1550.7, -1552.4, 210.7])
+    forward_point = np.array([1525.9, -1521.1, 207.3])
+    right_point = np.array([1551.9, -1511.2, 206.9])
+
+    def make_single_camera(camera_offset):
+        aperture = Aperture(
+            stl_model=model_aperture,
+            position=[0, 0, 13],
+        )
+        return Camera.single_pinhole(
+            focal_length=25,
+            eye_size=1,
+            screen_size=7.5,
+            pixel_shape=(61, 61),
+            subpixel_resolution=5,
+            apertures=aperture,
+            camera_name="left" if camera_offset < 0 else "right",
+        ).set_camera_position(
+            camera_center,
+        ).set_orientation_from_points(
+            look_point=forward_point,
+            right_point=right_point,
+        ).translate_camera(
+            [camera_offset, 0, 0],
+        )
+
+    return {
+        "left": make_single_camera(-4.15),
+        "right": make_single_camera(4.15),
+    }
+
+
 if __name__ == '__main__':
     file_is_exist = True
     mst_wall = mesh.Mesh.from_file("MST_wall-mesh.stl")
     # mst_wall = mesh.Mesh.from_file("MST_wall-mesh_PG=0.stl")
     force_rebuild = True
     # force_rebuild = False
-    FILE_NAME = "MST_tangential_double-pinhole_wide2.pkl"
+    FILE_NAME = "MST_2025_SXR_two_single_pinhole.pkl"
     try:
         if force_rebuild:
             raise FileNotFoundError
@@ -97,37 +131,17 @@ if __name__ == '__main__':
         x_arr, y_arr = np.linspace(-max_size, max_size, 5), np.linspace(-max_size, max_size, 5)
         outer_points = np.array(np.meshgrid(x_arr, y_arr, indexing="ij")).reshape(2, -1).T
         t = np.linspace(0, 2 * np.pi, resolution, endpoint=False)
-        edge_points1 = np.array([size * np.cos(t) - 4.15, size * np.sin(t)]).T
-        edge_points2 = np.array([size * np.cos(t) + 4.15, size * np.sin(t)]).T
-        points = np.vstack([outer_points, edge_points1, edge_points2])
+        edge_points = np.array([size * np.cos(t), size * np.sin(t)]).T
+        points = np.vstack([outer_points, edge_points])
 
 
         def condition(x, y):
-            c1 = ((x + 4.15) / size) ** 2 + (y / size) ** 2 <= 1
-            c2 = ((x - 4.15) / size) ** 2 + (y / size) ** 2 <= 1
-            return c1 | c2
+            return (x / size) ** 2 + (y / size) ** 2 <= 1
 
 
         model_aperture = stl_utils.make_2D_surface(points, condition)
 
-        camera_0 = Camera(eyes=[
-            Eye(eye_type="pinhole", eye_shape="circle", eye_size=1, focal_length=25,
-                position=[-4.15, 0]),
-            Eye(eye_type="pinhole", eye_shape="circle", eye_size=1, focal_length=25,
-                position=[4.15, 0])
-        ],
-            screen=Screen(screen_shape="rectangle", screen_size=[61*0.13, 125*0.13], pixel_shape=(61, 125),
-                          subpixel_resolution=5),
-            apertures=[Aperture(stl_model=model_aperture, position=[0, 0, 13]),
-                       # Aperture(shape="circle", size=1.8, position=[-4.15, 0, 13]).set_model(resolution=40,
-                       #                                                                  max_size=50),
-                       # Aperture(shape="rectangle", size=(100, 10), position=[0, 0, 80]).set_model(
-                       #     resolution=40, max_size=100)
-                       ],
-            camera_position=[-1522.5, -1500.7, 210.7],
-        ).set_rotation_matrix("zxz",
-                              (2.9, 98, -19),
-                              degrees=True)
+        cameras = build_mst_cameras(model_aperture)
 
         # voxel = Voxel.uniform_voxel(ranges=[[-2005, 5], [-2005, 2005], [-505, 505]],
         #                             # shape=[50, 100, 25],
@@ -142,7 +156,7 @@ if __name__ == '__main__':
                                     coordinate_type="torus_inverse", coordinate_parameters=dict(a=500, R_0=1500))
 
         world = World(voxel=voxel,
-                      cameras=[camera_0],
+                      cameras=cameras,
                       walls=mst_wall)
 
 
@@ -154,31 +168,33 @@ if __name__ == '__main__':
 
 
         world.set_inside_vertices(inside_condition)
-        del camera_0, voxel
+        del cameras, voxel
         gc.collect()
 
         fig = go.Figure()
         stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey",
                                   opacity=0.2, show_fig=False, show_edges=False)
-        world.cameras[0].draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
+        for camera in world.cameras.values():
+            camera.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
         fig.show()
 
     world.set_projection_matrix(res=5, verbose=1, parallel=12)
-    P = world.P_matrix[0]
+    camera_key = "right"
+    P = world.P_matrix[camera_key]
 
     if not file_is_exist or force_rebuild:
         world.save_world(filename=FILE_NAME)
         print("World saved to file.")
 
     # reset variables
-    camera_0 = world.cameras[0]
+    camera_0 = world.cameras[camera_key]
     voxel = world.voxel
 
     # plot field of view
     cmap_bw2 = ListedColormap(["white", "gray"])
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
     ax.pcolormesh(voxel.cx_axis, voxel.cy_axis,
-                  world.visible_voxels[0][0].reshape(voxel.shape)[:, :, voxel.shape[2] // 2].T,
+                  world.visible_voxels[camera_key][0].reshape(voxel.shape)[:, :, voxel.shape[2] // 2].T,
                   cmap=cmap_bw2, rasterized=True)
     ax.plot(2000 * np.cos(np.linspace(0, 2 * np.pi)),
             2000 * np.sin(np.linspace(0, 2 * np.pi)), "k-", lw=2)
@@ -215,7 +231,7 @@ if __name__ == '__main__':
     fig, ax = plt.subplots()
     for i in range(len(camera_0.eyes)):
         toroidal_axis_UV = world.trace_line(toroidal_axis,
-                                            camera_idx=0, eye_idx=i, coord_type="UV")
+                                            camera_idx=camera_key, eye_idx=i, coord_type="UV")
         ax.plot(toroidal_axis_UV[:, 1], toroidal_axis_UV[:, 0],
                 label=f"Toroidal Axis Projection eye {i}")
 
@@ -233,8 +249,8 @@ if __name__ == '__main__':
         toroidal_axis_z = np.zeros_like(toroidal_axis_x)
         toroidal_axis = np.vstack([toroidal_axis_x, toroidal_axis_y, toroidal_axis_z]).T
         toroidal_axis_UV = world.trace_line(toroidal_axis,
-                                            camera_idx=0, eye_idx=0, coord_type="UV")
-        visible = world.find_visible_points(toroidal_axis, camera_idx=0, eye_idx=0, verbose=0)[0]
+                                            camera_idx=camera_key, eye_idx=0, coord_type="UV")
+        visible = world.find_visible_points(toroidal_axis, camera_idx=camera_key, eye_idx=0, verbose=0)[0]
         lines = np.split(toroidal_axis_UV, np.where(np.diff(visible))[0] + 1)
 
         flag_first = True
@@ -255,8 +271,8 @@ if __name__ == '__main__':
 
     X_axis_x = np.linspace(-2000, -1000, 100)
     X_axis = np.vstack([X_axis_x, np.zeros_like(X_axis_x), np.zeros_like(X_axis_x)]).T
-    X_axis_UV = world.trace_line(X_axis, camera_idx=0, eye_idx=0, coord_type="UV")
-    visible = world.find_visible_points(X_axis, camera_idx=0, eye_idx=0, verbose=0)[0]
+    X_axis_UV = world.trace_line(X_axis, camera_idx=camera_key, eye_idx=0, coord_type="UV")
+    visible = world.find_visible_points(X_axis, camera_idx=camera_key, eye_idx=0, verbose=0)[0]
     lines = np.split(X_axis_UV, np.where(np.diff(visible))[0] + 1)
     for line, vis in zip(lines, np.split(visible, np.where(np.diff(visible))[0] + 1)):
         if len(line) <= 1:
@@ -267,13 +283,13 @@ if __name__ == '__main__':
             ax.plot(line[:, 1], line[:, 0], 'k--')
 
     t = np.linspace(0, 2 * np.pi, 50)
-    edge_points = np.vstack([1.8 * np.cos(t) - 4.15, 1.8 * np.sin(t), np.zeros_like(t) + 13]).T
+    edge_points = np.vstack([1.8 * np.cos(t), 1.8 * np.sin(t), np.zeros_like(t) + 13]).T
     edge_points_UV = camera_0.screen.xy2uv(camera_0.eyes[0].calc_rays(edge_points, front_only=False).XY)
     ax.plot(edge_points_UV[:, 1], edge_points_UV[:, 0], 'k-', lw=2)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xlabel("v [mm]")
     ax.set_ylabel("u [mm]")
-    ax.set_xlim(0, camera_0.screen.screen_size[1] / 2)
+    ax.set_xlim(0, camera_0.screen.screen_size[1])
     ax.set_ylim(camera_0.screen.screen_size[0], 0)
     ax.legend(loc="lower right", fontsize=8, bbox_to_anchor=(1, 0))
     fig.tight_layout()
@@ -294,8 +310,9 @@ if __name__ == '__main__':
 
     r, theta, phi = r_grid / 500, theta_grid, phi_grid
     toroidal_axis_UV = [world.trace_line(toroidal_axis,
-                                         camera_idx=0, eye_idx=i, coord_type="UV") for i in range(len(camera_0.eyes))]
-    vis = world.find_visible_points(toroidal_axis, camera_idx=0, verbose=0)
+                                         camera_idx=camera_key, eye_idx=i, coord_type="UV")
+                        for i in range(len(camera_0.eyes))]
+    vis = world.find_visible_points(toroidal_axis, camera_idx=camera_key, verbose=0)
 
 
     def plot_emission_profile_sample(f):
@@ -319,7 +336,6 @@ if __name__ == '__main__':
         im = P @ f
         camera_0.screen.show_image(im, ax=axes[1], pm=False, cmap="viridis", colorbar=False)
         axes[1].plot(toroidal_axis_UV[0][vis[0], 1], toroidal_axis_UV[0][vis[0], 0], "k--")
-        axes[1].plot(toroidal_axis_UV[1][vis[1], 1], toroidal_axis_UV[1][vis[1], 0], "k--")
         fig.colorbar(axes[1]._children[0], label="Projected Intensity (a.u.)", ax=axes[1], fraction=0.046, pad=0.04)
         return fig, axes
 
