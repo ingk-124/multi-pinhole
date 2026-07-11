@@ -70,7 +70,7 @@ def make_mst_like_world():
 
 
 def test_mst_2025_example_builds_two_independent_cad_positioned_cameras():
-    example_path = Path(__file__).resolve().parents[1] / "examples" / "MST_2025_SXR_imaging.py"
+    example_path = Path(__file__).resolve().parents[1] / "examples" / "mst" / "MST_2025_SXR_imaging.py"
     spec = importlib.util.spec_from_file_location("mst_2025_sxr_imaging", example_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -83,7 +83,7 @@ def test_mst_2025_example_builds_two_independent_cad_positioned_cameras():
     )
     cameras = module.build_mst_cameras(aperture_model)
     left, right = cameras["left"], cameras["right"]
-    center = np.array([1550.7, -1552.4, 210.7])
+    center = np.array([1550.7, -1522.4, 210.8])
 
     assert set(cameras) == {"left", "right"}
     np.testing.assert_allclose((left.camera_position + right.camera_position) / 2, center, atol=1e-12)

@@ -1,5 +1,6 @@
 # import libraries
 import gc
+from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
@@ -76,7 +77,7 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
 
 def build_mst_cameras(model_aperture):
     """Build independent left/right 61x61 cameras from the CAD reference pose."""
-    camera_center = np.array([1550.7, -1552.4, 210.7])
+    camera_center = np.array([1550.7, -1522.4, 210.8])
     forward_point = np.array([1525.9, -1521.1, 207.3])
     right_point = np.array([1551.9, -1511.2, 206.9])
 
@@ -109,12 +110,15 @@ def build_mst_cameras(model_aperture):
 
 
 if __name__ == '__main__':
+    HERE = Path(__file__).resolve().parent
+    OUTPUT_DIR = HERE / "outputs"
+    OUTPUT_DIR.mkdir(exist_ok=True)
+
     file_is_exist = True
-    mst_wall = mesh.Mesh.from_file("MST_wall-mesh.stl")
-    # mst_wall = mesh.Mesh.from_file("MST_wall-mesh_PG=0.stl")
+    mst_wall = mesh.Mesh.from_file(HERE / "MST_wall-mesh.stl")
     force_rebuild = True
     # force_rebuild = False
-    FILE_NAME = "MST_2025_SXR_two_single_pinhole.pkl"
+    FILE_NAME = OUTPUT_DIR / "MST_2025_SXR_two_single_pinhole.pkl"
     try:
         if force_rebuild:
             raise FileNotFoundError
@@ -213,7 +217,7 @@ if __name__ == '__main__':
     handles.append(fov_patch)
     ax.legend(handles=handles, loc="upper right")
     fig.tight_layout()
-    fig.savefig("FoV.pdf", bbox_inches="tight")
+    fig.savefig(OUTPUT_DIR / "FoV.pdf", bbox_inches="tight")
     plt.show()
 
     R_grid = np.sqrt(voxel.gravity_center[:, 0] ** 2 + voxel.gravity_center[:, 1] ** 2)
@@ -293,7 +297,7 @@ if __name__ == '__main__':
     ax.set_ylim(camera_0.screen.screen_size[0], 0)
     ax.legend(loc="lower right", fontsize=8, bbox_to_anchor=(1, 0))
     fig.tight_layout()
-    fig.savefig("toroidal_axes.pdf", bbox_inches="tight")
+    fig.savefig(OUTPUT_DIR / "toroidal_axes.pdf", bbox_inches="tight")
     fig.show()
 
     # fig = go.Figure()
