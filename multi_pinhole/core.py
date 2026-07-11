@@ -240,12 +240,13 @@ class Eye:
 
         self._wavelength_range = wavelength_range
         self._camera = None
+        self._frozen = False
 
     def __eq__(self, other):
         """bool: Return ``True`` when two eyes share identical intrinsic settings."""
         if isinstance(other, Eye):
             for k in self.__dict__.keys():
-                if k == "_camera":
+                if k in ("_camera", "_frozen"):
                     continue
                 elif not np.all(self.__dict__[k] == other.__dict__[k]):
                     return False
@@ -324,6 +325,20 @@ class Eye:
             Camera instance providing coordinate transforms for the eye.
         """
         self._camera = camera_obj
+
+    @property
+    def frozen(self):
+        """bool: Whether this eye's geometry is immutable."""
+        return self._frozen
+
+    def freeze(self):
+        """Freeze the eye geometry and make its public arrays read-only."""
+        if not self._frozen:
+            self._position.setflags(write=False)
+            self._principal_point.setflags(write=False)
+            self._eye_size.setflags(write=False)
+            self._frozen = True
+        return self
 
     @property
     def eye_type(self):
@@ -416,6 +431,7 @@ class Aperture:
         """
 
         self._stl_model = None
+        self._frozen = False
         self._position = np.array(position) if position is not None else np.array([0, 0, 0])
         self._direction = np.array(direction) if direction is not None else np.array([0, 0, 1])
 
@@ -437,7 +453,7 @@ class Aperture:
         """bool: Compare aperture geometry, ignoring linked STL mesh objects."""
         if isinstance(other, Aperture):
             for k in self.__dict__.keys():
-                if k == "_stl_model":
+                if k in ("_stl_model", "_frozen"):
                     continue
                 elif not np.all(self.__dict__[k] == other.__dict__[k]):
                     return False
@@ -460,6 +476,7 @@ class Aperture:
         -------
         self : Aperture
         """
+        self._ensure_mutable()
         if self._shape == "stl":
             return self
 
@@ -467,6 +484,27 @@ class Aperture:
                                                           resolution=resolution, max_size=max_size)
         self._stl_model.translate(self._position)
         # self._stl_model.rotate([0, 0, 1], np.pi / 2)
+        return self
+
+    @property
+    def frozen(self):
+        """bool: Whether this aperture's geometry is immutable."""
+        return self._frozen
+
+    def _ensure_mutable(self):
+        if self._frozen:
+            raise RuntimeError("Aperture geometry is frozen because its Camera is registered in a World")
+
+    def freeze(self):
+        """Freeze analytic geometry and the underlying STL data buffer."""
+        if not self._frozen:
+            self._position.setflags(write=False)
+            self._direction.setflags(write=False)
+            if isinstance(self._size, np.ndarray):
+                self._size.setflags(write=False)
+            if self._stl_model is not None:
+                self._stl_model.data.setflags(write=False)
+            self._frozen = True
         return self
 
     #  properties
@@ -595,6 +633,8 @@ class Screen:
         subpixel_size: [0.25 0.25]
         """
 
+        self._frozen = False
+
         # set the screen shape and size
         self._screen_shape, self._screen_size = stl_utils.shape_check(screen_shape, screen_size)
 
@@ -626,6 +666,8 @@ class Screen:
         """bool: Check if two screens share identical discretisation parameters."""
         if isinstance(other, Screen):
             for k in self.__dict__.keys():
+                if k == "_frozen":
+                    continue
                 if isinstance(self.__dict__[k], sparse.spmatrix):
                     if not np.all(self.__dict__[k].data == other.__dict__[k].data):
                         return False
@@ -687,11 +729,34 @@ class Screen:
         subpixel_resolution : int
             Positive integer denoting how many subpixels subdivide each pixel axis.
         """
+        self._ensure_mutable()
         # set the subpixel resolution
         if not isinstance(subpixel_resolution, int) or subpixel_resolution < 1:
             raise ValueError("subpixel_resolution must be integer and larger than 1")
         self._subpixel_resolution = subpixel_resolution
         self._set_variables()
+
+    @property
+    def frozen(self):
+        """bool: Whether this screen's geometry and discretisation are immutable."""
+        return self._frozen
+
+    def _ensure_mutable(self):
+        if self._frozen:
+            raise RuntimeError("Screen geometry is frozen because its Camera is registered in a World")
+
+    def freeze(self):
+        """Freeze screen geometry, cached grids, and sparse mappings."""
+        if not self._frozen:
+            for value in self.__dict__.values():
+                if isinstance(value, np.ndarray):
+                    value.setflags(write=False)
+                elif sparse.issparse(value):
+                    value.data.setflags(write=False)
+                    value.indices.setflags(write=False)
+                    value.indptr.setflags(write=False)
+            self._frozen = True
+        return self
 
     @property
     def subpixel_shape(self):
@@ -1199,20 +1264,65 @@ class Camera:
 
         self._camera_name = camera_name if camera_name is not None else "camera"
         self._world = None
-        self._eyes = eyes if isinstance(eyes, list) else [eyes, ]
+        self._worlds = []
+        self._frozen = False
+        self._eyes = list(eyes) if isinstance(eyes, (list, tuple)) else [eyes, ]
         if len({eye.eye_type for eye in self._eyes}) == 1:
             self._eye_type = self._eyes[0].eye_type
         else:
             raise ValueError("eye_type of all eyes should be the same")
-        self._apertures = apertures if isinstance(apertures, list) else [apertures, ]
+        self._apertures = list(apertures) if isinstance(apertures, (list, tuple)) else [apertures, ]
         self._screen = screen
-        self._camera_position = np.array(camera_position)
-        self._rotation_matrix = np.eye(3) if rotation_matrix is None else rotation_matrix
+        self._camera_position = np.array(camera_position, dtype=float, copy=True)
+        self._rotation_matrix = (np.eye(3) if rotation_matrix is None
+                                 else np.array(rotation_matrix, dtype=float, copy=True))
         if self._screen.subpixel_size.max() >= np.min([eye.eye_size for eye in self._eyes]):
             # warning
             raise ValueError(f"subpixel size of the screen must be smaller than eye size of all eyes "
                              f"(subpixel_size: {self._screen.subpixel_size}, "
                              f"smallest eye size: {np.min([eye.eye_size for eye in self._eyes])})")
+
+    @classmethod
+    def single_pinhole(cls,
+                       focal_length: float,
+                       eye_size: Union[float, Vector2DLike],
+                       screen_size: Union[Number, Vector2DLike],
+                       pixel_shape: Tuple[int, int],
+                       apertures: Union[Aperture, List[Aperture]],
+                       *,
+                       eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
+                       screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
+                       subpixel_resolution: int = 1,
+                       wavelength_range: Tuple[float, float] = (0.01, 0.1),
+                       camera_name: str = None):
+        """Create a single-pinhole camera in its local reference pose.
+
+        The screen center is the camera origin, the eye is centered at
+        ``(X, Y) = (0, 0)``, the world-space camera position is the origin,
+        and the world-to-camera rotation is the identity matrix.  The
+        resulting camera can be placed with :meth:`set_camera_position`,
+        :meth:`set_rotation_euler`, and the translation methods.
+
+        Parameters are forwarded to :class:`Eye` and :class:`Screen`; the
+        aperture geometry remains explicit because it is specific to the
+        physical camera being modeled.
+        """
+        eye = Eye(position=(0.0, 0.0),
+                  focal_length=focal_length,
+                  eye_type="pinhole",
+                  eye_size=eye_size,
+                  eye_shape=eye_shape,
+                  wavelength_range=wavelength_range)
+        screen = Screen(screen_shape=screen_shape,
+                        screen_size=screen_size,
+                        pixel_shape=pixel_shape,
+                        subpixel_resolution=subpixel_resolution)
+        return cls(eyes=eye,
+                   apertures=apertures,
+                   screen=screen,
+                   camera_position=(0.0, 0.0, 0.0),
+                   rotation_matrix=np.eye(3),
+                   camera_name=camera_name)
 
     def __repr__(self):
         """str: Render a concise textual summary of the camera configuration."""
@@ -1224,7 +1334,7 @@ class Camera:
             return False
         else:
             for k in self.__dict__.keys():
-                if k == "_world":
+                if k in ("_world", "_worlds", "_frozen"):
                     continue
                 elif k == "_eyes":
                     if len(self.__dict__[k]) != len(other.__dict__[k]):
@@ -1245,12 +1355,16 @@ class Camera:
                         return False
             d1 = self.__dict__.copy()
             d1.pop("_world")
+            d1.pop("_worlds")
+            d1.pop("_frozen")
             d1.pop("_eyes")
             d1.pop("_apertures")
             d1.pop("_screen")
 
             d2 = other.__dict__.copy()
             d2.pop("_world")
+            d2.pop("_worlds")
+            d2.pop("_frozen")
             d2.pop("_eyes")
             d2.pop("_apertures")
             d2.pop("_screen")
@@ -1267,13 +1381,13 @@ class Camera:
 
     @property
     def eyes(self):
-        """List[Eye]: Collection of configured eyes mounted on the camera."""
-        return self._eyes
+        """tuple[Eye, ...]: Eyes mounted on the camera, exposed read-only."""
+        return tuple(self._eyes)
 
     @property
     def apertures(self):
-        """List[Aperture]: Aperture geometries paired with the camera."""
-        return self._apertures
+        """tuple[Aperture, ...]: Aperture geometries, exposed read-only."""
+        return tuple(self._apertures)
 
     @property
     def screen(self):
@@ -1293,7 +1407,7 @@ class Camera:
 
     @property
     def camera_y(self):
-        """numpy.ndarray: camera up direction in the world coordinate system."""
+        """numpy.ndarray: camera Y (image-down) direction in world coordinates."""
         # Y-direction of the camera coordinate system in the world coordinate system
         return self.rotation_matrix.T @ np.array([0, 1, 0]).ravel()
 
@@ -1317,12 +1431,43 @@ class Camera:
         rotation_matrix : np.ndarray
             ``3×3`` orthonormal rotation transforming world vectors into camera coordinates.
         """
-        self._rotation_matrix = rotation_matrix
+        self._ensure_mutable()
+        self.set_rotation_matrix(rotation_matrix)
 
     @property
     def world(self):
-        """World or None: Scene graph currently observed by the camera."""
+        """World or None: Most recently registered world, if any."""
         return self._world
+
+    @property
+    def worlds(self):
+        """tuple[World, ...]: Worlds currently sharing this frozen camera."""
+        return tuple(self._worlds)
+
+    @property
+    def frozen(self):
+        """bool: Whether this camera and its optical geometry are immutable."""
+        return self._frozen
+
+    def _ensure_mutable(self):
+        if self._frozen:
+            raise RuntimeError(
+                "Camera geometry is frozen because it is registered in a World; "
+                "create a new Camera and use World.change_camera()"
+            )
+
+    def freeze(self):
+        """Freeze this camera and all Eye, Screen, and Aperture geometry."""
+        if not self._frozen:
+            for eye in self._eyes:
+                eye.freeze()
+            self._screen.freeze()
+            for aperture in self._apertures:
+                aperture.freeze()
+            self._camera_position.setflags(write=False)
+            self._rotation_matrix.setflags(write=False)
+            self._frozen = True
+        return self
 
     def set_world(self, world_obj):
         """None: Register the :class:`World` scene providing geometry and emitters.
@@ -1332,10 +1477,22 @@ class Camera:
         world_obj : World
             World instance this camera observes.
         """
+        if world_obj is None:
+            self._worlds.clear()
+            self._world = None
+            return
+        if not any(world is world_obj for world in self._worlds):
+            self._worlds.append(world_obj)
         self._world = world_obj
+        self.freeze()
 
-    def move_camera(self, camera_position):
-        """Camera: Update the camera origin within the world coordinate system.
+    def unset_world(self, world_obj):
+        """Detach one World while keeping the camera permanently frozen."""
+        self._worlds = [world for world in self._worlds if world is not world_obj]
+        self._world = self._worlds[-1] if self._worlds else None
+
+    def set_camera_position(self, camera_position):
+        """Set the camera origin to an absolute world-coordinate position.
 
         Parameters
         ----------
@@ -1347,11 +1504,37 @@ class Camera:
         Camera
             The camera instance for fluent-style chaining.
         """
-        self._camera_position = np.array(camera_position)
+        self._ensure_mutable()
+        camera_position = np.array(camera_position, dtype=float, copy=True)
+        if camera_position.shape != (3,):
+            raise ValueError("camera_position must be a 3D vector")
+        self._camera_position = camera_position
         return self
 
-    def set_rotation_matrix(self, order, angle, degrees=True):
-        """Camera: Set the world-to-camera rotation using Euler angles.
+    def translate_world(self, offset):
+        """Translate the camera by an offset expressed in world coordinates."""
+        self._ensure_mutable()
+        offset = np.asarray(offset)
+        if offset.shape != (3,):
+            raise ValueError("offset must be a 3D vector")
+        self._camera_position = self._camera_position + offset
+        return self
+
+    def translate_camera(self, offset):
+        """Translate the camera by an offset expressed in camera coordinates.
+
+        This operation uses the current rotation, so it generally does not
+        commute with changing the camera orientation.
+        """
+        self._ensure_mutable()
+        offset = np.asarray(offset)
+        if offset.shape != (3,):
+            raise ValueError("offset must be a 3D vector")
+        self._camera_position = self._camera_position + self.rotation_matrix.T @ offset
+        return self
+
+    def set_rotation_euler(self, order, angle, degrees=True):
+        """Set the absolute world-to-camera rotation using Euler angles.
 
         Parameters
         ----------
@@ -1367,8 +1550,104 @@ class Camera:
         Camera
             The camera instance with the updated rotation matrix.
         """
+        self._ensure_mutable()
         self._rotation_matrix = Rotation.from_euler(order, angle, degrees=degrees).as_matrix()
         return self
+
+    def set_rotation_matrix(self, rotation_matrix):
+        """Set the absolute world-to-camera rotation matrix."""
+        self._ensure_mutable()
+        matrix = np.array(rotation_matrix, dtype=float, copy=True)
+        if matrix.shape != (3, 3):
+            raise ValueError("rotation_matrix must have shape (3, 3)")
+        if not np.allclose(matrix @ matrix.T, np.eye(3), rtol=0.0, atol=1e-10):
+            raise ValueError("rotation_matrix must be orthonormal")
+        if not np.isclose(np.linalg.det(matrix), 1.0, rtol=0.0, atol=1e-10):
+            raise ValueError("rotation_matrix must have determinant +1")
+        self._rotation_matrix = matrix
+        return self
+
+    def set_orientation(self, look, *, right=None, down=None):
+        """Set camera orientation from axes expressed in world coordinates.
+
+        Parameters
+        ----------
+        look : Vector3DLike
+            Camera Z direction (screen normal pointing toward the scene).
+        right : Vector3DLike, optional
+            Approximate camera X direction (image-right) in world coordinates.
+        down : Vector3DLike, optional
+            Approximate camera Y direction (image-down) in world coordinates.
+
+        Notes
+        -----
+        Exactly one of ``right`` and ``down`` must be supplied.  The given
+        lateral axis is projected onto the plane perpendicular to ``look``
+        before the remaining axis is formed, which removes small CAD or
+        floating-point non-orthogonality while preserving a right-handed
+        camera frame.
+        """
+        if (right is None) == (down is None):
+            raise ValueError("exactly one of right and down must be provided")
+
+        def normalized(vector, name):
+            vector = np.asarray(vector, dtype=float)
+            if vector.shape != (3,):
+                raise ValueError(f"{name} must be a 3D vector")
+            norm = np.linalg.norm(vector)
+            if not np.isfinite(norm) or norm <= 1e-12:
+                raise ValueError(f"{name} must be a non-zero finite vector")
+            return vector / norm
+
+        z_axis = normalized(look, "look")
+        if right is not None:
+            x_candidate = np.asarray(right, dtype=float)
+            if x_candidate.shape != (3,):
+                raise ValueError("right must be a 3D vector")
+            x_axis = normalized(x_candidate - np.dot(x_candidate, z_axis) * z_axis, "right")
+            y_axis = np.cross(z_axis, x_axis)
+        else:
+            y_candidate = np.asarray(down, dtype=float)
+            if y_candidate.shape != (3,):
+                raise ValueError("down must be a 3D vector")
+            y_axis = normalized(y_candidate - np.dot(y_candidate, z_axis) * z_axis, "down")
+            x_axis = np.cross(y_axis, z_axis)
+
+        return self.set_rotation_matrix(np.stack([x_axis, y_axis, z_axis]))
+
+    def set_orientation_from_points(self, look_point, *, right_point=None, down_point=None):
+        """Set orientation from world-coordinate points viewed from the camera.
+
+        Parameters
+        ----------
+        look_point : Vector3DLike
+            A world-coordinate point in the camera's look direction.
+        right_point : Vector3DLike, optional
+            A world-coordinate point in the camera's image-right direction.
+        down_point : Vector3DLike, optional
+            A world-coordinate point in the camera's image-down direction.
+
+        Notes
+        -----
+        Exactly one of ``right_point`` and ``down_point`` must be supplied.
+        Each point is converted to a direction by subtracting the current
+        :attr:`camera_position`, then :meth:`set_orientation` performs the
+        orthonormalization.  Set the camera position before calling this
+        method.
+        """
+        if (right_point is None) == (down_point is None):
+            raise ValueError("exactly one of right_point and down_point must be provided")
+
+        def direction_to(point, name):
+            point = np.asarray(point, dtype=float)
+            if point.shape != (3,):
+                raise ValueError(f"{name} must be a 3D point")
+            return point - self.camera_position
+
+        look = direction_to(look_point, "look_point")
+        right = None if right_point is None else direction_to(right_point, "right_point")
+        down = None if down_point is None else direction_to(down_point, "down_point")
+        return self.set_orientation(look, right=right, down=down)
 
     def world2camera(self, points):
         """transform points from the world coordinate system to the camera coordinate system
@@ -1398,6 +1677,7 @@ class Camera:
         ValueError
             if eye_type of the new eye is different from the other eyes
         """
+        self._ensure_mutable()
         if self._eye_type is None:
             self._eye_type = eye.eye_type
         elif self._eye_type != eye.eye_type:
@@ -1412,6 +1692,7 @@ class Camera:
         aperture : Aperture
             an aperture object
         """
+        self._ensure_mutable()
         self._apertures.append(aperture)
 
     def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True):
@@ -1704,7 +1985,7 @@ if __name__ == '__main__':
                         Aperture(shape="circle", size=20, position=[0, 0, 80]).set_model(resolution=40, max_size=50),
                         Aperture(shape="circle", size=60, position=[0, 10, 120])],
                     camera_position=[0, 900, 0])
-    camera.set_rotation_matrix("xyz", (90, 0, 0), degrees=True)
+    camera.set_rotation_euler("xyz", (90, 0, 0), degrees=True)
 
     camera.print_settings()
     fig = plt.figure()

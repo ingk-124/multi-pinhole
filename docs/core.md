@@ -244,6 +244,51 @@ enforces that the smallest eye's `eye_size` is larger than the screen's
 `subpixel_size`, so a single ray footprint is never smaller than one
 subpixel (which would make the rasterization step above silently drop it).
 
+For the common one-screen/one-pinhole case, `Camera.single_pinhole(...)`
+constructs the geometry in a local reference pose: the screen and eye are
+centered on the camera origin, the world-space position is `(0, 0, 0)`, and
+the rotation is the identity. Place that rigid assembly afterward:
+
+```python
+camera = Camera.single_pinhole(
+    focal_length=25,
+    eye_size=1,
+    screen_size=61 * 0.13,
+    pixel_shape=(61, 61),
+    subpixel_resolution=5,
+    apertures=aperture,
+).set_rotation_euler(
+    "zxz", (2.9, 98, -19), degrees=True,
+).set_camera_position(
+    world_position,
+).translate_camera(
+    (4.15, 0, 0),
+)
+```
+
+`set_camera_position` and `set_rotation_euler` are absolute setters.
+`translate_world` applies a world-coordinate offset, while
+`translate_camera` converts a camera-coordinate offset through the current
+rotation before moving the camera, so rotation and camera-local translation
+are order-dependent. `set_rotation_matrix(matrix)` accepts a world-to-camera
+matrix directly. When CAD provides the final screen axes instead of Euler
+angles, `set_orientation(look=normal, right=screen_right)` (or its `down=`
+form) orthonormalizes those world-coordinate directions and constructs the
+same matrix directly. If CAD supplies points rather than direction vectors,
+first set the camera position and call
+`set_orientation_from_points(look_point=..., right_point=...)` (or its
+`down_point=` form); the method subtracts `camera_position` before applying
+the same orientation calculation.
+
+Registering a camera in a `World` freezes its optical configuration. The
+camera pose and all `Eye`, `Screen`, and `Aperture` geometry become
+immutable; exposed NumPy geometry arrays, screen sparse mappings, and STL
+data buffers are made read-only, and mutating methods raise `RuntimeError`.
+The `eyes` and `apertures` properties expose tuples so their collections
+cannot be edited externally. To change a registered setup, construct a new
+camera and pass it to `World.change_camera`. A frozen camera may safely be
+shared by multiple worlds, and removing it from a world does not thaw it.
+
 ### `calc_image_vec`: world points → sparse screen image, step by step
 
 `Camera.calc_image_vec(eye_num, points, ...)` is the top-level entry point

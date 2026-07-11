@@ -87,6 +87,29 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 `Camera` は（すべて同じ `eye_type` を共有する）1つ以上の `Eye` インスタンス、`Aperture` オブジェクトのリスト、1つの `Screen` をまとめ、`camera_position` と `rotation_matrix` によってアセンブリ全体をワールド空間に配置・向き付けします。【F:multi_pinhole/core.py†L1185-L1232】コンストラクタは、最小の eye の `eye_size` が screen の `subpixel_size` より大きいことを強制します。これにより、1本の光線の足跡が1サブピクセルより小さくなること（それは上記のラスタライズステップで暗黙のうちに取りこぼされてしまいます）がないようにしています。
 
+1つのscreenと1つのpinholeからなる一般的な構成には、`Camera.single_pinhole(...)` を利用できます。このファクトリは、screen中心とeye中心をカメラ原点に置き、`camera_position=(0, 0, 0)`、単位回転行列のローカル基準姿勢で光学系を生成します。その後、Camera全体を配置します。
+
+```python
+camera = Camera.single_pinhole(
+    focal_length=25,
+    eye_size=1,
+    screen_size=61 * 0.13,
+    pixel_shape=(61, 61),
+    subpixel_resolution=5,
+    apertures=aperture,
+).set_rotation_euler(
+    "zxz", (2.9, 98, -19), degrees=True,
+).set_camera_position(
+    world_position,
+).translate_camera(
+    (4.15, 0, 0),
+)
+```
+
+`set_camera_position` と `set_rotation_euler` は絶対値を設定します。`translate_world` はワールド座標の相対移動、`translate_camera` は現在の回転を使ってカメラ座標の移動量をワールド座標へ変換する相対移動です。したがって、回転とカメラ座標での相対移動は順序に依存します。CADなどからworld→camera行列を直接得られる場合は `set_rotation_matrix(matrix)` を使えます。最終的なscreen軸が得られる場合は、`set_orientation(look=normal, right=screen_right)`（または `down=`）によって、ワールド座標で与えた軸を直交化して同じ行列を直接構成できます。CADが方向ベクトルではなく座標点を与える場合は、先にCamera位置を設定してから `set_orientation_from_points(look_point=..., right_point=...)`（または `down_point=`）を呼ぶと、各点から `camera_position` を引いて同じ姿勢計算を行います。
+
+Cameraを `World` に登録すると、その光学構成はfreezeされます。Cameraの姿勢と、すべての `Eye`、`Screen`、`Aperture` のジオメトリは変更不可になり、公開されるNumPy配列、screenの疎行列マッピング、STLデータバッファもread-onlyになります。変更メソッドは `RuntimeError` を送出し、`eyes` と `apertures` は外部からコレクションを変更できないtupleとして公開されます。登録済みの構成を変更する場合は、新しいCameraを作って `World.change_camera` で交換します。freezeされたCameraは複数Worldで安全に共有でき、Worldから削除してもfreezeは解除されません。
+
 ### `calc_image_vec`：ワールド座標の点から疎な screen 画像へ、ステップごとの解説
 
 `Camera.calc_image_vec(eye_num, points, ...)` は、`World` が（カメラの eye ごとに1回）点のバッチを1つの eye を通して投影するために呼び出す、トップレベルのエントリポイントです。次の3ステップを実行します。【F:multi_pinhole/core.py†L1434-L1472】
