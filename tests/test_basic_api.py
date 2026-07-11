@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pytest
+from scipy.spatial.transform import Rotation
 
 from multi_pinhole import Aperture, Camera, Eye, Rays, Screen, Voxel, World
 
@@ -37,6 +39,222 @@ def test_camera_initialization_preserves_public_api():
     assert isinstance(camera, Camera)
     assert len(camera.eyes) == 1
     assert isinstance(camera.screen, Screen)
+
+
+def test_single_pinhole_factory_builds_camera_in_reference_pose():
+    aperture = Aperture(shape="circle", size=1.0, position=(0.0, 0.0, 5.0))
+
+    camera = Camera.single_pinhole(
+        focal_length=25.0,
+        eye_size=1.0,
+        screen_size=61 * 0.13,
+        pixel_shape=(61, 61),
+        subpixel_resolution=5,
+        apertures=aperture,
+    )
+
+    assert len(camera.eyes) == 1
+    np.testing.assert_allclose(camera.eyes[0].position, np.array([0.0, 0.0, 25.0]))
+    np.testing.assert_array_equal(camera.screen.pixel_shape, np.array([61, 61]))
+    np.testing.assert_allclose(camera.camera_position, np.zeros(3))
+    np.testing.assert_allclose(camera.rotation_matrix, np.eye(3))
+
+
+def test_camera_absolute_pose_and_relative_translation_methods():
+    camera = make_camera()
+    rotation = Rotation.from_euler("z", 90.0, degrees=True).as_matrix()
+
+    returned = camera.set_camera_position([1.0, 2.0, 3.0]).set_rotation_matrix(rotation)
+    assert returned is camera
+
+    camera.translate_world([4.0, 5.0, 6.0])
+    np.testing.assert_allclose(camera.camera_position, np.array([5.0, 7.0, 9.0]))
+
+    camera.translate_camera([2.0, 0.0, 0.0])
+    np.testing.assert_allclose(
+        camera.camera_position,
+        np.array([5.0, 7.0, 9.0]) + rotation.T @ np.array([2.0, 0.0, 0.0]),
+        atol=1e-12,
+    )
+
+
+def test_set_orientation_from_look_and_right_builds_world_to_camera_matrix():
+    camera = make_camera().set_orientation(look=[0.0, 1.0, 0.0], right=[1.0, 0.0, 0.0])
+
+    np.testing.assert_allclose(camera.camera_x, np.array([1.0, 0.0, 0.0]), atol=1e-12)
+    np.testing.assert_allclose(camera.camera_y, np.array([0.0, 0.0, -1.0]), atol=1e-12)
+    np.testing.assert_allclose(camera.camera_z, np.array([0.0, 1.0, 0.0]), atol=1e-12)
+
+
+def test_set_orientation_from_look_and_down_builds_same_frame():
+    camera = make_camera().set_orientation(look=[0.0, 1.0, 0.0], down=[0.0, 0.0, -1.0])
+
+    np.testing.assert_allclose(camera.rotation_matrix, np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+    ]), atol=1e-12)
+
+
+def test_set_orientation_rejects_parallel_axes():
+    with pytest.raises(ValueError, match="right must be a non-zero"):
+        make_camera().set_orientation(look=[0.0, 0.0, 1.0], right=[0.0, 0.0, 2.0])
+
+
+def test_set_orientation_from_world_points_uses_camera_position_as_origin():
+    camera = make_camera().set_camera_position([10.0, 20.0, 30.0])
+
+    returned = camera.set_orientation_from_points(
+        look_point=[10.0, 25.0, 30.0],
+        right_point=[14.0, 22.0, 30.0],
+    )
+
+    assert returned is camera
+    np.testing.assert_allclose(camera.camera_x, np.array([1.0, 0.0, 0.0]), atol=1e-12)
+    np.testing.assert_allclose(camera.camera_y, np.array([0.0, 0.0, -1.0]), atol=1e-12)
+    np.testing.assert_allclose(camera.camera_z, np.array([0.0, 1.0, 0.0]), atol=1e-12)
+
+
+def test_set_orientation_from_points_requires_position_to_be_set_first():
+    camera = make_camera().set_camera_position([10.0, 20.0, 30.0])
+
+    with pytest.raises(ValueError, match="look must be a non-zero"):
+        camera.set_orientation_from_points(
+            look_point=camera.camera_position,
+            right_point=[11.0, 20.0, 30.0],
+        )
+
+
+def test_set_rotation_matrix_rejects_non_rotation_matrix():
+    with pytest.raises(ValueError, match="orthonormal"):
+        make_camera().set_rotation_matrix(np.diag([1.0, 1.0, 2.0]))
+
+
+def test_world_registration_freezes_camera_and_child_geometry():
+    camera = make_camera()
+    world = World(cameras=[camera], verbose=0)
+
+    assert camera.world is world
+    assert camera.frozen
+    assert camera.eyes[0].frozen
+    assert camera.screen.frozen
+    assert camera.apertures[0].frozen
+    assert isinstance(camera.eyes, tuple)
+    assert isinstance(camera.apertures, tuple)
+
+    with pytest.raises(RuntimeError, match="Camera geometry is frozen"):
+        camera.translate_world([1.0, 0.0, 0.0])
+    with pytest.raises(RuntimeError, match="Screen geometry is frozen"):
+        camera.screen.subpixel_resolution = 2
+    with pytest.raises(RuntimeError, match="Aperture geometry is frozen"):
+        camera.apertures[0].set_model()
+    with pytest.raises(ValueError, match="read-only"):
+        camera.camera_position[0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        camera.eyes[0].position[0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        camera.screen.pixel_position[0, 0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        camera.screen.transform_matrix.data[0] = 2.0
+    with pytest.raises(ValueError, match="read-only"):
+        camera.apertures[0].stl_model.data[0] = camera.apertures[0].stl_model.data[0]
+
+
+def test_world_camera_add_change_and_remove_manage_registration():
+    world = World(cameras=None, verbose=0)
+    first = make_camera()
+    second = make_camera().set_camera_position([1.0, 2.0, 3.0])
+
+    world.add_camera("main", first)
+    assert first.world is world
+    assert first.frozen
+    assert world.cameras["main"] is first
+
+    world.change_camera("main", second)
+    assert first.world is None
+    assert first.frozen
+    assert second.world is world
+    assert second.frozen
+    assert world.cameras["main"] is second
+    assert world.visible_voxels["main"] is None
+    assert world.projection["main"] == [None]
+    assert world.P_matrix["main"] is None
+
+    world.remove_camera("main")
+    assert second.world is None
+    assert second.frozen
+    assert world.cameras == {}
+
+
+def test_frozen_camera_can_be_shared_by_multiple_worlds():
+    camera = make_camera()
+    first_world = World(cameras=[camera], verbose=0)
+    second_world = World(cameras=[camera], verbose=0)
+
+    assert camera.frozen
+    assert first_world in camera.worlds
+    assert second_world in camera.worlds
+
+    first_world.remove_camera(0)
+    assert camera.world is second_world
+    assert camera.worlds == (second_world,)
+
+
+def test_world_accepts_keyed_camera_dict_and_preserves_keys_after_removal():
+    left = make_camera()
+    right = make_camera().set_camera_position([1.0, 0.0, 0.0])
+    world = World(cameras={"left": left, "right": right}, verbose=0)
+
+    assert list(world.cameras) == ["left", "right"]
+    assert world.cameras["left"] is left
+    assert world.cameras["right"] is right
+
+    world.remove_camera("left")
+
+    assert list(world.cameras) == ["right"]
+    assert world.cameras["right"] is right
+    assert list(world.projection) == ["right"]
+    assert list(world.P_matrix) == ["right"]
+
+
+def test_world_list_camera_keys_are_not_renumbered_after_removal():
+    cameras = [make_camera(), make_camera(), make_camera()]
+    world = World(cameras=cameras, verbose=0)
+
+    world.remove_camera(1)
+
+    assert list(world.cameras) == [0, 2]
+    assert world.cameras[0] is cameras[0]
+    assert world.cameras[2] is cameras[2]
+
+
+def test_add_camera_requires_unique_explicit_key():
+    world = World(cameras={"left": make_camera()}, verbose=0)
+
+    with pytest.raises(TypeError):
+        world.cameras["right"] = make_camera()
+
+    with pytest.raises(KeyError, match="already registered"):
+        world.add_camera("left", make_camera())
+
+    world.add_camera("right", make_camera())
+    assert list(world.cameras) == ["left", "right"]
+
+
+def test_projection_pipeline_supports_string_camera_key():
+    camera = make_camera()
+    voxel = Voxel(
+        x_axis=np.array([-0.1, 0.1]),
+        y_axis=np.array([-0.1, 0.1]),
+        z_axis=np.array([20.0, 20.2]),
+    )
+    world = World(voxel=voxel, cameras={"right": camera}, verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=1, verbose=0, parallel=1)
+
+    assert world.projection["right"][0].shape == (camera.screen.N_subpixel, voxel.N_voxel)
+    assert world.P_matrix["right"].shape == (camera.screen.N_pixel, voxel.N_voxel)
 
 
 def test_eye_calc_rays_projects_front_points_and_masks_back_points():

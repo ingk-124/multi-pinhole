@@ -16,8 +16,10 @@ See ``docs/world.md`` for a narrative overview of the module.
 import gc
 import os
 import time
+from collections.abc import Hashable, Mapping
 from concurrent.futures import as_completed
 from concurrent.futures.thread import ThreadPoolExecutor
+from types import MappingProxyType
 from typing import Tuple, List
 
 import dill
@@ -161,7 +163,7 @@ class World:
 
     def __init__(self,
                  voxel: Voxel = None,
-                 cameras: list[Camera] | Camera = None,
+                 cameras: Mapping[Hashable, Camera] | list[Camera] | Camera = None,
                  walls: list[mesh.Mesh] | mesh.Mesh = None,
                  inside_func: callable = None,
                  verbose: int = 1
@@ -174,10 +176,10 @@ class World:
             Voxel volume description used to compute visibility and projection
             matrices. A new :class:`~multi_pinhole.Voxel` instance is created
             when ``None`` (default).
-        cameras : Camera or list[Camera], optional
-            Camera instances that should be registered with the world. Any
-            single instance is promoted to a list. When omitted the world starts
-            without cameras.
+        cameras : Camera, list[Camera], or dict[Hashable, Camera], optional
+            Cameras registered with the world. Lists receive integer keys from
+            ``range(len(cameras))``; dictionaries retain their supplied keys.
+            A single Camera receives key ``0``.
         walls : mesh.Mesh or list[mesh.Mesh], optional
             STL meshes representing obstructions or environmental walls. Each
             mesh is registered to support visibility checks. ``None`` (default)
@@ -202,9 +204,7 @@ class World:
         self._voxel.set_world(self)
 
         # Cameras
-        # TODO: use dictionary to store cameras and other attributes related to cameras
-        # self._cameras = type_check_and_list(cameras, Camera)
-        self._cameras = {i: cam for i, cam in enumerate(type_check_and_list(cameras, Camera))}
+        self._cameras = self._normalize_cameras(cameras)
         for _ in self._cameras.values():
             _.set_world(self)
 
@@ -226,6 +226,26 @@ class World:
         # set inside vertices if inside_func is provided
         if inside_func is not None:
             self.set_inside_vertices(inside_func)
+
+    @staticmethod
+    def _normalize_cameras(cameras):
+        """Normalize Camera, list, or keyed dict input to a new dictionary."""
+        if cameras is None:
+            return {}
+        if isinstance(cameras, Camera):
+            return {0: cameras}
+        if isinstance(cameras, Mapping):
+            normalized = dict(cameras)
+        elif isinstance(cameras, (list, tuple)):
+            normalized = dict(enumerate(cameras))
+        else:
+            raise TypeError("cameras must be a Camera, list/tuple of Camera, dict of Camera, or None")
+
+        if not all(isinstance(camera, Camera) for camera in normalized.values()):
+            raise TypeError("every cameras value must be a Camera")
+        if len({id(camera) for camera in normalized.values()}) != len(normalized):
+            raise ValueError("the same Camera instance cannot be registered twice in one World")
+        return normalized
 
     def __repr__(self):
         """Represent the world with its core components for debugging.
@@ -313,8 +333,8 @@ class World:
     # MARK: Properties
     @property
     def cameras(self):
-        """dict[int, Camera]: Mapping of camera indices to instances."""
-        return self._cameras
+        """Mapping[Hashable, Camera]: Read-only stable-key camera mapping."""
+        return MappingProxyType(self._cameras)
 
     @property
     def voxel(self):
@@ -414,12 +434,12 @@ class World:
         self._invalidate_visibility_cache()
 
     @cameras.setter
-    def cameras(self, cameras: list[Camera] | Camera):
+    def cameras(self, cameras: Mapping[Hashable, Camera] | list[Camera] | Camera):
         """Register or replace cameras managed by the world.
 
         Parameters
         ----------
-        cameras : Camera or list[Camera]
+        cameras : Camera, list[Camera], or dict[Hashable, Camera]
             Camera instances that should replace the current set.
 
         Notes
@@ -428,28 +448,39 @@ class World:
         cached visibility and projection matrices are reused to avoid
         recalculation.
         """
-        cameras = type_check_and_list(cameras, Camera)
+        cameras = self._normalize_cameras(cameras)
+        old_cameras = self._cameras
+        old_indices = {id(camera): index for index, camera in old_cameras.items()}
         camera_dict = {}
+        visible_vertices = {}
         visible_voxels = {}
         projection = {}
         P_matrix = {}
-        for c_, camera in enumerate(cameras):
-            if camera in self._cameras.values():
-                # get the index of the camera in the original camera list
-                ind = list(self._cameras.values()).index(camera)
+        for camera_key, camera in cameras.items():
+            if id(camera) in old_indices:
+                ind = old_indices[id(camera)]
                 # keep the previous visible voxels, projection, and P matrix
-                visible_voxels[c_] = self._visible_voxels[ind]
-                projection[c_] = self._projection[ind]
-                P_matrix[c_] = self._P_matrix[ind]
+                visible_vertices[camera_key] = self._visible_vertices[ind]
+                visible_voxels[camera_key] = self._visible_voxels[ind]
+                projection[camera_key] = self._projection[ind]
+                P_matrix[camera_key] = self._P_matrix[ind]
             else:
                 # if the camera is not in the original camera list,
                 # set the visible voxels, projection, and P matrix to None
-                visible_voxels[c_] = None
-                projection[c_] = None
-                P_matrix[c_] = None
-            camera_dict[c_] = camera
+                visible_vertices[camera_key] = None
+                visible_voxels[camera_key] = None
+                projection[camera_key] = [None] * len(camera.eyes)
+                P_matrix[camera_key] = None
+            camera.set_world(self)
+            camera_dict[camera_key] = camera
+
+        retained_ids = {id(camera) for camera in cameras}
+        for old_camera in old_cameras.values():
+            if id(old_camera) not in retained_ids:
+                old_camera.unset_world(self)
 
         self._cameras = camera_dict
+        self._visible_vertices = visible_vertices
         self._visible_voxels = visible_voxels
         self._projection = projection
         self._P_matrix = P_matrix
@@ -458,7 +489,7 @@ class World:
             print("Notice: All cameras are updated.")
         elif None in visible_voxels.values():
             # Notice: *th, *th, and *th cameras are reused.
-            reused_index = [f"{i + 1}th" for i in visible_voxels.keys() if visible_voxels[i] is not None]
+            reused_index = [repr(key) for key in visible_voxels if visible_voxels[key] is not None]
             xth = ", ".join(reused_index[:-1]) + " and " + reused_index[-1] if \
                 len(reused_index) > 1 else f"{reused_index[0]}"
             print(f"Notice: {xth} camera{'s are' if len(reused_index) > 1 else ' is'} reused.")
@@ -467,84 +498,96 @@ class World:
             print("Notice: All cameras are reused.")
         print(self.camera_info())
 
-    def add_camera(self, new_camera: Camera | list[Camera]):
-        """Append additional cameras to the world.
+    def add_camera(self, camera_key: Hashable, new_camera: Camera):
+        """Register one Camera under an explicit stable key.
 
         Parameters
         ----------
-        new_camera : Camera or list[Camera]
-            Camera objects that should be appended to the existing mapping.
+        camera_key : Hashable
+            Stable key used by all per-camera caches.
+        new_camera : Camera
+            Camera object to register.
 
         Notes
         -----
         Newly inserted cameras start without cached visibility or projection
         data until recomputation is triggered.
         """
-        new_camera = type_check_and_list(new_camera, Camera)
-        current_len = len(self._cameras)
-        for i, cam in enumerate(new_camera):
-            self._cameras[current_len + i] = cam
-            self._visible_voxels[current_len + i] = None
-            self._projection[current_len + i] = [None] * len(cam.eyes)
-            self._P_matrix[current_len + i] = None
+        if not isinstance(camera_key, Hashable):
+            raise TypeError("camera_key must be hashable")
+        if camera_key in self._cameras:
+            raise KeyError(f"camera key {camera_key!r} is already registered")
+        if not isinstance(new_camera, Camera):
+            raise TypeError("new_camera must be a Camera")
+        if any(new_camera is existing for existing in self._cameras.values()):
+            raise ValueError("the same Camera instance cannot be registered twice in one World")
+
+        new_camera.set_world(self)
+        self._cameras[camera_key] = new_camera
+        self._visible_vertices[camera_key] = None
+        self._visible_voxels[camera_key] = None
+        self._projection[camera_key] = [None] * len(new_camera.eyes)
+        self._P_matrix[camera_key] = None
         print(self.camera_info())
 
-    def remove_camera(self, index: int | list[int]):
-        """Remove one or more cameras by index.
+    def remove_camera(self, camera_key):
+        """Remove one camera without renumbering any remaining keys.
 
         Parameters
         ----------
-        index : int or list[int]
-            Camera indices that should be deleted from the world mapping.
+        camera_key : Hashable
+            Key of the Camera to remove.
 
         Notes
         -----
-        After removal, camera-related dictionaries are re-indexed so that
-        indices remain contiguous and zero-based.
+        Keys are stable: removing one Camera does not change any other key.
+        A future explicit key-reset helper may be added if compact integer
+        keys are needed.
         """
-        index = type_check_and_list(index, int)
-        for i in sorted(index, reverse=True):
-            if i in self._cameras:
-                del self._cameras[i]
-                del self._visible_voxels[i]
-                del self._projection[i]
-                del self._P_matrix[i]
-        # re-index the cameras and related attributes
-        self._cameras = {new_i: cam for new_i, cam in enumerate(self._cameras.values())}
-        self._visible_voxels = {new_i: self._visible_voxels[old_i] for new_i, old_i in
-                                enumerate(sorted(self._visible_voxels.keys()))}
-        self._projection = {new_i: self._projection[old_i] for new_i, old_i in
-                            enumerate(sorted(self._projection.keys()))}
-        self._P_matrix = {new_i: self._P_matrix[old_i] for new_i, old_i in enumerate(sorted(self._P_matrix.keys()))}
+        if camera_key not in self._cameras:
+            raise KeyError(f"camera key {camera_key!r} is not registered")
+        removed_camera = self._cameras.pop(camera_key)
+        self._visible_vertices.pop(camera_key)
+        self._visible_voxels.pop(camera_key)
+        self._projection.pop(camera_key)
+        self._P_matrix.pop(camera_key)
+        removed_camera.unset_world(self)
+        # TODO: Add an explicit reset_camera_keys() helper if compact integer
+        # keys are ever needed. Automatic renumbering is intentionally avoided.
         print(self.camera_info())
 
-    def change_camera(self, index: int | list[int], camera: Camera | list[Camera]):
-        """Replace cameras at the provided indices.
+    def change_camera(self, camera_key: Hashable, camera: Camera):
+        """Replace the Camera at a stable key.
 
         Parameters
         ----------
-        index : int or list[int]
-            Positions within the current camera mapping that should be
-            updated.
-        camera : Camera or list[Camera]
-            New camera instances to assign to the corresponding indices.
+        camera_key : Hashable
+            Existing key whose Camera should be replaced.
+        camera : Camera
+            New Camera instance assigned to the key.
 
         Raises
         ------
-        ValueError
-            Raised when ``index`` and ``camera`` lengths differ.
+        KeyError
+            Raised when ``camera_key`` is not registered.
         """
-        index = type_check_and_list(index, int)
-        camera = type_check_and_list(camera, Camera)
-        if len(index) != len(camera):
-            raise ValueError("The length of index and camera should be the same.")
+        if camera_key not in self._cameras:
+            raise KeyError(f"camera key {camera_key!r} is not registered")
+        if not isinstance(camera, Camera):
+            raise TypeError("camera must be a Camera")
+        if any(camera is existing for existing_key, existing in self._cameras.items()
+               if existing_key != camera_key):
+            raise ValueError("the same Camera instance cannot be registered twice in one World")
 
-        for i, cam in zip(index, camera):
-            if i in self._cameras:
-                self._cameras[i] = cam
-                self._visible_voxels[i] = None
-                self._projection[i] = [None] * len(cam.eyes)
-                self._P_matrix[i] = None
+        old_camera = self._cameras[camera_key]
+        camera.set_world(self)
+        self._cameras[camera_key] = camera
+        self._visible_vertices[camera_key] = None
+        self._visible_voxels[camera_key] = None
+        self._projection[camera_key] = [None] * len(camera.eyes)
+        self._P_matrix[camera_key] = None
+        if old_camera is not camera:
+            old_camera.unset_world(self)
 
         print(self.camera_info())
 
@@ -636,7 +679,7 @@ class World:
             return np.ones(points.shape[0], dtype=bool)
         return self._inside_function(*points.T, **self._inside_kwargs).astype(bool)
 
-    def find_visible_points(self, points: np.ndarray, camera_idx: int, eye_idx: int = None,
+    def find_visible_points(self, points: np.ndarray, camera_idx: Hashable, eye_idx: int = None,
                             verbose: int = 1) -> np.ndarray:
         """Determine point visibility for a specific camera and eye selection.
 
@@ -645,8 +688,8 @@ class World:
         points : numpy.ndarray
             Array of shape ``(N_points, 3)`` containing world-coordinate points
             whose visibility should be evaluated.
-        camera_idx : int
-            Index of the camera used for visibility testing.
+        camera_idx : Hashable
+            Key of the camera used for visibility testing.
         eye_idx : int or list[int], optional
             Specific eye indices within the camera that should be considered.
             ``None`` (default) evaluates all eyes.
@@ -667,7 +710,7 @@ class World:
         """
 
         if camera_idx not in self._cameras.keys():
-            raise ValueError(f"The camera index {camera_idx} is not in the camera list.")
+            raise KeyError(f"camera key {camera_idx!r} is not registered")
         _camera = self._cameras[camera_idx]
         walls_in_camera = [stl_utils.copy_model(wall, -_camera.camera_position, _camera.rotation_matrix.T) for
                            wall in self.walls]
@@ -715,7 +758,8 @@ class World:
                 my_print("-" * 15, show=verbose > 0)
         return visible  # (N_eye, N_points)
 
-    def _find_visible_vertices(self, force: bool = False, verbose: int = None, camera_idx: int = None) -> None:
+    def _find_visible_vertices(self, force: bool = False, verbose: int = None,
+                               camera_idx: Hashable = None) -> None:
         """Compute visibility masks for voxel vertices per camera.
 
         Parameters
@@ -726,8 +770,8 @@ class World:
         verbose : int, optional
             Verbosity level overriding :attr:`verbose`. ``None`` preserves the
             world default.
-        camera_idx : int, optional
-            Specific camera index to update. ``None`` (default) processes all
+        camera_idx : Hashable, optional
+            Specific camera key to update. ``None`` (default) processes all
             cameras.
 
         Notes
@@ -738,7 +782,7 @@ class World:
         verbose = self.verbose if verbose is None else verbose
         if camera_idx is not None:
             if camera_idx not in self._cameras.keys():
-                raise ValueError(f"The camera index {camera_idx} is not in the camera list.")
+                raise KeyError(f"camera key {camera_idx!r} is not registered")
             cameras_to_process = [camera_idx]
         else:
             cameras_to_process = list(self._cameras.keys())
@@ -749,14 +793,14 @@ class World:
                 self._visible_vertices[c_] = None
             if self._visible_vertices[c_] is not None:
                 if self._visible_vertices[c_].shape == (len(camera.eyes), self.voxel.N_grid):
-                    my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is already calculated.",
+                    my_print(f"Visible vertices for camera {c_!r} is already calculated.",
                              show=verbose > 0)
                     continue
                 else:
-                    my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} has wrong shape. "
+                    my_print(f"Visible vertices for camera {c_!r} has wrong shape. "
                              f"Recalculating...", show=verbose > 0)
             else:
-                my_print(f"Finding visible vertices for camera {c_ + 1}/{len(self._cameras)}...", show=verbose > 0)
+                my_print(f"Finding visible vertices for camera {c_!r}...", show=verbose > 0)
             visible_vertices = np.zeros((len(camera.eyes), self.voxel.N_grid), dtype=bool)
             visible_vertices[:, self.inside_vertices] = True
             if np.sum(self.inside_vertices) == 0:
@@ -767,7 +811,7 @@ class World:
                                                camera_idx=c_,
                                                verbose=verbose)  # (N_eye, N_inside_points)
             self._visible_vertices[c_] = visible_vertices
-            my_print(f"Visible vertices for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
+            my_print(f"Visible vertices for camera {c_!r} is calculated.", show=verbose > 0)
 
     def find_visible_voxels(self, force: bool = False, verbose: int | None = None):
         """Evaluate voxel visibility states for each camera.
@@ -799,19 +843,19 @@ class World:
             conditions_any = np.any(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
             conditions_all = np.all(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
             visible_voxels[c_] = conditions_any + conditions_all
-            my_print(f"Visible voxels for camera {c_ + 1}/{len(self._cameras)} is calculated.", show=verbose > 0)
+            my_print(f"Visible voxels for camera {c_!r} is calculated.", show=verbose > 0)
         self._visible_voxels = visible_voxels
         my_print("Finding visible voxels is done.", show=verbose > 0)
 
-    def _calc_voxel_image_for_eye(self, camera_idx: int, eye_idx: int, res: int, n_jobs: int = -2,
+    def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000,
                                   partial_res: int | tuple[int, int, int] = None):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
         ----------
-        camera_idx : int
-            Index of the camera whose projection should be calculated.
+        camera_idx : Hashable
+            Key of the camera whose projection should be calculated.
         eye_idx : int
             Eye index within the selected camera.
         res : int
@@ -1140,19 +1184,19 @@ class World:
         self._projection[camera_idx][eye_idx] = (full_res + partial_res).tocsr()
         del full_res, partial_res
         gc.collect()
-        my_print(f"Projection matrix for camera {camera_idx + 1}/{len(self.cameras)}, "
+        my_print(f"Projection matrix for camera {camera_idx!r}, "
                  f"eye {eye_idx + 1}/{len(_camera.eyes)} is calculated.", show=verbose > 0)
         return
 
-    def trace_line(self, points, camera_idx: int = 0, eye_idx: int = 0, coord_type: str = "XY"):
+    def trace_line(self, points, camera_idx: Hashable = 0, eye_idx: int = 0, coord_type: str = "XY"):
         """Project world-coordinate points onto a camera screen.
 
         Parameters
         ----------
         points : numpy.ndarray
             Array of shape ``(N, 3)`` containing world-coordinate points.
-        camera_idx : int, optional
-            Index of the camera used for projection. Defaults to ``0``.
+        camera_idx : Hashable, optional
+            Key of the camera used for projection. Defaults to ``0``.
         eye_idx : int, optional
             Eye index within the camera providing the rays. Defaults to ``0``.
         coord_type : {'XY', 'UV'}, optional
@@ -1212,18 +1256,18 @@ class World:
         for _c in indices:
             flag = False
             for _e in range(len(self.cameras[_c].eyes)):
-                my_print(f"Processing camera {_c + 1}/{len(self.cameras)}, eye {_e + 1}/{len(self.cameras[_c].eyes)}",
+                my_print(f"Processing camera {_c!r}, eye {_e + 1}/{len(self.cameras[_c].eyes)}",
                          show=verbose > 0)
                 if force or (self._projection[_c][_e] is None) or \
                         (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_subpixel, self.voxel.N)):
-                    my_print(f"Calculating projection matrix for camera {_c + 1}/{len(self.cameras)}, "
+                    my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
                     self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
                                                    verbose=verbose, max_nnz=100_000_000,
                                                    partial_res=partial_res)
                     flag = True
                 else:
-                    my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)}, "
+                    my_print(f"Projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)} is already calculated.", show=verbose > 0)
             if flag or (self._P_matrix[_c] is None) or \
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
@@ -1231,9 +1275,9 @@ class World:
                 # combine all projection matrices
                 _proj = sum(self._projection[_c], sparse.csr_matrix((self.cameras[_c].screen.N_subpixel, self.voxel.N)))
                 self._P_matrix[_c] = self.cameras[_c].screen.transform_matrix * _proj
-                my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)} is calculated.", show=verbose > 0)
+                my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
-                my_print(f"Projection matrix for camera {_c + 1}/{len(self.cameras)} is already calculated.",
+                my_print(f"Projection matrix for camera {_c!r} is already calculated.",
                          show=verbose > 0)
 
         my_print("Projection matrices are set.", show=verbose > 0)
@@ -1269,17 +1313,17 @@ class World:
         wx_lim, wy_lim, wz_lim = self.voxel.ranges if self.wall_ranges is None else self.wall_ranges
 
         x_lim = (min(vx_lim[0], wx_lim[0],
-                     *[camera.camera_position[0] for camera in self.cameras]) * 1.1,
+                     *[camera.camera_position[0] for camera in self.cameras.values()]) * 1.1,
                  max(vx_lim[1], wx_lim[1],
-                     *[camera.camera_position[0] for camera in self.cameras]) * 1.1) if x_lim is None else x_lim
+                     *[camera.camera_position[0] for camera in self.cameras.values()]) * 1.1) if x_lim is None else x_lim
         y_lim = (min(vy_lim[0], wy_lim[0],
-                     *[camera.camera_position[1] for camera in self.cameras]) * 1.1,
+                     *[camera.camera_position[1] for camera in self.cameras.values()]) * 1.1,
                  max(vy_lim[1], wy_lim[1],
-                     *[camera.camera_position[1] for camera in self.cameras]) * 1.1) if y_lim is None else y_lim
+                     *[camera.camera_position[1] for camera in self.cameras.values()]) * 1.1) if y_lim is None else y_lim
         z_lim = (min(vz_lim[0], wz_lim[0],
-                     *[camera.camera_position[2] for camera in self.cameras]) * 1.1,
+                     *[camera.camera_position[2] for camera in self.cameras.values()]) * 1.1,
                  max(vz_lim[1], wz_lim[1],
-                     *[camera.camera_position[2] for camera in self.cameras]) * 1.1) if z_lim is None else z_lim
+                     *[camera.camera_position[2] for camera in self.cameras.values()]) * 1.1) if z_lim is None else z_lim
 
         ax.set_xlim(x_lim)
         ax.set_ylim(y_lim)
@@ -1295,7 +1339,7 @@ class World:
         # draw camera coordinate system in the world coordinate system
         # x, y, z axes in the world coordinate system is the same as axes in the figure
         # draw camera position
-        for camera in self.cameras:
+        for camera in self.cameras.values():
             camera.draw_camera_orientation(ax=ax)
 
         for wall in self.walls:
@@ -1326,7 +1370,7 @@ if __name__ == '__main__':
                       ],
                       camera_position=[670, 670, 0],
                       # camera_position=[0, 300, 0],
-                      ).set_rotation_matrix("xyz",
+                      ).set_rotation_euler("xyz",
                                             (-90, 45, 180),
                                             # (-90, 0, 180),
                                             degrees=True)
@@ -1347,7 +1391,7 @@ if __name__ == '__main__':
                       ],
                       camera_position=[670, -500, 0],
                       # camera_position=[0, 300, 0],
-                      ).set_rotation_matrix("xz",
+                      ).set_rotation_euler("xz",
                                             (90, -90),
                                             degrees=True)
     # wall = mesh.Mesh.from_file("../relax.stl")

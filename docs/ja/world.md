@@ -12,7 +12,7 @@
 
 ## ワールドの構築
 
-`World.__init__` はオプションのボクセル、カメラ、壁、`inside_func` 引数を受け取ります。【F:multi_pinhole/world.py†L162-L228】入力が省略された場合は既定値（空の `Voxel()`、カメラなし、壁なし）にフォールバックし、`voxel.set_world(self)`・`camera.set_world(self)` によって直ちにワールドへ再接続されるため、可視性の判定結果など共有状態を各コンポーネントが参照できるようになります。カメラはインデックスマッピング（`{int: Camera}`、`self._cameras`）に正規化され、カメラごとの可視フラグ（`_visible_vertices`、`_visible_voxels`）と投影行列（各 eye ごとの `_projection`、カメラ全体で集約した `_P_matrix`）をキャッシュする並行ディクショナリが確保されます——いずれも対応する計算が実行されるまでは `None` のままです。`inside_func` を与えると `set_inside_vertices` が即座に呼ばれ内部頂点マスクが初期化されます。指定しない場合は「すべての頂点が内部」という遅延初期化のままです（後述の `inside_vertices` を参照）。
+`World.__init__` はオプションのボクセル、カメラ、壁、`inside_func` 引数を受け取ります。【F:multi_pinhole/world.py†L162-L228】入力が省略された場合は既定値（空の `Voxel()`、カメラなし、壁なし）にフォールバックし、`voxel.set_world(self)`・`camera.set_world(self)` によって直ちにワールドへ再接続されるため、可視性の判定結果など共有状態を各コンポーネントが参照できるようになります。カメラはstable keyのマッピングへ正規化されます。listを渡すと `range(len(cameras))` の整数keyが割り当てられ、dictを渡すと `{"left": camera_left, "right": camera_right}` のような明示keyが維持されます。Cameraを削除しても残りのkeyは再採番されず、`add_camera(key, camera)` ではkeyの指定が必須です。`world.cameras` はread-only mappingとして公開され、変更は `add_camera`、`change_camera`、`remove_camera` を通して行います。明示的なkeyリセット機能はfuture workとしています。カメラごとの可視フラグ（`_visible_vertices`、`_visible_voxels`）と投影行列（各 eye ごとの `_projection`、カメラ全体で集約した `_P_matrix`）にも同じkeyを使う並行ディクショナリが確保されます——いずれも対応する計算が実行されるまでは `None` のままです。`inside_func` を与えると `set_inside_vertices` が即座に呼ばれ内部頂点マスクが初期化されます。指定しない場合は「すべての頂点が内部」という遅延初期化のままです（後述の `inside_vertices` を参照）。
 
 壁は `stl.mesh.Mesh` オブジェクトのリストに正規化されます。変更（`walls` セッター）があるとキャッシュを無効化し、`update_min` と `update_max` を通じて事前計算済みのメッシュ境界を更新し、後のプロットに備えて結合した軸方向の限界値（`wall_ranges`）を保存します。
 

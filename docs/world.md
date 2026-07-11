@@ -17,8 +17,8 @@ Internal helpers smooth over array book-keeping:
   `multi_pinhole.utils`, not defined in this module) coerces a single object
   or list into a list while enforcing a required element type, with an
   optional default for `None`.【F:multi_pinhole/utils/__init__.py†L24-L54】 It
-  backs the `cameras`, `walls`, and related index setters/methods so that
-  callers can supply either single instances or collections.
+  backs `walls` and related homogeneous-list inputs. Camera registration has
+  its own stable-key normalization described below.
 * `type_list`, defined locally in this module, offers similar
   single-object-or-list normalization but is not currently called anywhere
   in `world.py`; it is effectively dead code left over from before
@@ -35,8 +35,14 @@ arguments.【F:multi_pinhole/world.py†L162-L228】 Absent inputs fall back to
 defaults (a blank `Voxel()`, no cameras, no walls) and are immediately wired
 back to the world (`voxel.set_world(self)`, `camera.set_world(self)`) so
 they can request shared state such as visibility results. Cameras are
-normalized into an index mapping `{int: Camera}` (`self._cameras`), and the
-world allocates parallel per-camera dictionaries that cache visibility
+normalized into a stable-key mapping (`self._cameras`). A list receives keys
+from `range(len(cameras))`; a dictionary retains explicit keys such as
+`{"left": camera_left, "right": camera_right}`. Removing a camera does not
+renumber the remaining keys, and `add_camera(key, camera)` requires an
+explicit key. `world.cameras` exposes this registry as a read-only mapping;
+updates go through `add_camera`, `change_camera`, and `remove_camera`. An
+explicit key-reset helper is left as future work. The world
+allocates parallel per-camera dictionaries using those same keys to cache visibility
 flags (`_visible_vertices`, `_visible_voxels`) and projection matrices
 (`_projection` per eye, `_P_matrix` aggregated across eyes) — all
 initialized to `None` until the corresponding computation runs. Providing
