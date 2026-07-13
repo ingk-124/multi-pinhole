@@ -204,16 +204,17 @@ algorithm:
    footprint.
 4. **For each surviving ray, clip to a small tile of candidate subpixels**
    (`i_min..i_max`, `j_min..j_max` — the subpixel index range the footprint's
-   AABB overlaps), then run an exact membership test only within that tile:
-   a `numba`-jitted `indexer` function checks, per subpixel center, whether
-   `((u−u_c)/a_u)² + ((v−v_c)/a_v)² < 1` for an elliptical/circular eye
-   shape, or `|u−u_c| < a_u/2 and |v−v_c| < a_v/2` for a rectangular one.
-   Restricting the exact test to the AABB tile (rather than the whole
-   screen) is what makes this scale to millions of rays.
+   AABB overlaps), then compute the area shared by each cell and the spot.
+   Fully covered cells use their whole area, disjoint cells use zero, and
+   boundary cells use analytic ellipse/rectangle or rectangle/rectangle
+   intersection. Restricting this calculation to the AABB tile (rather than
+   the whole screen) is what makes this scale to millions of rays. Because
+   coverage is no longer decided from the cell center, a spot smaller than
+   one pixel is retained even with `subpixel_resolution=1`.
 5. **Assemble the sparse matrix and apply etendue weights.** The per-tile
    hit lists are concatenated into a CSR/CSC matrix, then scaled by two
-   factors: `etendue_per_subpixel(eye)` (the destination-side weight derived
-   above) and a per-ray factor
+   factors: `etendue_per_subpixel(eye)` multiplied by the exact covered-area
+   fraction, and a per-ray factor
    `etendue_per_ray = 1 / (zoom_rate² · Z² · ray_cosine)`, where
    `ray_cosine` is the same `cos(atan(tangent))` quantity evaluated at the
    ray's own screen position. The inline comment explains the intent: since
@@ -239,10 +240,9 @@ image).【F:multi_pinhole/core.py†L1001-L1150】
 `Camera` groups one or more `Eye` instances (all sharing the same
 `eye_type`), a list of `Aperture` objects, and a single `Screen`, and
 positions/orients the whole assembly in world space via a `camera_position`
-and `rotation_matrix`.【F:multi_pinhole/core.py†L1185-L1232】 Construction
-enforces that the smallest eye's `eye_size` is larger than the screen's
-`subpixel_size`, so a single ray footprint is never smaller than one
-subpixel (which would make the rasterization step above silently drop it).
+and `rotation_matrix`.【F:multi_pinhole/core.py†L1185-L1232】 Eye spots may be
+smaller than a pixel or subpixel; analytic overlap weighting preserves their
+area without imposing a detector-resolution constraint at construction.
 
 For the common one-screen/one-pinhole case, `Camera.single_pinhole(...)`
 constructs the geometry in a local reference pose: the screen and eye are
