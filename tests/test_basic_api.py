@@ -374,7 +374,12 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     rays = eye.calc_rays(points)
 
     mat = screen.ray2image_grid(eye, rays).tocsc()
+    cached_mat = screen.ray2image_grid(
+        eye, rays, etendue_per_subpixel=screen.etendue_per_subpixel(eye)
+    ).tocsc()
     total_etendue = np.asarray(mat.sum(axis=0)).ravel()
+
+    np.testing.assert_allclose(cached_mat.toarray(), mat.toarray(), rtol=0.0, atol=0.0)
 
     z = points[:, 2] - eye.position[2]
     rho = np.linalg.norm(points[:, :2] - eye.position[:2], axis=1)

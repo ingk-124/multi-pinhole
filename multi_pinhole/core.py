@@ -702,6 +702,8 @@ class Screen:
         self._subpixel_image_size = None
         self._subpixel_image_mask = None
         self._subpixel_position = None
+        self._subpixel_u_axis = None
+        self._subpixel_v_axis = None
         self._transform_matrix = None
 
         self.subpixel_resolution = subpixel_resolution
@@ -849,6 +851,16 @@ class Screen:
         self._subpixel_shape = self._pixel_shape * self._subpixel_resolution
         self._N_subpixel = self._subpixel_shape[0] * self._subpixel_shape[1]
         self._subpixel_size = self._screen_size / self._subpixel_shape
+        self._subpixel_u_axis = np.linspace(
+            self._subpixel_size[0] * 0.5,
+            self._screen_size[0] - self._subpixel_size[0] * 0.5,
+            self._subpixel_shape[0],
+        )
+        self._subpixel_v_axis = np.linspace(
+            self._subpixel_size[1] * 0.5,
+            self._screen_size[1] - self._subpixel_size[1] * 0.5,
+            self._subpixel_shape[1],
+        )
         self._subpixel_position = self.positions(pixel_shape=self._subpixel_shape, pixel_size=self._subpixel_size)
         self._A_subpixel = self._subpixel_size[0] * self._subpixel_size[1]
 
@@ -953,7 +965,8 @@ class Screen:
         """
         return self._A_subpixel * (self.cosine(eye) ** 4) / (4 * np.pi)  # (U_p * V_p, )
 
-    def ray2image_grid(self, eye: Eye, rays: Rays, verbose=0):
+    def ray2image_grid(self, eye: Eye, rays: Rays, verbose=0,
+                       etendue_per_subpixel=None):
         """Convert rays to image vectors (grid-localized; consistent with ray2image)
 
         Parameters
@@ -964,6 +977,9 @@ class Screen:
             rays from the light source to the eye
         verbose : int, optional (default is 0)
             verbose level for parallel calculation
+        etendue_per_subpixel : np.ndarray, optional
+            Precomputed detector-side etendue for ``eye``. When omitted it is
+            calculated for this call.
         parallel : int, optional (default is 0)
             number of parallel processes for parallel calculation (0: no parallel calculation)
 
@@ -983,8 +999,8 @@ class Screen:
         # subpixel axis (must match positions())
         U_sub, V_sub = int(self._subpixel_shape[0]), int(self._subpixel_shape[1])  # number of sub-pixels
         du, dv = float(self._subpixel_size[0]), float(self._subpixel_size[1])  # size of sub-pixels
-        u_axis = np.linspace(du * 0.5, self._screen_size[0] - du * 0.5, U_sub)  # u positions of sub-pixels (U_sub,)
-        v_axis = np.linspace(dv * 0.5, self._screen_size[1] - dv * 0.5, V_sub)  # v positions of sub-pixels (V_sub,)
+        u_axis = self._subpixel_u_axis
+        v_axis = self._subpixel_v_axis
         u_min, u_max = u_axis[0], u_axis[-1]
         v_min, v_max = v_axis[0], v_axis[-1]
         # AABB means "Axis-Aligned Bounding Box"
@@ -1055,7 +1071,14 @@ class Screen:
         ray_tangent = np.linalg.norm(ray_offset, axis=-1) / eye.focal_length
         ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
         etendue_per_ray = (1.0 / ((rays.zoom_rate ** 2) * (rays.Z ** 2) * ray_cosine)).astype(np.float32)
-        etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
+        if etendue_per_subpixel is None:
+            etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
+        else:
+            etendue_per_subpixel = np.asarray(etendue_per_subpixel, dtype=np.float32)
+            if etendue_per_subpixel.shape != (self.N_subpixel,):
+                raise ValueError(
+                    f"etendue_per_subpixel must have shape {(self.N_subpixel,)}"
+                )
         data = etendue_per_subpixel[pixel_indices]
         mat = sparse.csc_matrix((data, pixel_indices, indptr), shape=(self.N_subpixel, rays.n)).tocsr()
         mat.data = mat.data * etendue_per_ray[mat.indices]
@@ -1710,7 +1733,8 @@ class Camera:
         self._ensure_mutable()
         self._apertures.append(aperture)
 
-    def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True):
+    def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True,
+                       etendue_per_subpixel=None):
         """sparse.csr_matrix: Assemble ray hits into a sparse image vector.
 
         Parameters
@@ -1723,6 +1747,8 @@ class Camera:
             Verbosity level forwarded to progress reporters.
         check_visibility : bool, optional
             Whether to cull rays occluded by apertures before projection.
+        etendue_per_subpixel : np.ndarray, optional
+            Cached detector-side etendue passed to :meth:`Screen.ray2image_grid`.
 
         Returns
         -------
@@ -1747,7 +1773,10 @@ class Camera:
         # print("ray2image start")
         # res1 = self.screen.ray2image(eye, rays, parallel=parallel)
         # res2 = self.screen.ray2image2(eye, rays, parallel=parallel)
-        mat = self.screen.ray2image_grid(eye, rays, verbose=verbose)
+        mat = self.screen.ray2image_grid(
+            eye, rays, verbose=verbose,
+            etendue_per_subpixel=etendue_per_subpixel,
+        )
         return mat
 
     def draw_optical_system(self, ax=None, show_focal_length=True, show_aperture=True, show_screen=True,

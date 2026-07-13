@@ -898,6 +898,7 @@ class World:
         timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
         screen = _camera.screen
+        eye_etendue = screen.etendue_per_subpixel(_camera.eyes[eye_idx]).astype(np.float32)
         N_vox = self.voxel.N
         self.voxel.res = res
         full_subvoxel_res = self.voxel.res
@@ -934,7 +935,8 @@ class World:
                 ``(N_subpixel, N_vox)`` sparse contribution.
             """
             I = _camera.calc_image_vec(eye_idx, points=sv_gc, verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_vox * K)
+                                       check_visibility=False,
+                                       etendue_per_subpixel=eye_etendue)  # (N_subpixel, num_vox * K)
             res = (I @ S).tocoo()  # (N_subpixel, N_vox)
             del I, sv_gc
             return res.data, res.row, res.col
@@ -955,7 +957,8 @@ class World:
             if not np.any(mask):
                 return np.array([]), np.array([], dtype=np.int32), np.array([], dtype=np.int32)
             I = _camera.calc_image_vec(eye_idx, points=sv_gc[mask], verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_visible*K)
+                                       check_visibility=False,
+                                       etendue_per_subpixel=eye_etendue)  # (N_subpixel, num_visible*K)
             S = S[mask, :]
             res = (I @ S).tocoo()  # (N_subpixel, N_vox)
             del I, sv_gc, mask
@@ -1075,7 +1078,8 @@ class World:
             sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
             sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=full_subvoxel_res)
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
-                                              check_visibility=False)  # (N_subpixel, sample_size * K)
+                                              check_visibility=False,
+                                              etendue_per_subpixel=eye_etendue)  # (N_subpixel, sample_size * K)
             sample_S = _sub_voxel_interpolator_matrix(sample_n, full_subvoxel_res,
                                                       points=sample_gc)
             sample_result = sample_I @ sample_S
@@ -1148,7 +1152,8 @@ class World:
 
             if sample_mask is not None and np.any(sample_mask):
                 sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
-                                                  check_visibility=False)  # (N_subpixel, num_visible)
+                                                  check_visibility=False,
+                                                  etendue_per_subpixel=eye_etendue)  # (N_subpixel, num_visible)
                 sample_S = _sub_voxel_interpolator_matrix(sample_n, partial_subvoxel_res,
                                                           points=sample_gc)
                 sample_S = sample_S[sample_mask, :]
