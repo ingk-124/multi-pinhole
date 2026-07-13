@@ -99,6 +99,43 @@ g = P_fine B c
 最初から octree を導入せず、active voxel compact 化と `res` 自動判定の効果を確認した
 後に必要性を判断する。
 
+### 投影応答による column group 化 (`P ~= Q A`)
+
+上記の空間的な voxel merging とは別に、似た投影応答を持つ fine voxel のcolumnを
+group化する。正規化した `P[:, j]` が十分近いvoxelをまとめ、代表応答を `Q`、fine
+emission `f` をgroupごとの入力へ圧縮する写像を `A` として
+
+```text
+g = P f ~= Q A f
+```
+
+と計算する。現在のprototypeでは `A` は各fine voxelについてgroup番号と感度weightを
+1個ずつ持つ疎なrestrictionである。これはSVDや直交化ではなく、ほぼ比例するcolumnの
+代表化であり、denseな基底行列は作らない。定数profileのfluxは構成上保存する。
+
+候補groupはcameraごと、Eyeごとに作る。voxel中心をworld座標からcamera/Eye座標へ変換し、
+`(X-X_eye)/(Z-f)`、`(Y-Y_eye)/(Z-f)`で表される投影方向をpixel単位に分け、同じpixel内を
+方向とzoom rateで並べて、最大chunk sizeで切る。そのchunk内だけで正規化columnのL1距離を
+評価し、閾値を超えたchunkは再帰的に分割する。wall境界、partial visibility、異なるEyeや
+cameraをまたいで無理に共通groupを作らない。複数cameraを連結した `P_allcam` の共同分解は
+行わず、各cameraの `Q_camera A_camera` をそれぞれ適用して画像を連結する。
+
+wallなしのfine grid prototypeは実装済みだが、現状はfine `P` を構築した後に圧縮する
+post-processing診断である。この段階ではprojection構築時間やpeak memoryは削減されない。
+実際の高速化では、既存のprojection計算chunk内で応答を比較・確定し、fine columnを全て
+保持せずに `Q` とimplicitな `A` を直接組み立てる必要がある。
+
+無回転の評価では、正規化column L1閾値0.1に対するcolumn圧縮率はmedian `Z/f`が
+約5、15、50の順に1.01、1.82、4.05倍、閾値0.2では1.37、2.34、8.00倍だった。
+遠方ほどpinhole PSFが支配的になり、group化が効くという予想と一致する。`Z/f ~= 50`では
+Gaussian profileの相対L2誤差は閾値0.1で約`1.0e-5`、0.2で約`2.7e-5`だった。
+
+cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
+整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
+奥行き分解能が同時に変化するためである。回転依存を分離する次の評価ではcamera整列点群、
+または同一のcamera座標サンプルを直接投影する。group化の採否はその後、wallあり、
+partial voxel、constant/linear/square/Gaussian profileで誤差と実メモリ削減を確認して決める。
+
 ## 有限サイズ Eye の物理モデル
 
 ### Eye 内部位置ごとの局所 etendue
@@ -154,5 +191,7 @@ clip または数値積分を追加する。
 4. main への統合
 5. source `res` 自動判定と fully/partial の適応化
 6. active voxel compact mapping と `d=10--25 mm` 比較
-7. 必要なら adaptive voxel merging
-8. PD array、任意 Eye 形状、Eye 内部位置ごとの局所 visibility の必要性を定量化する
+7. camera整列サンプルとwallあり条件でcolumn group化を再評価
+8. 有効ならprojection計算chunk内で `Q` とimplicitな `A` を直接構築
+9. 必要なら adaptive voxel merging
+10. PD array、任意 Eye 形状、Eye 内部位置ごとの局所 visibility の必要性を定量化する
