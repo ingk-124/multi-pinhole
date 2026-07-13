@@ -44,6 +44,32 @@ from .utils.my_stdio import my_tqdm
 # any length vector like object (accepts numpy.ndarray, list, tuple) (including 0D, 1D, 2D, 3D, etc.)
 VectorLike = Union[np.ndarray, List[Number], Tuple[Number], Number]
 
+
+@njit(cache=True, nogil=True)
+def _ellipse_pixel_indices(u_axis, v_axis, u_center, v_center, half_u, half_v,
+                           i_min, j_min, v_subpixels):
+    """Return flattened subpixel indices covered by one elliptical spot."""
+    u_normalized_sq = ((u_axis - u_center) / half_u) ** 2
+    v_normalized_sq = ((v_axis - v_center) / half_v) ** 2
+    inside = (u_normalized_sq[:, None] + v_normalized_sq[None, :]) < 1.0
+    if not inside.any():
+        return np.empty((0,), dtype=np.int32)
+    ii, jj = np.nonzero(inside)
+    return ((i_min + ii) * v_subpixels + (j_min + jj)).astype(np.int32)
+
+
+@njit(cache=True, nogil=True)
+def _rectangle_pixel_indices(u_axis, v_axis, u_center, v_center, half_u, half_v,
+                             i_min, j_min, v_subpixels):
+    """Return flattened subpixel indices covered by one rectangular spot."""
+    u_condition = np.abs((u_axis - u_center) / half_u) < 0.5
+    v_condition = np.abs((v_axis - v_center) / half_v) < 0.5
+    inside = u_condition[:, None] & v_condition[None, :]
+    if not inside.any():
+        return np.empty((0,), dtype=np.int32)
+    ii, jj = np.nonzero(inside)
+    return ((i_min + ii) * v_subpixels + (j_min + jj)).astype(np.int32)
+
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 # 3D vector like object (accepts numpy.ndarray, list, tuple)
 Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
@@ -997,30 +1023,7 @@ class Screen:
         j_min[valid] = np.clip(np.floor(v_low[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
         j_max[valid] = np.clip(np.ceil(v_high[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
 
-        if use_ellipse:
-            @njit(cache=False)
-            def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
-                u_n_sq = ((u_ax - uc) / au) ** 2  # (I_r,)
-                v_n_sq = ((v_ax - vc) / av) ** 2  # (J_r,)
-                inside = (u_n_sq[:, None] + v_n_sq[None, :]) < 1.0
-                if not inside.any():
-                    return np.empty((0,), dtype=np.int32)
-                ii, jj = np.nonzero(inside)
-                return ((i_min_r + ii) * _V_sub + (j_min_r + jj)).astype(np.int32)
-
-        else:
-            @njit(cache=False)
-            def indexer(u_ax, v_ax, uc, vc, au, av, i_min_r, j_min_r, _V_sub):
-                u_n = np.abs((u_ax - uc) / au)  # (I_r,)
-                v_n = np.abs((v_ax - vc) / av)  # (J_r,)
-                u_cond = u_n < 0.5
-                v_cond = v_n < 0.5
-                inside = u_cond[:, None] & v_cond[None, :]
-                if not inside.any():
-                    return np.empty((0,), dtype=np.int32)
-                ii, jj = np.nonzero(inside)
-                return ((i_min_r + ii) * _V_sub + (j_min_r + jj)).astype(np.int32)
-
+        indexer = _ellipse_pixel_indices if use_ellipse else _rectangle_pixel_indices
         out_pix = [indexer(u_axis[i_min[r]:i_max[r] + 1],
                            v_axis[j_min[r]:j_max[r] + 1],
                            uv[r, 0], uv[r, 1],
