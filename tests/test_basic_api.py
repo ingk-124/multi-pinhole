@@ -836,3 +836,25 @@ def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
         assert metrics["relative_l2"] < 0.01
         assert metrics["relative_flux"] < 0.01
         assert metrics["correlation"] > 0.9999
+
+
+def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_subvoxel_resolution.py")
+    spec = importlib.util.spec_from_file_location("evaluate_subvoxel_resolution", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_sweep(
+        tmp_path,
+        voxel_counts=(21,), pixel_counts=(41,), axial_distances=(80.0,),
+        resolutions=(1, 2), reference_resolution=8,
+    )
+
+    assert result["csv_path"].is_file()
+    assert result["figure_path"].is_file()
+    assert len(result["rows"]) == 8
+    constant_rows = [row for row in result["rows"] if row["profile"] == "constant"]
+    assert len(constant_rows) == 2
+    assert constant_rows[0]["sampling_ratio"] == 2 * constant_rows[1]["sampling_ratio"]
+    assert all(np.isfinite(row["relative_l2"]) for row in result["rows"])
