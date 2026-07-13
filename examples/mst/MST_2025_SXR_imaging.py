@@ -127,23 +127,12 @@ if __name__ == '__main__':
     except FileNotFoundError:
         file_is_exist = False
         print("Building world...")
-        # Aperture
-        max_size = 25
-        size = 1.8
-        resolution = 40
-        # points on xy-plane
-        x_arr, y_arr = np.linspace(-max_size, max_size, 5), np.linspace(-max_size, max_size, 5)
-        outer_points = np.array(np.meshgrid(x_arr, y_arr, indexing="ij")).reshape(2, -1).T
-        t = np.linspace(0, 2 * np.pi, resolution, endpoint=False)
-        edge_points = np.array([size * np.cos(t), size * np.sin(t)]).T
-        points = np.vstack([outer_points, edge_points])
-
-
-        def condition(x, y):
-            return (x / size) ** 2 + (y / size) ** 2 <= 1
-
-
-        model_aperture = stl_utils.make_2D_surface(points, condition)
+        model_aperture = stl_utils.generate_aperture_stl(
+            shape="circle",
+            size=1.8,
+            resolution=40,
+            max_size=15,
+        )
 
         cameras = build_mst_cameras(model_aperture)
 
