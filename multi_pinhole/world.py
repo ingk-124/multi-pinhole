@@ -974,6 +974,11 @@ class World:
             matrix = matrix.tocsr()
             return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
+        def _triplet_nbytes(data, row, col):
+            return data.nbytes + row.nbytes + col.nbytes
+
+        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
+
         def _estimate_batch_size(sample_count, sample_points, sample_image,
                                  sample_interpolator, sample_result, total_voxels):
             """Estimate a chunk size from transient bytes and legacy nnz cap."""
@@ -1024,11 +1029,12 @@ class World:
             """
             res = sparse.csr_matrix((screen.N_subpixel, N_vox))
             data_buf, row_buf, col_buf = [], [], []
+            buffer_nbytes = 0
             chunk_iter = iter(chunks)
             max_in_flight = 2 * n_jobs
 
             def _flush_buffer():
-                nonlocal res, data_buf, row_buf, col_buf
+                nonlocal res, data_buf, row_buf, col_buf, buffer_nbytes
                 if not data_buf:
                     return
                 block = sparse.coo_matrix(
@@ -1038,6 +1044,7 @@ class World:
                 ).tocsr()
                 res += block
                 data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
 
             with ThreadPoolExecutor(max_workers=n_jobs) as executor:
                 pending = set()
@@ -1061,7 +1068,8 @@ class World:
                             data_buf.append(data)
                             row_buf.append(row)
                             col_buf.append(col)
-                            if len(data_buf) >= 10:
+                            buffer_nbytes += _triplet_nbytes(data, row, col)
+                            if buffer_nbytes >= result_buffer_limit:
                                 _flush_buffer()
                             pbar.update()
                             _submit_next()
@@ -1097,6 +1105,7 @@ class World:
             if n_jobs == 1:
                 # initialize result matrix for full voxels
                 data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
                     sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
                     S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res,
@@ -1105,15 +1114,16 @@ class World:
                     data_buf.append(data)
                     row_buf.append(row)
                     col_buf.append(col)
+                    buffer_nbytes += _triplet_nbytes(data, row, col)
 
-                    # summarize every 10 chunks to reduce memory usage
-                    if (i + 1) % 10 == 0:
+                    if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
                                                        shape=(screen.N_subpixel, N_vox))
                         full_res = full_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
+                        buffer_nbytes = 0
                 # summarize remaining buffer
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
@@ -1175,6 +1185,7 @@ class World:
             if n_jobs == 1:
                 # initialize result matrix for partial voxels
                 data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing partial voxels", disable=verbose <= 0)):
                     sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
@@ -1186,15 +1197,16 @@ class World:
                     data_buf.append(data)
                     row_buf.append(row)
                     col_buf.append(col)
+                    buffer_nbytes += _triplet_nbytes(data, row, col)
 
-                    # summarize every 10 chunks to reduce memory usage
-                    if (i + 1) % 10 == 0:
+                    if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
                                                        shape=(screen.N_subpixel, N_vox))
                         partial_res = partial_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
+                        buffer_nbytes = 0
                 # summarize remaining buffer
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),

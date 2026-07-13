@@ -208,10 +208,10 @@ function:
    creates its sample points and interpolation matrix inside the worker and returns a COO
    `(data, row, col)` triplet rather than a full sparse matrix object, and
    `_process_parallel_chunks` drains completed futures immediately,
-   periodically consolidating buffered
-   triplets (every 10 chunks) into a running `scipy.sparse.coo_matrix` sum
-   to bound peak memory rather than holding every chunk's result in memory
-   simultaneously at once.
+   consolidating buffered results when their array bytes reach a limit derived
+   from `max_working_memory`, rather than after a fixed number of chunks. The
+   buffered triplets are folded into a running sparse sum to bound peak memory
+   rather than holding every chunk's result simultaneously.
 
 This entire dance (steps 1-3, run separately for the full-visibility and
 partial-visibility voxel groups) exists purely as a memory/throughput
