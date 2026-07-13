@@ -401,6 +401,102 @@ class Voxel:
         centers[..., 2] = z0[:, None] + (z1 - z0)[:, None] * fractions[None, :, 2]
         return centers.reshape(-1, 3)
 
+    @staticmethod
+    def _center_axis_interpolation(axis, coordinates):
+        """Return bracketing center indices and linear weights for one axis."""
+        axis = np.asarray(axis, dtype=float)
+        coordinates = np.asarray(coordinates, dtype=float)
+        if axis.size == 1:
+            index = np.zeros(coordinates.size, dtype=np.int64)
+            return index, index, np.ones(coordinates.size), np.zeros(coordinates.size)
+
+        upper = np.searchsorted(axis, coordinates, side="right")
+        upper = np.clip(upper, 1, axis.size - 1)
+        lower = upper - 1
+        fraction = (coordinates - axis[lower]) / (axis[upper] - axis[lower])
+
+        below = coordinates <= axis[0]
+        above = coordinates >= axis[-1]
+        lower[below] = 0
+        upper[below] = 0
+        fraction[below] = 0.0
+        lower[above] = axis.size - 1
+        upper[above] = axis.size - 1
+        fraction[above] = 0.0
+        return lower, upper, 1.0 - fraction, fraction
+
+    def sub_voxel_interpolator_from_centers(self, n=None, res=None, points=None):
+        """Map voxel-center values directly to weighted sub-voxel samples.
+
+        Each interior sample uses trilinear interpolation from at most eight
+        neighboring voxel centers.  Samples outside the center-coordinate
+        hull (the outer half of boundary voxels) are clamped to the nearest
+        center.  Rows are scaled by the owning voxel volume divided by the
+        number of samples in that voxel, ready for projection integration.
+
+        Parameters
+        ----------
+        n : int or array-like of int, optional
+            Owning voxel indices, in the same order used to generate points.
+        res : int or (int, int, int), optional
+            Number of sub-voxel samples along each axis.
+        points : np.ndarray, optional
+            Precomputed sub-voxel centers.  Supplying this avoids generating
+            the points a second time in the projection worker.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+            Weighted interpolation matrix with one row per sample and at most
+            eight nonzero entries per row.
+        """
+        resolution = self.res if res is None else tuple(np.broadcast_to(res, 3))
+        if any(int(r) != r or r <= 0 for r in resolution):
+            raise ValueError(f"{res=} must contain positive integers")
+        resolution = tuple(int(r) for r in resolution)
+        voxel_indices = self._type_check_n_voxel(n)
+        samples_per_voxel = int(np.prod(resolution))
+        expected_points = voxel_indices.size * samples_per_voxel
+        if points is None:
+            points = self.get_sub_voxel_centers(n=voxel_indices, res=resolution)
+        else:
+            points = np.asarray(points, dtype=float)
+        if points.shape != (expected_points, 3):
+            raise ValueError(
+                f"points must have shape {(expected_points, 3)}, not {points.shape}"
+            )
+
+        axis_data = [self._center_axis_interpolation(axis, points[:, dim])
+                     for dim, axis in enumerate((self.cx_axis, self.cy_axis, self.cz_axis))]
+        row_scale = np.repeat(self.volume[voxel_indices] / samples_per_voxel,
+                              samples_per_voxel)
+        rows = np.arange(expected_points, dtype=np.int64)
+        row_parts, col_parts, data_parts = [], [], []
+        for x_side in (0, 1):
+            ix = axis_data[0][x_side]
+            wx = axis_data[0][x_side + 2]
+            for y_side in (0, 1):
+                iy = axis_data[1][y_side]
+                wy = axis_data[1][y_side + 2]
+                for z_side in (0, 1):
+                    iz = axis_data[2][z_side]
+                    wz = axis_data[2][z_side + 2]
+                    weights = row_scale * wx * wy * wz
+                    nonzero = weights != 0.0
+                    if not np.any(nonzero):
+                        continue
+                    columns = np.ravel_multi_index((ix[nonzero], iy[nonzero], iz[nonzero]),
+                                                   self.voxel_shape)
+                    row_parts.append(rows[nonzero])
+                    col_parts.append(columns)
+                    data_parts.append(weights[nonzero])
+
+        return sparse.coo_matrix(
+            (np.concatenate(data_parts),
+             (np.concatenate(row_parts), np.concatenate(col_parts))),
+            shape=(expected_points, self.N_voxel),
+        ).tocsr()
+
     @property
     def volume(self):
         """

@@ -167,17 +167,16 @@ ray-tracing:
   samples, and only project the surviving ones.
 
 Both paths route through `_sub_voxel_interpolator_matrix`, which builds the
-matrix `S` mapping *voxel corner values* to weighted sub-voxel samples:
-it looks up each voxel's 8 corner vertex indices, applies the trilinear
-interpolation weights from `Voxel.interpolate_matrix_from_vertices(res)`
-(described in `docs/overview.md`'s "Voxel grid geometry" section) to
-combine them into sub-voxel sample values, and then scales each row by
+matrix `S` mapping values at voxel centers directly to weighted sub-voxel
+samples.  An interior sample uses trilinear weights from at most eight
+neighboring voxel centers; samples in the outer half of a boundary voxel are
+clamped to the nearest center.  Each row is scaled by
 `voxel.volume / samples_per_voxel`. That scaling is what turns a sum over a
-voxel's sub-voxel rows into an approximation of the *integral* of the
-projected signal over the voxel's volume — increasing `res` refines the
-quadrature (more, closer sub-voxel samples) without changing the total
-integrated signal, which is the property you want for convergence as `res`
-increases.
+voxel's sub-voxel rows into an approximation of the *integral* over the
+voxel's volume — increasing `res` refines the quadrature without changing the
+total integrated signal. Direct center interpolation also reproduces affine
+emission profiles in the grid interior without the wider smoothing stencil of
+the former center-to-vertex-to-sub-voxel interpolation.
 
 Concretely, for a batch of voxels the per-eye subpixel image is
 
@@ -204,10 +203,11 @@ function:
    `max_nnz` (default `100_000_000`), divided across `n_jobs` parallel
    workers.
 3. **Processes chunks either serially or via a `ThreadPoolExecutor`**
-   (`n_jobs > 1`), submitting one task per chunk. Each task returns a COO
+   (`n_jobs > 1`), keeping at most twice `n_jobs` tasks in flight. Each task
+   creates its sample points and interpolation matrix inside the worker and returns a COO
    `(data, row, col)` triplet rather than a full sparse matrix object, and
-   `_process_tasks` drains completed futures via
-   `concurrent.futures.as_completed`, periodically consolidating buffered
+   `_process_parallel_chunks` drains completed futures immediately,
+   periodically consolidating buffered
    triplets (every 10 chunks) into a running `scipy.sparse.coo_matrix` sum
    to bound peak memory rather than holding every chunk's result in memory
    simultaneously at once.

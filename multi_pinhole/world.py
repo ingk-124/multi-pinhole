@@ -889,15 +889,6 @@ class World:
         full_subvoxel_res = self.voxel.res
         self.voxel.res = partial_res
         partial_subvoxel_res = self.voxel.res
-        self.voxel.res = full_subvoxel_res
-        subvoxel_matrices = {
-            tuple(full_subvoxel_res): sparse.csr_matrix(self.voxel._sub_voxel_matrix),
-        }
-        if tuple(partial_subvoxel_res) not in subvoxel_matrices:
-            self.voxel.res = partial_subvoxel_res
-            subvoxel_matrices[tuple(partial_subvoxel_res)] = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
-            self.voxel.res = full_subvoxel_res
-        self.voxel.set_voxel2vertices(exist_ok=True, n_jobs=n_jobs, verbose=verbose)
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
         self.find_visible_voxels()
@@ -957,46 +948,11 @@ class World:
             gc.collect()
             return res.data, res.row, res.col
 
-        def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res):
-            """Build the sub-voxel-to-image integration matrix for the given voxels.
-
-            Combines the vertex-to-sub-voxel interpolation weights for
-            ``voxel_indices`` at resolution ``subvoxel_res`` with a per-row
-            scaling by ``voxel.volume / samples_per_voxel`` so that summing
-            over a voxel's sub-voxel rows approximates an integral over the
-            voxel (independent of ``subvoxel_res``) rather than scaling with
-            the sample count.
-
-            Parameters
-            ----------
-            voxel_indices : int or array-like of int
-                Voxel numbers to build sub-voxel samples for.
-            subvoxel_res : int or (int, int, int)
-                Sub-voxel resolution; temporarily assigned to ``self.voxel.res``.
-
-            Returns
-            -------
-            scipy.sparse.csr_matrix
-                Matrix mapping voxel values to weighted sub-voxel samples,
-                shape ``(len(voxel_indices) * samples_per_voxel, N_voxel)``.
-            """
-            voxel_indices = np.atleast_1d(voxel_indices)
-            sub_voxel_matrix = subvoxel_matrices[tuple(subvoxel_res)]
-            samples_per_voxel = sub_voxel_matrix.shape[0]
-            vertex_indices = self.voxel.vertices_indices[voxel_indices].reshape(-1)
-            selector = sparse.coo_matrix((np.ones(vertex_indices.size, dtype=bool),
-                                          (np.arange(vertex_indices.size), vertex_indices)),
-                                         shape=(vertex_indices.size, self.voxel.N_grid),
-                                         dtype=bool).tocsr()
-            vertex_to_voxel = selector @ self.voxel.voxel2vertices
-            block_interp = sparse.kron(sparse.eye(voxel_indices.size, format="csr"),
-                                       sub_voxel_matrix, format="csr")
-            matrix = block_interp @ vertex_to_voxel
-            # Convert interpolated sub-voxel samples into an integral over each
-            # selected voxel, so changing res refines the quadrature instead of
-            # multiplying the total signal by the number of samples.
-            row_weights = np.repeat(self.voxel.volume[voxel_indices] / samples_per_voxel, samples_per_voxel)
-            return sparse.diags(row_weights, format="csr") @ matrix
+        def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res, points=None):
+            """Build direct center-to-sub-voxel interpolation for a chunk."""
+            return self.voxel.sub_voxel_interpolator_from_centers(
+                n=voxel_indices, res=subvoxel_res, points=points,
+            )
 
         def _process_parallel_chunks(chunks, process_chunk, desc):
             """Process a bounded set of chunks and consolidate results as they finish.
@@ -1092,7 +1048,8 @@ class World:
                 data_buf, row_buf, col_buf = [], [], []
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
                     sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
-                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res,
+                                                       points=sv_gc)
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -1118,7 +1075,8 @@ class World:
                 def _process_full_chunk(_slice):
                     voxel_indices = full_voxels[_slice]
                     sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=full_subvoxel_res)
-                    S = _sub_voxel_interpolator_matrix(voxel_indices, full_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, full_subvoxel_res,
+                                                       points=sv_gc)
                     return _full_vox_proc(sv_gc, S)
 
                 full_res = _process_parallel_chunks(_chunks, _process_full_chunk,
@@ -1164,7 +1122,8 @@ class World:
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
                     mask = mask & self._inside_points(sv_gc)
-                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res,
+                                                       points=sv_gc)
                     data, row, col = _partial_vox_proc(sv_gc, S, mask)
                     data_buf.append(data)
                     row_buf.append(row)
@@ -1193,7 +1152,8 @@ class World:
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
                     mask = mask & self._inside_points(sv_gc)
-                    S = _sub_voxel_interpolator_matrix(voxel_indices, partial_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, partial_subvoxel_res,
+                                                       points=sv_gc)
                     return _partial_vox_proc(sv_gc, S, mask)
 
                 partial_res = _process_parallel_chunks(_chunks, _process_partial_chunk,
