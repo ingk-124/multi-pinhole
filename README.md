@@ -17,6 +17,18 @@ cd multi-pinhole
 pip install -e .
 ```
 
+For the optional VTK/trame World Builder GUI:
+
+```bash
+pip install -e '.[gui]'
+python -m multi_pinhole.gui.app --wall examples/mst/MST_wall-mesh.stl
+```
+
+The current GUI MVP imports wall STL geometry, manages multiple single-pinhole
+cameras under stable World keys, provides Camera X/Y/Z and yaw/pitch/roll
+alignment with a lightweight, unoccluded view-boundary preview, and saves or
+reloads the World project. See [`docs/gui.md`](docs/gui.md) for details.
+
 ## Minimal usage
 The public API can be imported directly from `multi_pinhole`:
 
