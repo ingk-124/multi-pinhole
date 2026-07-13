@@ -43,7 +43,19 @@ def build_world(voxel_shape: tuple[int, int, int], pixel_shape: tuple[int, int])
     return world
 
 
-def build_mst_world(voxel_shape: tuple[int, int, int]) -> World:
+def _center_ranges_for_spacing(bounds, spacing):
+    """Return center-coordinate ranges and shapes covering axis bounds."""
+    ranges, shape = [], []
+    for lower, upper in bounds:
+        count = int(np.ceil((upper - lower) / spacing))
+        midpoint = 0.5 * (lower + upper)
+        half_width = 0.5 * (count - 1) * spacing
+        ranges.append((midpoint - half_width, midpoint + half_width))
+        shape.append(count)
+    return tuple(ranges), tuple(shape)
+
+
+def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None) -> World:
     """Build a reduced-grid version of the 2026 MST tangential SXR case."""
     camera_center = np.array([1550.7, -1522.4, 210.8])
     forward_point = np.array([1525.9, -1521.1, 207.3])
@@ -66,8 +78,15 @@ def build_mst_world(voxel_shape: tuple[int, int, int]) -> World:
             right_point=right_point,
         ).translate_camera((offset, 0.0, 0.0))
 
+    if voxel_spacing is None:
+        ranges = ((-2012.5, 2012.5), (-2012.5, 2012.5), (-512.5, 512.5))
+    else:
+        ranges, voxel_shape = _center_ranges_for_spacing(
+            ((-2020.0, 2020.0), (-2020.0, 2020.0), (-520.0, 520.0)),
+            voxel_spacing,
+        )
     voxel = Voxel.uniform_voxel_from_centers(
-        ranges=((-2012.5, 2012.5), (-2012.5, 2012.5), (-512.5, 512.5)),
+        ranges=ranges,
         shape=voxel_shape,
         coordinate_type="torus_inverse",
         coordinate_parameters={"major_radius": 1500, "minor_radius": 520},
@@ -89,10 +108,11 @@ def build_mst_world(voxel_shape: tuple[int, int, int]) -> World:
 
 
 def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, parallel=4,
-                  scene="simple", max_working_memory=1_000_000_000):
+                  scene="simple", max_working_memory=1_000_000_000,
+                  mst_spacing=None):
     """Construct a projection matrix and return stable benchmark metrics."""
     if scene == "mst":
-        world = build_mst_world(tuple(voxel_shape))
+        world = build_mst_world(tuple(voxel_shape), voxel_spacing=mst_spacing)
     elif scene == "simple":
         world = build_world(tuple(voxel_shape), tuple(pixel_shape))
     else:
@@ -106,7 +126,7 @@ def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, paralle
     return {
         "scene": scene,
         "elapsed_seconds": elapsed,
-        "voxel_shape": tuple(voxel_shape),
+        "voxel_shape": tuple(world.voxel.shape),
         "voxel_count": world.voxel.N,
         "pixel_shape": tuple(camera.screen.pixel_shape),
         "subvoxel_resolution": res,
@@ -140,10 +160,12 @@ if __name__ == "__main__":
     parser.add_argument("--res", type=int, default=3)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--max-working-memory-mb", type=float, default=1000.0)
+    parser.add_argument("--mst-spacing", type=float)
     args = parser.parse_args()
 
     metrics = run_benchmark(args.voxel_shape, args.pixel_shape, args.res, args.parallel,
                             scene=args.scene,
-                            max_working_memory=int(args.max_working_memory_mb * 1_000_000))
+                            max_working_memory=int(args.max_working_memory_mb * 1_000_000),
+                            mst_spacing=args.mst_spacing)
     for key, value in metrics.items():
         print(f"{key}: {value}")
