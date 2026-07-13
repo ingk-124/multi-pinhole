@@ -14,6 +14,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from multi_pinhole import Eye, Screen
+from multi_pinhole.core import _spot_cell_overlap
 
 
 def analytic_point_source_etendue(eye, points):
@@ -31,23 +32,36 @@ def analytic_point_source_etendue(eye, points):
 
 
 def analytic_spot_image(screen, eye, point):
-    """Analytic top-hat spot sampled at the screen subpixel centers."""
+    """Analytic top-hat spot integrated over each screen subpixel."""
     rays = eye.calc_rays(point[None, :])
     uv_center = screen.xy2uv(rays.XY)[0]
     spot_size = eye.eye_size * rays.zoom_rate[0]
     half = 0.5 * spot_size
-    uv = screen.subpixel_position
-    inside = (((uv[:, 0] - uv_center[0]) / half[0]) ** 2 +
-              ((uv[:, 1] - uv_center[1]) / half[1]) ** 2) < 1.0
+    u_axis = np.unique(screen.subpixel_position[:, 0])
+    v_axis = np.unique(screen.subpixel_position[:, 1])
+    du, dv = screen.subpixel_size
+    i0 = max(0, int(np.floor((uv_center[0] - half[0]) / du)))
+    i1 = min(len(u_axis) - 1, int(np.ceil((uv_center[0] + half[0]) / du) - 1))
+    j0 = max(0, int(np.floor((uv_center[1] - half[1]) / dv)))
+    j1 = min(len(v_axis) - 1, int(np.ceil((uv_center[1] + half[1]) / dv) - 1))
+    overlap = np.zeros(screen.N_subpixel)
+    use_ellipse = eye.eye_shape in ("circle", "ellipse")
+    for i in range(i0, i1 + 1):
+        for j in range(j0, j1 + 1):
+            flat_index = i * len(v_axis) + j
+            overlap[flat_index] = _spot_cell_overlap(
+                u_axis[i] - 0.5 * du, u_axis[i] + 0.5 * du,
+                v_axis[j] - 0.5 * dv, v_axis[j] + 0.5 * dv,
+                uv_center[0], uv_center[1], half[0], half[1], use_ellipse,
+            )
 
     z = point[2] - eye.position[2]
     ray_offset = rays.XY[0] - eye.position[:2]
     ray_tangent = np.linalg.norm(ray_offset) / eye.focal_length
     ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
-    weight = screen.etendue_per_subpixel(eye) / ((rays.zoom_rate[0] ** 2) * (z ** 2) * ray_cosine)
-    image = np.zeros(screen.N_subpixel)
-    image[inside] = weight[inside]
-    return image
+    weight_density = (screen.etendue_per_subpixel(eye) / screen.A_subpixel
+                      / ((rays.zoom_rate[0] ** 2) * (z ** 2) * ray_cosine))
+    return overlap * weight_density
 
 
 def analytic_screen_image(screen, eye, points, source_strength):

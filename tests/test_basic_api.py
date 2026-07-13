@@ -390,6 +390,76 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     np.testing.assert_allclose(total_etendue, expected, rtol=3e-2, atol=0.0)
 
 
+@pytest.mark.parametrize(
+    ("bounds", "expected"),
+    [
+        ((-2.0, 2.0, -2.0, 2.0), np.pi),
+        ((0.0, 2.0, -2.0, 2.0), np.pi / 2.0),
+        ((0.0, 2.0, 0.0, 2.0), np.pi / 4.0),
+        ((-0.5, 0.5, -0.5, 0.5), 1.0),
+        ((1.1, 2.0, -0.5, 0.5), 0.0),
+    ],
+)
+def test_unit_circle_rectangle_overlap_matches_analytic_areas(bounds, expected):
+    from multi_pinhole.core import _unit_circle_rectangle_overlap
+
+    actual = _unit_circle_rectangle_overlap(*bounds)
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-14)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size", "eye_area"),
+    [
+        ("circle", 0.2, np.pi * 0.1 ** 2),
+        ("ellipse", (0.2, 0.4), np.pi * 0.1 * 0.2),
+        ("rectangle", (0.2, 0.4), 0.2 * 0.4),
+    ],
+)
+def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
+        eye_shape, eye_size, eye_area):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(1, 1), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    point = np.array([[0.0, 0.0, 30.0]])
+
+    value = float(camera.calc_image_vec(0, point, check_visibility=False).sum())
+    axial_distance = point[0, 2] - eye.position[2]
+    expected = eye_area / (4.0 * np.pi * axial_distance ** 2)
+
+    np.testing.assert_allclose(value, expected, rtol=2e-7, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size", "eye_area"),
+    [
+        ("circle", 0.2, np.pi * 0.1 ** 2),
+        ("ellipse", (0.2, 0.4), np.pi * 0.1 * 0.2),
+        ("rectangle", (0.2, 0.4), 0.2 * 0.4),
+    ],
+)
+def test_area_integrated_spot_flux_is_stable_across_subpixel_resolutions(
+        eye_shape, eye_size, eye_area):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    point = np.array([[0.0, 0.0, 30.0]])
+    totals = []
+    for resolution in (1, 2, 4, 8):
+        screen = Screen(screen_shape="square", screen_size=1.5,
+                        pixel_shape=(3, 3), subpixel_resolution=resolution)
+        totals.append(float(screen.ray2image_grid(
+            eye, eye.calc_rays(point),
+        ).sum()))
+
+    axial_distance = point[0, 2] - eye.position[2]
+    expected = eye_area / (4.0 * np.pi * axial_distance ** 2)
+    np.testing.assert_allclose(totals, np.full(4, expected), rtol=2e-3, atol=0.0)
+    assert np.ptp(totals) / totals[-1] < 1e-3
+
+
 def test_etendue_x_scan_example_matches_analytic_curve(tmp_path):
     example_path = Path(__file__).resolve().parents[1] / "examples" / "verify_etendue_x_scan.py"
     spec = importlib.util.spec_from_file_location("verify_etendue_x_scan", example_path)

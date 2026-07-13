@@ -45,24 +45,143 @@ from .utils.my_stdio import my_tqdm
 VectorLike = Union[np.ndarray, List[Number], Tuple[Number], Number]
 
 
+@njit(cache=True, nogil=True, inline="always")
+def _unit_circle_primitive(x):
+    """Integral of ``sqrt(1 - x**2)`` from zero to x on the unit circle."""
+    x = min(1.0, max(-1.0, x))
+    return 0.5 * (x * np.sqrt(max(0.0, 1.0 - x * x)) + np.arcsin(x))
+
+
 @njit(cache=True, nogil=True)
-def _rasterize_spots(u_axis, v_axis, u_center, v_center, half_u, half_v,
+def _unit_circle_rectangle_overlap(x0, x1, y0, y1):
+    """Return the exact area shared by a unit circle and an axis-aligned rectangle."""
+    x0 = max(-1.0, x0)
+    x1 = min(1.0, x1)
+    y0 = max(-1.0, y0)
+    y1 = min(1.0, y1)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+
+    nearest_x = 0.0
+    if x1 < 0.0:
+        nearest_x = x1
+    elif x0 > 0.0:
+        nearest_x = x0
+    nearest_y = 0.0
+    if y1 < 0.0:
+        nearest_y = y1
+    elif y0 > 0.0:
+        nearest_y = y0
+    if nearest_x * nearest_x + nearest_y * nearest_y >= 1.0:
+        return 0.0
+
+    if (x0 * x0 + y0 * y0 <= 1.0 and
+            x0 * x0 + y1 * y1 <= 1.0 and
+            x1 * x1 + y0 * y0 <= 1.0 and
+            x1 * x1 + y1 * y1 <= 1.0):
+        return (x1 - x0) * (y1 - y0)
+
+    # The vertical overlap changes expression only where a horizontal
+    # rectangle edge crosses the circle. Split there and integrate the circle
+    # arc analytically on each interval.
+    breaks = np.empty(7, dtype=np.float64)
+    n_breaks = 2
+    breaks[0] = x0
+    breaks[1] = x1
+    # The circle height has its maximum at zero. Splitting there avoids using
+    # the tangency point itself to classify a symmetric interval.
+    if x0 < 0.0 < x1:
+        breaks[n_breaks] = 0.0
+        n_breaks += 1
+    for y in (y0, y1):
+        if -1.0 < y < 1.0:
+            crossing = np.sqrt(max(0.0, 1.0 - y * y))
+            for candidate in (-crossing, crossing):
+                if x0 < candidate < x1:
+                    breaks[n_breaks] = candidate
+                    n_breaks += 1
+
+    # Small fixed-size insertion sort keeps this helper Numba-friendly.
+    for i in range(1, n_breaks):
+        value = breaks[i]
+        j = i - 1
+        while j >= 0 and breaks[j] > value:
+            breaks[j + 1] = breaks[j]
+            j -= 1
+        breaks[j + 1] = value
+
+    area = 0.0
+    for i in range(n_breaks - 1):
+        left = breaks[i]
+        right = breaks[i + 1]
+        if right - left <= 1e-15:
+            continue
+        middle = 0.5 * (left + right)
+        height = np.sqrt(max(0.0, 1.0 - middle * middle))
+        upper = min(y1, height)
+        lower = max(y0, -height)
+        if upper <= lower:
+            continue
+
+        coefficient = 0.0
+        constant = 0.0
+        if height < y1:
+            coefficient += 1.0
+        else:
+            constant += y1
+        if -height > y0:
+            coefficient += 1.0
+        else:
+            constant -= y0
+        area += constant * (right - left)
+        area += coefficient * (_unit_circle_primitive(right)
+                               - _unit_circle_primitive(left))
+
+    rectangle_area = (x1 - x0) * (y1 - y0)
+    return min(rectangle_area, max(0.0, area))
+
+
+@njit(cache=True, nogil=True, inline="always")
+def _spot_cell_overlap(u0, u1, v0, v1, center_u, center_v,
+                       half_u, half_v, use_ellipse):
+    """Area shared by one detector cell and an ellipse/rectangle spot."""
+    if use_ellipse:
+        normalized_area = _unit_circle_rectangle_overlap(
+            (u0 - center_u) / half_u,
+            (u1 - center_u) / half_u,
+            (v0 - center_v) / half_v,
+            (v1 - center_v) / half_v,
+        )
+        return normalized_area * half_u * half_v
+
+    overlap_u = min(u1, center_u + half_u) - max(u0, center_u - half_u)
+    overlap_v = min(v1, center_v + half_v) - max(v0, center_v - half_v)
+    if overlap_u <= 0.0 or overlap_v <= 0.0:
+        return 0.0
+    return overlap_u * overlap_v
+
+
+@njit(cache=True, nogil=True)
+def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
+                     u_center, v_center, half_u, half_v,
                      i_min, i_max, j_min, j_max, valid, v_subpixels,
                      use_ellipse):
-    """Rasterize every valid spot into flat pixel indices in two passes."""
+    """Rasterize spots into flat cell indices and exact overlap areas."""
     counts = np.zeros(u_center.size, dtype=np.int64)
     for valid_index in range(valid.size):
         ray = valid[valid_index]
         count = 0
         for i in range(i_min[ray], i_max[ray] + 1):
-            u_normalized = (u_axis[i] - u_center[ray]) / half_u[ray]
+            u0 = u_axis[i] - 0.5 * cell_u
+            u1 = u0 + cell_u
             for j in range(j_min[ray], j_max[ray] + 1):
-                v_normalized = (v_axis[j] - v_center[ray]) / half_v[ray]
-                if use_ellipse:
-                    inside = u_normalized * u_normalized + v_normalized * v_normalized < 1.0
-                else:
-                    inside = abs(u_normalized) < 0.5 and abs(v_normalized) < 0.5
-                if inside:
+                v0 = v_axis[j] - 0.5 * cell_v
+                v1 = v0 + cell_v
+                overlap = _spot_cell_overlap(
+                    u0, u1, v0, v1, u_center[ray], v_center[ray],
+                    half_u[ray], half_v[ray], use_ellipse,
+                )
+                if overlap > 0.0:
                     count += 1
         counts[ray] = count
 
@@ -71,22 +190,26 @@ def _rasterize_spots(u_axis, v_axis, u_center, v_center, half_u, half_v,
     for ray in range(counts.size):
         offsets[ray + 1] = offsets[ray] + counts[ray]
     pixel_indices = np.empty(offsets[-1], dtype=np.int32)
+    overlap_areas = np.empty(offsets[-1], dtype=np.float32)
 
     for valid_index in range(valid.size):
         ray = valid[valid_index]
         output_index = offsets[ray]
         for i in range(i_min[ray], i_max[ray] + 1):
-            u_normalized = (u_axis[i] - u_center[ray]) / half_u[ray]
+            u0 = u_axis[i] - 0.5 * cell_u
+            u1 = u0 + cell_u
             for j in range(j_min[ray], j_max[ray] + 1):
-                v_normalized = (v_axis[j] - v_center[ray]) / half_v[ray]
-                if use_ellipse:
-                    inside = u_normalized * u_normalized + v_normalized * v_normalized < 1.0
-                else:
-                    inside = abs(u_normalized) < 0.5 and abs(v_normalized) < 0.5
-                if inside:
+                v0 = v_axis[j] - 0.5 * cell_v
+                v1 = v0 + cell_v
+                overlap = _spot_cell_overlap(
+                    u0, u1, v0, v1, u_center[ray], v_center[ray],
+                    half_u[ray], half_v[ray], use_ellipse,
+                )
+                if overlap > 0.0:
                     pixel_indices[output_index] = i * v_subpixels + j
+                    overlap_areas[output_index] = overlap
                     output_index += 1
-    return pixel_indices, counts
+    return pixel_indices, overlap_areas, counts
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 # 3D vector like object (accepts numpy.ndarray, list, tuple)
@@ -1001,8 +1124,10 @@ class Screen:
         du, dv = float(self._subpixel_size[0]), float(self._subpixel_size[1])  # size of sub-pixels
         u_axis = self._subpixel_u_axis
         v_axis = self._subpixel_v_axis
-        u_min, u_max = u_axis[0], u_axis[-1]
-        v_min, v_max = v_axis[0], v_axis[-1]
+        # Cell edges, rather than center extrema, are the physical screen
+        # bounds. This also lets a spot smaller than one cell be retained.
+        u_min, u_max = 0.0, float(self._screen_size[0])
+        v_min, v_max = 0.0, float(self._screen_size[1])
         # AABB means "Axis-Aligned Bounding Box"
         # pre-clip rays whose spot AABB doesn't touch the screen rect (same effect as原実装のNaN→False)
 
@@ -1025,10 +1150,10 @@ class Screen:
         # +-------- ¯''-===-''¯ --------+-- uv[:, 0] + half[:, 0]
         #
 
-        inside_screen = ((uv[:, 0] + half[:, 0] >= u_min) &  # u + half_width >= u_min -> left side of screen
-                         (uv[:, 0] - half[:, 0] <= u_max) &  # u - half_width <= u_max -> right side of screen
-                         (uv[:, 1] + half[:, 1] >= v_min) &  # v + half_height >= v_min -> top side of screen
-                         (uv[:, 1] - half[:, 1] <= v_max))  # v - half_height <= v_max -> bottom side of screen
+        inside_screen = ((uv[:, 0] + half[:, 0] > u_min) &
+                         (uv[:, 0] - half[:, 0] < u_max) &
+                         (uv[:, 1] + half[:, 1] > v_min) &
+                         (uv[:, 1] - half[:, 1] < v_max))
 
         if not np.any(inside_screen):
             # no spots on screen
@@ -1052,13 +1177,13 @@ class Screen:
         i_max = np.zeros(rays.n, dtype=np.int32)
         j_min = np.zeros(rays.n, dtype=np.int32)
         j_max = np.zeros(rays.n, dtype=np.int32)
-        i_min[valid] = np.clip(np.floor(u_low[valid] / du - 0.5), 0, U_sub - 1).astype(np.int32)
-        i_max[valid] = np.clip(np.ceil(u_high[valid] / du - 0.5), 0, U_sub - 1).astype(np.int32)
-        j_min[valid] = np.clip(np.floor(v_low[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
-        j_max[valid] = np.clip(np.ceil(v_high[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
+        i_min[valid] = np.clip(np.floor(u_low[valid] / du), 0, U_sub - 1).astype(np.int32)
+        i_max[valid] = np.clip(np.ceil(u_high[valid] / du) - 1, 0, U_sub - 1).astype(np.int32)
+        j_min[valid] = np.clip(np.floor(v_low[valid] / dv), 0, V_sub - 1).astype(np.int32)
+        j_max[valid] = np.clip(np.ceil(v_high[valid] / dv) - 1, 0, V_sub - 1).astype(np.int32)
 
-        pixel_indices, counts = _rasterize_spots(
-            u_axis, v_axis, u_center, v_center, a_u, a_v,
+        pixel_indices, overlap_areas, counts = _rasterize_spots(
+            u_axis, v_axis, du, dv, u_center, v_center, a_u, a_v,
             i_min, i_max, j_min, j_max, valid, V_sub, use_ellipse,
         )
         indptr = np.concatenate([np.array([0], dtype=np.int64),
@@ -1079,7 +1204,10 @@ class Screen:
                 raise ValueError(
                     f"etendue_per_subpixel must have shape {(self.N_subpixel,)}"
                 )
-        data = etendue_per_subpixel[pixel_indices]
+        # ``etendue_per_subpixel`` contains the full-cell area. Scale it by
+        # the exact fraction covered by the projected eye spot.
+        data = (etendue_per_subpixel[pixel_indices]
+                * (overlap_areas / self._A_subpixel)).astype(np.float32)
         mat = sparse.csc_matrix((data, pixel_indices, indptr), shape=(self.N_subpixel, rays.n)).tocsr()
         mat.data = mat.data * etendue_per_ray[mat.indices]
         return mat  # (N_subpixel, n) csr matrix
@@ -1314,11 +1442,6 @@ class Camera:
         self._camera_position = np.array(camera_position, dtype=float, copy=True)
         self._rotation_matrix = (np.eye(3) if rotation_matrix is None
                                  else np.array(rotation_matrix, dtype=float, copy=True))
-        if self._screen.subpixel_size.max() >= np.min([eye.eye_size for eye in self._eyes]):
-            # warning
-            raise ValueError(f"subpixel size of the screen must be smaller than eye size of all eyes "
-                             f"(subpixel_size: {self._screen.subpixel_size}, "
-                             f"smallest eye size: {np.min([eye.eye_size for eye in self._eyes])})")
 
     @classmethod
     def single_pinhole(cls,

@@ -23,7 +23,8 @@ from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
 from multi_pinhole.utils import stl_utils
 
 
-def build_world(voxel_shape: tuple[int, int, int], pixel_shape: tuple[int, int]) -> World:
+def build_world(voxel_shape: tuple[int, int, int], pixel_shape: tuple[int, int],
+                detector_res: int = 2) -> World:
     """Build a deterministic projection benchmark without wall occlusion."""
     voxel = Voxel.uniform_voxel(
         ranges=((-10.0, 10.0), (-10.0, 10.0), (-10.0, 10.0)),
@@ -33,7 +34,7 @@ def build_world(voxel_shape: tuple[int, int, int], pixel_shape: tuple[int, int])
         eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.6,
                   focal_length=25.0, position=(0.0, 0.0))],
         screen=Screen(screen_shape="rectangle", screen_size=(10.0, 10.0),
-                      pixel_shape=pixel_shape, subpixel_resolution=2),
+                      pixel_shape=pixel_shape, subpixel_resolution=detector_res),
         apertures=Aperture(shape="circle", size=12.0, position=(0.0, 0.0, 40.0),
                            resolution=24, max_size=30.0),
         camera_position=(0.0, 0.0, -150.0),
@@ -55,7 +56,8 @@ def _center_ranges_for_spacing(bounds, spacing):
     return tuple(ranges), tuple(shape)
 
 
-def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None) -> World:
+def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
+                    detector_res: int = 5) -> World:
     """Build a reduced-grid version of the 2026 MST tangential SXR case."""
     camera_center = np.array([1550.7, -1522.4, 210.8])
     forward_point = np.array([1525.9, -1521.1, 207.3])
@@ -71,7 +73,7 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None) -> Wo
             eye_size=1.0,
             screen_size=7.5,
             pixel_shape=(61, 61),
-            subpixel_resolution=5,
+            subpixel_resolution=detector_res,
             apertures=aperture,
         ).set_camera_position(camera_center).set_orientation_from_points(
             look_point=forward_point,
@@ -109,12 +111,16 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None) -> Wo
 
 def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, parallel=4,
                   scene="simple", max_working_memory=1_000_000_000,
-                  mst_spacing=None):
+                  mst_spacing=None, detector_res=None):
     """Construct a projection matrix and return stable benchmark metrics."""
     if scene == "mst":
-        world = build_mst_world(tuple(voxel_shape), voxel_spacing=mst_spacing)
+        detector_res = 5 if detector_res is None else detector_res
+        world = build_mst_world(tuple(voxel_shape), voxel_spacing=mst_spacing,
+                                detector_res=detector_res)
     elif scene == "simple":
-        world = build_world(tuple(voxel_shape), tuple(pixel_shape))
+        detector_res = 2 if detector_res is None else detector_res
+        world = build_world(tuple(voxel_shape), tuple(pixel_shape),
+                            detector_res=detector_res)
     else:
         raise ValueError(f"unknown benchmark scene: {scene!r}")
     start = time.perf_counter()
@@ -130,6 +136,7 @@ def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, paralle
         "voxel_count": world.voxel.N,
         "pixel_shape": tuple(camera.screen.pixel_shape),
         "subvoxel_resolution": res,
+        "detector_subpixel_resolution": detector_res,
         "parallel": parallel,
         "max_working_memory": max_working_memory,
         "projection_shape": projection.shape,
@@ -161,11 +168,13 @@ if __name__ == "__main__":
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--max-working-memory-mb", type=float, default=1000.0)
     parser.add_argument("--mst-spacing", type=float)
+    parser.add_argument("--detector-res", type=int)
     args = parser.parse_args()
 
     metrics = run_benchmark(args.voxel_shape, args.pixel_shape, args.res, args.parallel,
                             scene=args.scene,
                             max_working_memory=int(args.max_working_memory_mb * 1_000_000),
-                            mst_spacing=args.mst_spacing)
+                            mst_spacing=args.mst_spacing,
+                            detector_res=args.detector_res)
     for key, value in metrics.items():
         print(f"{key}: {value}")
