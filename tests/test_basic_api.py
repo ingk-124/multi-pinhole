@@ -743,3 +743,26 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     assert np.any(result["pixel_image"] > 0)
     assert result["geometry_path"].is_file()
     assert result["projection_path"].is_file()
+
+
+def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "verify_1d_analytic_projection.py")
+    spec = importlib.util.spec_from_file_location("verify_1d_analytic_projection", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_validation(
+        tmp_path / "analytic_projection.png",
+        voxel_count=81,
+        voxel_res=8,
+        subpixel_resolution=24,
+        parallel=1,
+    )
+
+    assert result["output_path"].is_file()
+    assert set(result["metrics"]) == {"constant", "linear", "square", "gaussian"}
+    for metrics in result["metrics"].values():
+        assert metrics["relative_l2"] < 0.01
+        assert metrics["relative_flux"] < 0.01
+        assert metrics["correlation"] > 0.9999
