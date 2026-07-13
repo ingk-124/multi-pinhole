@@ -308,6 +308,11 @@ class World:
         filename : str or os.PathLike[str]
             Destination path where the serialized world should be written.
         """
+        # TODO: Store a projection-algorithm/cache schema version with the
+        # serialized World.  ``load_world`` must invalidate ``_projection``
+        # and ``_P_matrix`` when that version is absent or incompatible;
+        # matching matrix shapes alone cannot establish cache validity after
+        # interpolation or detector-rasterization changes.
         with open(filename, "wb") as f:
             dill.dump(self, f)
 
@@ -326,6 +331,9 @@ class World:
         World
             Restored world populated with the serialized state.
         """
+        # TODO: Migrate legacy Screen-derived caches after unpickling (for
+        # example ``_subpixel_u_axis``/``_subpixel_v_axis``) and apply the
+        # projection-cache version check documented in ``save_world`` above.
         with open(filename, "rb") as f:
             loaded_world = dill.load(f)
         return loaded_world

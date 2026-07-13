@@ -1192,6 +1192,14 @@ class Screen:
         # that factor keeps the integrated signal equal to the point-source
         # solid angle of the pinhole.  The extra ray_cosine converts the
         # subpixel cos**4 factor to the source-side cos**3 solid-angle factor.
+        #
+        # TODO: Integrate etendue over positions inside a finite-sized Eye.
+        # ``etendue_per_subpixel`` already varies across detector subpixels,
+        # but the source-side distance/angle correction below is evaluated
+        # only for the ray through the Eye centre and reused over the whole
+        # projected Eye footprint.  A large or elongated Eye may require
+        # mapping each overlap location back to an Eye position and evaluating
+        # its local ray geometry (and eventually its local visibility).
         ray_offset = rays.XY - eye.position[None, :2]
         ray_tangent = np.linalg.norm(ray_offset, axis=-1) / eye.focal_length
         ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
