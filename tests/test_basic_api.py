@@ -537,6 +537,35 @@ def test_sub_voxel_centers_match_sub_voxel_objects():
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-12)
 
 
+def test_get_sub_voxel_centers_does_not_mutate_voxel_resolution():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2),
+                                sub_voxel_resolution=3)
+
+    centers = voxel.get_sub_voxel_centers(n=np.array([0, 1]), res=2)
+
+    assert voxel.res == (3, 3, 3)
+    assert centers.shape == (2 * 2 ** 3, 3)
+
+
+def test_parallel_projection_matches_serial_projection():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=2.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(8, 8), subpixel_resolution=2)
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                    camera_position=(0.0, 0.0, -20.0))
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
+    expected = world.projection[0][0].copy()
+    world.set_projection_matrix(res=2, verbose=0, parallel=4, force=True)
+
+    np.testing.assert_allclose(world.projection[0][0].toarray(), expected.toarray(),
+                               rtol=1e-12, atol=1e-14)
+
+
 def test_partial_voxel_inside_mask_scales_integrated_light():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)

@@ -9,6 +9,7 @@ spherical -- see :mod:`multi_pinhole.coordinates`) while the grid itself
 remains Cartesian.
 """
 
+from functools import lru_cache
 from itertools import chain
 
 import numpy as np
@@ -69,6 +70,14 @@ def interpolate_matrix_from_vertices(res=None):
         # The matrix is dense, but it is converted to a sparse matrix.
         # Because it is used for dot product with a sparse matrix in Voxel.sub_voxel_interpolator.
         return sparse.csr_matrix(matrix)
+
+
+@lru_cache(maxsize=16)
+def _sub_voxel_center_fractions(resolution):
+    """Return cached Cartesian sub-voxel center fractions for a resolution."""
+    fx, fy, fz = [(np.arange(r, dtype=float) + 0.5) / r for r in resolution]
+    xx, yy, zz = np.meshgrid(fx, fy, fz, indexing="ij")
+    return np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
 
 class Voxel:
     """
@@ -372,7 +381,10 @@ class Voxel:
             Center coordinates with shape ``(N_selected * prod(res), 3)``.
             The row order matches :meth:`sub_voxel_interpolator`.
         """
-        self.res = res
+        resolution = self.res if res is None else tuple(np.broadcast_to(res, 3))
+        if any(int(r) != r or r <= 0 for r in resolution):
+            raise ValueError(f"{res=} must contain positive integers")
+        resolution = tuple(int(r) for r in resolution)
         n = self._type_check_n_voxel(n)
         indices = np.atleast_2d(self.get_voxel_position(n)).astype(int)
         i, j, k = indices.T
@@ -381,9 +393,7 @@ class Voxel:
         y0, y1 = self.y_axis[j], self.y_axis[j + 1]
         z0, z1 = self.z_axis[k], self.z_axis[k + 1]
 
-        fx, fy, fz = [(np.arange(r, dtype=float) + 0.5) / r for r in self.res]
-        xx, yy, zz = np.meshgrid(fx, fy, fz, indexing="ij")
-        fractions = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+        fractions = _sub_voxel_center_fractions(resolution)
 
         centers = np.empty((indices.shape[0], fractions.shape[0], 3), dtype=float)
         centers[..., 0] = x0[:, None] + (x1 - x0)[:, None] * fractions[None, :, 0]

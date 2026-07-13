@@ -17,7 +17,7 @@ import gc
 import os
 import time
 from collections.abc import Hashable, Mapping
-from concurrent.futures import as_completed
+from concurrent.futures import FIRST_COMPLETED, wait
 from concurrent.futures.thread import ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Tuple, List
@@ -890,6 +890,13 @@ class World:
         self.voxel.res = partial_res
         partial_subvoxel_res = self.voxel.res
         self.voxel.res = full_subvoxel_res
+        subvoxel_matrices = {
+            tuple(full_subvoxel_res): sparse.csr_matrix(self.voxel._sub_voxel_matrix),
+        }
+        if tuple(partial_subvoxel_res) not in subvoxel_matrices:
+            self.voxel.res = partial_subvoxel_res
+            subvoxel_matrices[tuple(partial_subvoxel_res)] = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
+            self.voxel.res = full_subvoxel_res
         self.voxel.set_voxel2vertices(exist_ok=True, n_jobs=n_jobs, verbose=verbose)
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
@@ -974,8 +981,7 @@ class World:
                 shape ``(len(voxel_indices) * samples_per_voxel, N_voxel)``.
             """
             voxel_indices = np.atleast_1d(voxel_indices)
-            self.voxel.res = subvoxel_res
-            sub_voxel_matrix = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
+            sub_voxel_matrix = subvoxel_matrices[tuple(subvoxel_res)]
             samples_per_voxel = sub_voxel_matrix.shape[0]
             vertex_indices = self.voxel.vertices_indices[voxel_indices].reshape(-1)
             selector = sparse.coo_matrix((np.ones(vertex_indices.size, dtype=bool),
@@ -992,8 +998,8 @@ class World:
             row_weights = np.repeat(self.voxel.volume[voxel_indices] / samples_per_voxel, samples_per_voxel)
             return sparse.diags(row_weights, format="csr") @ matrix
 
-        def _process_tasks(futures, desc):
-            """Collect completed executor futures into one sparse ``(N_subpixel, N_vox)`` matrix.
+        def _process_parallel_chunks(chunks, process_chunk, desc):
+            """Process a bounded set of chunks and consolidate results as they finish.
 
             Drains ``futures`` as they complete (via
             ``concurrent.futures.as_completed``), periodically consolidating
@@ -1002,10 +1008,10 @@ class World:
 
             Parameters
             ----------
-            futures : list[concurrent.futures.Future]
-                Futures each resolving to a ``(data, row, col)`` COO triplet,
-                e.g. as produced by :func:`_full_vox_proc` or
-                :func:`_partial_vox_proc`.
+            chunks : iterable[slice]
+                Chunk slices to process.
+            process_chunk : callable
+                Callable accepting a chunk and returning a COO triplet.
             desc : str
                 Progress-bar label.
 
@@ -1014,35 +1020,53 @@ class World:
             scipy.sparse.coo_matrix
                 Sum of all future results, shape ``(screen.N_subpixel, N_vox)``.
             """
-            res = sparse.coo_matrix((screen.N_subpixel, N_vox))
+            res = sparse.csr_matrix((screen.N_subpixel, N_vox))
             data_buf, row_buf, col_buf = [], [], []
-            with tqdm(desc=desc, total=len(futures), disable=verbose <= 0) as pbar:
-                for i, fut in enumerate(as_completed(futures)):
-                    data, row, col = fut.result()
-                    futures.remove(fut)  # free memory
-                    data_buf.append(data)
-                    row_buf.append(row)
-                    col_buf.append(col)
-                    # summarize every 10 chunks to reduce memory usage
-                    if i % 10 == 0:
-                        sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                        (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
-                        res += sum_of_buf
-                        # clear buffer
-                        data_buf, row_buf, col_buf = [], [], []
-                    pbar.update()
+            chunk_iter = iter(chunks)
+            max_in_flight = 2 * n_jobs
 
-            # summarize remaining buffer
-            if data_buf:
-                sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                               shape=(screen.N_subpixel, N_vox))
-                res += sum_of_buf
-                del data_buf, row_buf, col_buf
-                gc.collect()
+            def _flush_buffer():
+                nonlocal res, data_buf, row_buf, col_buf
+                if not data_buf:
+                    return
+                block = sparse.coo_matrix(
+                    (np.concatenate(data_buf),
+                     (np.concatenate(row_buf), np.concatenate(col_buf))),
+                    shape=(screen.N_subpixel, N_vox),
+                ).tocsr()
+                res += block
+                data_buf, row_buf, col_buf = [], [], []
 
-            return res
+            with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+                pending = set()
+
+                def _submit_next():
+                    try:
+                        chunk = next(chunk_iter)
+                    except StopIteration:
+                        return False
+                    pending.add(executor.submit(process_chunk, chunk))
+                    return True
+
+                while len(pending) < max_in_flight and _submit_next():
+                    pass
+
+                with tqdm(desc=desc, total=len(chunks), disable=verbose <= 0) as pbar:
+                    while pending:
+                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                        for fut in done:
+                            data, row, col = fut.result()
+                            data_buf.append(data)
+                            row_buf.append(row)
+                            col_buf.append(col)
+                            if len(data_buf) >= 10:
+                                _flush_buffer()
+                            pbar.update()
+                            _submit_next()
+
+            _flush_buffer()
+
+            return res.tocoo()
 
         if full_voxels.size == 0:
             my_print("Skipping full voxels processing.", show=verbose > 0)
@@ -1091,16 +1115,14 @@ class World:
                     del data_buf, row_buf, col_buf
                     gc.collect()
             else:
-                with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-                    futures = []
-                    # submit tasks
-                    for _slice in my_tqdm(_chunks, desc="Submitting full voxel tasks",
-                                          disable=verbose <= 0, leave=False):
-                        sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
-                        S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
-                        futures.append(executor.submit(_full_vox_proc, sv_gc, S))
+                def _process_full_chunk(_slice):
+                    voxel_indices = full_voxels[_slice]
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=full_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, full_subvoxel_res)
+                    return _full_vox_proc(sv_gc, S)
 
-                full_res = _process_tasks(futures, desc="Processing full voxels")
+                full_res = _process_parallel_chunks(_chunks, _process_full_chunk,
+                                                    desc="Processing full voxels")
 
             my_print(f"Full voxels processed.", show=verbose > 0)
 
@@ -1165,19 +1187,17 @@ class World:
                     del data_buf, row_buf, col_buf
                     gc.collect()
             else:
-                with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-                    futures = []
-                    # submit tasks
-                    for _slice in my_tqdm(_chunks, desc="Submitting partial voxel tasks",
-                                          disable=verbose <= 0, leave=False):
-                        sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
-                        mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
-                                                        eye_idx=eye_idx, verbose=0).squeeze()
-                        mask = mask & self._inside_points(sv_gc)
-                        S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
-                        futures.append(executor.submit(_partial_vox_proc, sv_gc, S, mask))
+                def _process_partial_chunk(_slice):
+                    voxel_indices = partial_voxels[_slice]
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=partial_subvoxel_res)
+                    mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
+                                                    eye_idx=eye_idx, verbose=0).squeeze()
+                    mask = mask & self._inside_points(sv_gc)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, partial_subvoxel_res)
+                    return _partial_vox_proc(sv_gc, S, mask)
 
-                partial_res = _process_tasks(futures, desc="Processing partial voxels")
+                partial_res = _process_parallel_chunks(_chunks, _process_partial_chunk,
+                                                       desc="Processing partial voxels")
 
             my_print(f"Partial voxels processed.", show=verbose > 0)
 
