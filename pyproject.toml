@@ -24,6 +24,14 @@ dependencies = [
     "numba>=0.58"
 ]
 
+[project.optional-dependencies]
+gui = [
+    "vtk>=9.2",
+    "trame>=3.0",
+    "trame-vtk>=2.8",
+    "trame-vuetify>=3.0",
+]
+
 [tool.setuptools.dynamic]
 version = { attr = "multi_pinhole.__about__.__version__" }
 
@@ -37,3 +45,4 @@ multi_pinhole = ["data/*.stl"]
 
 [project.scripts]
 multi-pinhole-sim = "multi_pinhole:cli"
+multi-pinhole-gui = "multi_pinhole.gui.app:main"
