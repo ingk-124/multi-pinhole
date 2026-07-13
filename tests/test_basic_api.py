@@ -588,10 +588,20 @@ def test_parallel_projection_matches_serial_projection():
 
     world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
     expected = world.projection[0][0].copy()
-    world.set_projection_matrix(res=2, verbose=0, parallel=4, force=True)
+    world.set_projection_matrix(res=2, verbose=0, parallel=4, force=True,
+                                max_working_memory=10_000)
 
     np.testing.assert_allclose(world.projection[0][0].toarray(), expected.toarray(),
                                rtol=1e-12, atol=1e-14)
+
+
+def test_projection_rejects_nonpositive_working_memory():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="max_working_memory"):
+        world.set_projection_matrix(res=1, verbose=0, parallel=1,
+                                    max_working_memory=0)
 
 
 def test_partial_voxel_inside_mask_scales_integrated_light():

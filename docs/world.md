@@ -199,9 +199,10 @@ function:
 1. **Estimates sparsity** by running `calc_image_vec` on a small random
    sample of voxels (20, or fewer if there aren't that many) and measuring
    the average number of non-zero entries (`nnz`) per voxel.
-2. **Picks a batch size** so that `batch_size × est_nnz` stays under
-   `max_nnz` (default `100_000_000`), divided across `n_jobs` parallel
-   workers.
+2. **Picks a batch size** from a sample of the point, image, interpolation,
+   and result matrices. The estimated transient bytes stay within
+   `max_working_memory` (one billion bytes by default) across the bounded
+   in-flight task set. The legacy `max_nnz` guard remains as a second cap.
 3. **Processes chunks either serially or via a `ThreadPoolExecutor`**
    (`n_jobs > 1`), keeping at most twice `n_jobs` tasks in flight. Each task
    creates its sample points and interpolation matrix inside the worker and returns a COO

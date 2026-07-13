@@ -89,7 +89,7 @@ def build_mst_world(voxel_shape: tuple[int, int, int]) -> World:
 
 
 def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, parallel=4,
-                  scene="simple"):
+                  scene="simple", max_working_memory=1_000_000_000):
     """Construct a projection matrix and return stable benchmark metrics."""
     if scene == "mst":
         world = build_mst_world(tuple(voxel_shape))
@@ -98,7 +98,8 @@ def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, paralle
     else:
         raise ValueError(f"unknown benchmark scene: {scene!r}")
     start = time.perf_counter()
-    world.set_projection_matrix(res=res, verbose=0, parallel=parallel, force=True)
+    world.set_projection_matrix(res=res, verbose=0, parallel=parallel, force=True,
+                                max_working_memory=max_working_memory)
     elapsed = time.perf_counter() - start
     projection = next(iter(world.P_matrix.values()))
     camera = next(iter(world.cameras.values()))
@@ -110,6 +111,7 @@ def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, paralle
         "pixel_shape": tuple(camera.screen.pixel_shape),
         "subvoxel_resolution": res,
         "parallel": parallel,
+        "max_working_memory": max_working_memory,
         "projection_shape": projection.shape,
         "projection_nnz": projection.nnz,
         "projection_sum": float(projection.sum()),
@@ -137,9 +139,11 @@ if __name__ == "__main__":
     parser.add_argument("--pixel-shape", type=_parse_pair, default=(24, 24))
     parser.add_argument("--res", type=int, default=3)
     parser.add_argument("--parallel", type=int, default=4)
+    parser.add_argument("--max-working-memory-mb", type=float, default=1000.0)
     args = parser.parse_args()
 
     metrics = run_benchmark(args.voxel_shape, args.pixel_shape, args.res, args.parallel,
-                            scene=args.scene)
+                            scene=args.scene,
+                            max_working_memory=int(args.max_working_memory_mb * 1_000_000))
     for key, value in metrics.items():
         print(f"{key}: {value}")
