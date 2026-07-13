@@ -577,6 +577,43 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
 
 
+def test_one_dimensional_refinement_matches_aligned_fine_projection():
+    """A 5x4 subgrid must match 20 explicit cells at identical sample points."""
+    ranges = ((-1.0, 1.0), (-0.05, 0.05), (30.0, 30.1))
+
+    def make_world(shape):
+        eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+        screen = Screen(screen_shape="square", screen_size=20.0,
+                        pixel_shape=(40, 40), subpixel_resolution=1)
+        aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+        camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                        camera_position=(0.0, 0.0, 0.0))
+        voxel = Voxel.uniform_voxel(ranges=ranges, shape=shape)
+        world = World(voxel=voxel, cameras=[camera], verbose=0)
+        world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+        return world
+
+    fine_world = make_world((20, 1, 1))
+    coarse_world = make_world((5, 1, 1))
+    fine_points = fine_world.voxel.get_sub_voxel_centers(res=(1, 1, 1))
+    coarse_points = coarse_world.voxel.get_sub_voxel_centers(res=(4, 1, 1))
+    np.testing.assert_allclose(coarse_points, fine_points, rtol=0.0, atol=1e-15)
+
+    # Piecewise linear between coarse centers and zero in the clamped outer
+    # half-cells, matching the interpolation boundary condition exactly.
+    def emission(x):
+        return np.maximum(0.0, 1.0 - np.abs(x) / 0.8)
+
+    fine_profile = emission(fine_world.voxel.gravity_center[:, 0])
+    coarse_profile = emission(coarse_world.voxel.gravity_center[:, 0])
+    fine_world.set_projection_matrix(res=(1, 1, 1), verbose=0, parallel=1)
+    coarse_world.set_projection_matrix(res=(4, 1, 1), verbose=0, parallel=1)
+
+    fine_image = fine_world.P_matrix[0] @ fine_profile
+    coarse_image = coarse_world.P_matrix[0] @ coarse_profile
+    np.testing.assert_allclose(coarse_image, fine_image, rtol=1e-12, atol=1e-15)
+
+
 def test_parallel_projection_matches_serial_projection():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=2.0)
     screen = Screen(screen_shape="square", screen_size=20.0,
