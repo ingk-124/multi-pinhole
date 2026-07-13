@@ -46,29 +46,47 @@ VectorLike = Union[np.ndarray, List[Number], Tuple[Number], Number]
 
 
 @njit(cache=True, nogil=True)
-def _ellipse_pixel_indices(u_axis, v_axis, u_center, v_center, half_u, half_v,
-                           i_min, j_min, v_subpixels):
-    """Return flattened subpixel indices covered by one elliptical spot."""
-    u_normalized_sq = ((u_axis - u_center) / half_u) ** 2
-    v_normalized_sq = ((v_axis - v_center) / half_v) ** 2
-    inside = (u_normalized_sq[:, None] + v_normalized_sq[None, :]) < 1.0
-    if not inside.any():
-        return np.empty((0,), dtype=np.int32)
-    ii, jj = np.nonzero(inside)
-    return ((i_min + ii) * v_subpixels + (j_min + jj)).astype(np.int32)
+def _rasterize_spots(u_axis, v_axis, u_center, v_center, half_u, half_v,
+                     i_min, i_max, j_min, j_max, valid, v_subpixels,
+                     use_ellipse):
+    """Rasterize every valid spot into flat pixel indices in two passes."""
+    counts = np.zeros(u_center.size, dtype=np.int64)
+    for valid_index in range(valid.size):
+        ray = valid[valid_index]
+        count = 0
+        for i in range(i_min[ray], i_max[ray] + 1):
+            u_normalized = (u_axis[i] - u_center[ray]) / half_u[ray]
+            for j in range(j_min[ray], j_max[ray] + 1):
+                v_normalized = (v_axis[j] - v_center[ray]) / half_v[ray]
+                if use_ellipse:
+                    inside = u_normalized * u_normalized + v_normalized * v_normalized < 1.0
+                else:
+                    inside = abs(u_normalized) < 0.5 and abs(v_normalized) < 0.5
+                if inside:
+                    count += 1
+        counts[ray] = count
 
+    offsets = np.empty(counts.size + 1, dtype=np.int64)
+    offsets[0] = 0
+    for ray in range(counts.size):
+        offsets[ray + 1] = offsets[ray] + counts[ray]
+    pixel_indices = np.empty(offsets[-1], dtype=np.int32)
 
-@njit(cache=True, nogil=True)
-def _rectangle_pixel_indices(u_axis, v_axis, u_center, v_center, half_u, half_v,
-                             i_min, j_min, v_subpixels):
-    """Return flattened subpixel indices covered by one rectangular spot."""
-    u_condition = np.abs((u_axis - u_center) / half_u) < 0.5
-    v_condition = np.abs((v_axis - v_center) / half_v) < 0.5
-    inside = u_condition[:, None] & v_condition[None, :]
-    if not inside.any():
-        return np.empty((0,), dtype=np.int32)
-    ii, jj = np.nonzero(inside)
-    return ((i_min + ii) * v_subpixels + (j_min + jj)).astype(np.int32)
+    for valid_index in range(valid.size):
+        ray = valid[valid_index]
+        output_index = offsets[ray]
+        for i in range(i_min[ray], i_max[ray] + 1):
+            u_normalized = (u_axis[i] - u_center[ray]) / half_u[ray]
+            for j in range(j_min[ray], j_max[ray] + 1):
+                v_normalized = (v_axis[j] - v_center[ray]) / half_v[ray]
+                if use_ellipse:
+                    inside = u_normalized * u_normalized + v_normalized * v_normalized < 1.0
+                else:
+                    inside = abs(u_normalized) < 0.5 and abs(v_normalized) < 0.5
+                if inside:
+                    pixel_indices[output_index] = i * v_subpixels + j
+                    output_index += 1
+    return pixel_indices, counts
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 # 3D vector like object (accepts numpy.ndarray, list, tuple)
@@ -1023,18 +1041,12 @@ class Screen:
         j_min[valid] = np.clip(np.floor(v_low[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
         j_max[valid] = np.clip(np.ceil(v_high[valid] / dv - 0.5), 0, V_sub - 1).astype(np.int32)
 
-        indexer = _ellipse_pixel_indices if use_ellipse else _rectangle_pixel_indices
-        out_pix = [indexer(u_axis[i_min[r]:i_max[r] + 1],
-                           v_axis[j_min[r]:j_max[r] + 1],
-                           uv[r, 0], uv[r, 1],
-                           half[r, 0], half[r, 1],
-                           i_min[r], j_min[r], V_sub) for r in
-                   my_tqdm(valid, desc="ray to image", disable=verbose <= 0)]
-        pix_sizes = [p.size for p in out_pix]
-        pixel_indices = np.concatenate(out_pix)
-        counts = np.zeros(rays.n, dtype=np.int32)
-        counts[valid] = pix_sizes
-        indptr = np.concatenate([np.array([0], dtype=np.int32), np.cumsum(counts, dtype=np.int32)])
+        pixel_indices, counts = _rasterize_spots(
+            u_axis, v_axis, u_center, v_center, a_u, a_v,
+            i_min, i_max, j_min, j_max, valid, V_sub, use_ellipse,
+        )
+        indptr = np.concatenate([np.array([0], dtype=np.int64),
+                                 np.cumsum(counts, dtype=np.int64)])
         # The spot area grows as zoom_rate**2 on the detector.  Dividing by
         # that factor keeps the integrated signal equal to the point-source
         # solid angle of the pinhole.  The extra ray_cosine converts the

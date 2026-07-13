@@ -343,8 +343,10 @@ def test_screen_print_settings_does_not_require_color_image_attribute():
         screen.print_settings()
 
 
-def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle():
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+@pytest.mark.parametrize("eye_shape", ["circle", "rectangle"])
+def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle(eye_shape):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5,
+              eye_shape=eye_shape)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
     rays = Rays(
         Z=np.array([10.0, -1.0, 10.0]),
