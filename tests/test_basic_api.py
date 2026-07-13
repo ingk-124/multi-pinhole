@@ -838,6 +838,35 @@ def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
         assert metrics["correlation"] > 0.9999
 
 
+def test_optical_chunks_and_local_column_compression(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_projection_column_compression.py")
+    spec = importlib.util.spec_from_file_location("evaluate_projection_column_compression", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_evaluation(
+        tmp_path,
+        rotations=(0.0, 30.0),
+        tolerances=(0.03,),
+        chunk_size=24,
+        voxel_shape=(6, 6, 8),
+        pixel_shape=(8, 8),
+    )
+
+    assert result["csv_path"].is_file()
+    assert result["figure_path"].is_file()
+    assert {row["rotation_degrees"] for row in result["rows"]} == {0.0, 30.0}
+    for row in result["rows"]:
+        # The per-column L1 criterion directly bounds non-negative image L1
+        # error, while a constant emission is preserved to roundoff by A 1=1.
+        assert row["relative_l1"] <= row["tolerance"] + 1e-12
+        assert row["column_compression_ratio"] >= 1.0
+        if row["profile"] == "constant":
+            assert row["relative_l1"] < 1e-12
+            assert row["relative_flux"] < 1e-12
+
+
 def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
                     / "examples" / "evaluate_subvoxel_resolution.py")
