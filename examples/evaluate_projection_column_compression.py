@@ -184,18 +184,27 @@ def project_compressed(compression, emission):
 
 
 def build_simple_world(rotation_degrees: float = 0.0,
+                       axial_range=(60.0, 140.0),
                        voxel_shape=(24, 24, 32), pixel_shape=(12, 12)) -> World:
     """Create a wall-free source box viewed head-on or from 30 degrees above."""
     rotation = Rotation.from_euler("x", rotation_degrees, degrees=True).as_matrix()
-    camera_distance = 120.0
-    look_world = rotation.T @ np.array([0.0, 0.0, 1.0])
-    centre = look_world * camera_distance
-    half_width = np.array([18.0, 18.0, 35.0])
+    focal_length = 20.0
+    axial_min, axial_max = map(float, axial_range)
+    if axial_min <= 0.0 or axial_max <= axial_min:
+        raise ValueError("axial_range must be positive and increasing")
+    centre_in_camera = np.array([
+        0.0, 0.0, focal_length + 0.5 * (axial_min + axial_max),
+    ])
+    half_width_in_camera = np.array([18.0, 18.0, 0.5 * (axial_max - axial_min)])
+    centre = rotation.T @ centre_in_camera
+    # Voxel is world-axis aligned.  Use the world AABB of the desired
+    # camera-aligned source box; actual camera-space Z/f is recorded below.
+    half_width = np.abs(rotation.T) @ half_width_in_camera
     ranges = tuple((float(value - width), float(value + width))
                    for value, width in zip(centre, half_width))
 
     voxel = Voxel.uniform_voxel(ranges=ranges, shape=voxel_shape)
-    eye = Eye(position=(0.0, 0.0), focal_length=20.0, eye_size=1.2,
+    eye = Eye(position=(0.0, 0.0), focal_length=focal_length, eye_size=1.2,
               eye_shape="circle")
     screen = Screen(screen_shape="rectangle", screen_size=(12.0, 12.0),
                     pixel_shape=pixel_shape, subpixel_resolution=1)
@@ -221,6 +230,7 @@ def emission_profiles(points):
 
 
 def run_evaluation(output_dir: Path, rotations=(0.0, 30.0),
+                   axial_ranges=((60.0, 140.0), (200.0, 400.0), (800.0, 1200.0)),
                    tolerances=(0.01, 0.03, 0.1, 0.2, 0.5, 1.0),
                    chunk_size=256, voxel_shape=(24, 24, 32), pixel_shape=(12, 12)):
     """Run the simple-model comparison and save a metrics table and figure."""
@@ -230,51 +240,61 @@ def run_evaluation(output_dir: Path, rotations=(0.0, 30.0),
     start = time.perf_counter()
 
     for rotation in rotations:
-        world = build_simple_world(rotation, voxel_shape=voxel_shape,
-                                   pixel_shape=pixel_shape)
-        world.set_projection_matrix(res=1, partial_res=1, verbose=0,
-                                    parallel=1, force=True)
-        projection = world.P_matrix[0].tocsr()
-        points = world.voxel.gravity_center
-        chunks, optical = optical_work_chunks(
-            world.cameras[0], 0, points, chunk_size=chunk_size,
-        )
-        # Verify that the proposed normalized coordinates reproduce the actual
-        # ray projection before using them to define chunks.
-        rays = world.cameras[0].eyes[0].calc_rays(optical["points_in_camera"])
-        if not np.allclose(optical["projected_xy"], rays.XY, equal_nan=True):
-            raise AssertionError("camera-space chunk coordinates disagree with Eye.calc_rays")
+        for requested_axial_range in axial_ranges:
+            world = build_simple_world(
+                rotation, axial_range=requested_axial_range,
+                voxel_shape=voxel_shape, pixel_shape=pixel_shape,
+            )
+            world.set_projection_matrix(res=1, partial_res=1, verbose=0,
+                                        parallel=1, force=True)
+            projection = world.P_matrix[0].tocsr()
+            points = world.voxel.gravity_center
+            chunks, optical = optical_work_chunks(
+                world.cameras[0], 0, points, chunk_size=chunk_size,
+            )
+            # Verify that the proposed normalized coordinates reproduce the actual
+            # ray projection before using them to define chunks.
+            rays = world.cameras[0].eyes[0].calc_rays(optical["points_in_camera"])
+            if not np.allclose(optical["projected_xy"], rays.XY, equal_nan=True):
+                raise AssertionError("camera-space chunk coordinates disagree with Eye.calc_rays")
 
-        profiles = emission_profiles(points)
-        reference = {name: np.asarray(projection @ values).ravel()
-                     for name, values in profiles.items()}
-        active_columns = int(np.count_nonzero(np.asarray(projection.sum(axis=0)).ravel()))
+            profiles = emission_profiles(points)
+            reference = {name: np.asarray(projection @ values).ravel()
+                         for name, values in profiles.items()}
+            active_columns = int(np.count_nonzero(np.asarray(projection.sum(axis=0)).ravel()))
+            z_over_f = optical["axial_distance"][optical["front"]] \
+                / world.cameras[0].eyes[0].focal_length
 
-        for tolerance in tolerances:
-            compression = compress_projection_in_chunks(projection, chunks, tolerance)
-            group_count = len(compression["groups"])
-            for name, values in profiles.items():
-                image = project_compressed(compression, values)
-                ref = reference[name]
-                rows.append({
-                    "rotation_degrees": rotation,
-                    "tolerance": tolerance,
-                    "profile": name,
-                    "voxel_count": world.voxel.N_voxel,
-                    "active_columns": active_columns,
-                    "work_chunk_count": len(chunks),
-                    "group_count": group_count,
-                    "column_compression_ratio": active_columns / max(group_count, 1),
-                    "projection_nnz": projection.nnz,
-                    "compressed_nnz": compression["projection"].nnz,
-                    "nnz_compression_ratio": projection.nnz / max(compression["projection"].nnz, 1),
-                    "maximum_group_error": float(compression["group_errors"].max(initial=0.0)),
-                    "relative_l1": float(np.linalg.norm(image - ref, ord=1)
-                                         / np.linalg.norm(ref, ord=1)),
-                    "relative_l2": float(np.linalg.norm(image - ref)
-                                         / np.linalg.norm(ref)),
-                    "relative_flux": float(abs(image.sum() - ref.sum()) / abs(ref.sum())),
-                })
+            for tolerance in tolerances:
+                compression = compress_projection_in_chunks(projection, chunks, tolerance)
+                group_count = len(compression["groups"])
+                for name, values in profiles.items():
+                    image = project_compressed(compression, values)
+                    ref = reference[name]
+                    rows.append({
+                        "rotation_degrees": rotation,
+                        "requested_axial_min": requested_axial_range[0],
+                        "requested_axial_max": requested_axial_range[1],
+                        "minimum_z_over_f": float(z_over_f.min()),
+                        "median_z_over_f": float(np.median(z_over_f)),
+                        "maximum_z_over_f": float(z_over_f.max()),
+                        "tolerance": tolerance,
+                        "profile": name,
+                        "voxel_count": world.voxel.N_voxel,
+                        "active_columns": active_columns,
+                        "work_chunk_count": len(chunks),
+                        "group_count": group_count,
+                        "column_compression_ratio": active_columns / max(group_count, 1),
+                        "projection_nnz": projection.nnz,
+                        "compressed_nnz": compression["projection"].nnz,
+                        "nnz_compression_ratio": projection.nnz / max(compression["projection"].nnz, 1),
+                        "maximum_group_error": float(compression["group_errors"].max(initial=0.0)),
+                        "relative_l1": float(np.linalg.norm(image - ref, ord=1)
+                                             / np.linalg.norm(ref, ord=1)),
+                        "relative_l2": float(np.linalg.norm(image - ref)
+                                             / np.linalg.norm(ref)),
+                        "relative_flux": float(abs(image.sum() - ref.sum()) / abs(ref.sum())),
+                    })
 
     csv_path = output_dir / "projection_column_compression.csv"
     with csv_path.open("w", newline="") as stream:
@@ -283,15 +303,22 @@ def run_evaluation(output_dir: Path, rotations=(0.0, 30.0),
         writer.writerows(rows)
 
     fig, axes = plt.subplots(2, 2, figsize=(11.0, 8.0))
-    for rotation in rotations:
+    case_keys = [(rotation, tuple(axial_range))
+                 for rotation in rotations for axial_range in axial_ranges]
+    for rotation, axial_range in case_keys:
         selected = [row for row in rows
-                    if row["rotation_degrees"] == rotation and row["profile"] == "gaussian"]
+                    if row["rotation_degrees"] == rotation
+                    and row["requested_axial_min"] == axial_range[0]
+                    and row["requested_axial_max"] == axial_range[1]
+                    and row["profile"] == "gaussian"]
+        label = (f"rot={rotation:g}°, Z/f≈"
+                 f"{selected[0]['median_z_over_f']:.1f}")
         axes[0, 0].plot([row["tolerance"] for row in selected],
                         [row["column_compression_ratio"] for row in selected],
-                        marker="o", label=f"rotation={rotation:g} deg")
+                        marker="o", label=label)
         axes[0, 1].plot([row["tolerance"] for row in selected],
                         [row["nnz_compression_ratio"] for row in selected],
-                        marker="o", label=f"rotation={rotation:g} deg")
+                        marker="o", label=label)
     axes[0, 0].set_xscale("log")
     axes[0, 0].set_yscale("log")
     axes[0, 0].set_xlabel("maximum normalized-column L1 error")
@@ -301,19 +328,42 @@ def run_evaluation(output_dir: Path, rotations=(0.0, 30.0),
     axes[0, 1].set_xlabel("maximum normalized-column L1 error")
     axes[0, 1].set_ylabel("projection nnz / compressed nnz")
 
-    profile_markers = {"constant": "o", "linear": "s", "square": "^", "gaussian": "D"}
-    for axis, rotation in zip(axes[1], rotations):
-        for profile, marker in profile_markers.items():
-            selected = [row for row in rows
-                        if row["rotation_degrees"] == rotation and row["profile"] == profile]
-            axis.plot([row["column_compression_ratio"] for row in selected],
-                      [max(row["relative_l2"], 1e-16) for row in selected],
-                      marker=marker, label=profile)
-        axis.set_yscale("log")
-        axis.set_xscale("log")
-        axis.set_xlabel("column compression ratio")
-        axis.set_ylabel("image relative L2")
-        axis.set_title(f"rotation={rotation:g} deg")
+    for rotation, axial_range in case_keys:
+        selected = [row for row in rows
+                    if row["rotation_degrees"] == rotation
+                    and row["requested_axial_min"] == axial_range[0]
+                    and row["requested_axial_max"] == axial_range[1]
+                    and row["profile"] == "gaussian"]
+        label = (f"rot={rotation:g}°, Z/f≈"
+                 f"{selected[0]['median_z_over_f']:.1f}")
+        axes[1, 0].plot(
+            [row["column_compression_ratio"] for row in selected],
+            [max(row["relative_l2"], 1e-16) for row in selected],
+            marker="o", label=label,
+        )
+    axes[1, 0].set_yscale("log")
+    axes[1, 0].set_xscale("log")
+    axes[1, 0].set_xlabel("column compression ratio")
+    axes[1, 0].set_ylabel("Gaussian image relative L2")
+
+    depth_tolerances = tuple(tolerances[-3:])
+    for tolerance in depth_tolerances:
+        selected = sorted(
+            (row for row in rows
+             if row["rotation_degrees"] == 0.0
+             and row["profile"] == "gaussian"
+             and row["tolerance"] == tolerance),
+            key=lambda row: row["median_z_over_f"],
+        )
+        axes[1, 1].plot(
+            [row["median_z_over_f"] for row in selected],
+            [row["column_compression_ratio"] for row in selected],
+            marker="o", label=f"tolerance={tolerance:g}",
+        )
+    axes[1, 1].set_xscale("log")
+    axes[1, 1].set_yscale("log")
+    axes[1, 1].set_xlabel("median Z/f (rotation=0°)")
+    axes[1, 1].set_ylabel("column compression ratio")
     for axis in axes.ravel():
         axis.grid(which="both", alpha=0.25)
         axis.legend()
@@ -343,13 +393,19 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=Path,
                         default=Path("examples/output/projection_column_compression"))
     parser.add_argument("--rotations", type=_parse_floats, default=(0.0, 30.0))
+    parser.add_argument("--axial-ranges", type=str, default="60:140,200:400,800:1200")
     parser.add_argument("--tolerances", type=_parse_floats,
                         default=(0.01, 0.03, 0.1, 0.2, 0.5, 1.0))
     parser.add_argument("--chunk-size", type=int, default=256)
     parser.add_argument("--voxel-shape", type=_parse_ints, default=(24, 24, 32))
     parser.add_argument("--pixel-shape", type=_parse_ints, default=(12, 12))
     args = parser.parse_args()
+    axial_ranges = tuple(
+        tuple(float(bound) for bound in item.split(":"))
+        for item in args.axial_ranges.split(",")
+    )
     result = run_evaluation(args.output_dir, rotations=args.rotations,
+                            axial_ranges=axial_ranges,
                             tolerances=args.tolerances, chunk_size=args.chunk_size,
                             voxel_shape=args.voxel_shape, pixel_shape=args.pixel_shape)
     print(f"elapsed_seconds: {result['elapsed_seconds']:.3f}")

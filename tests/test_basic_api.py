@@ -904,6 +904,7 @@ def test_optical_chunks_and_local_column_compression(tmp_path):
     result = module.run_evaluation(
         tmp_path,
         rotations=(0.0, 30.0),
+        axial_ranges=((60.0, 140.0), (800.0, 1200.0)),
         tolerances=(0.03,),
         chunk_size=24,
         voxel_shape=(6, 6, 8),
@@ -913,6 +914,7 @@ def test_optical_chunks_and_local_column_compression(tmp_path):
     assert result["csv_path"].is_file()
     assert result["figure_path"].is_file()
     assert {row["rotation_degrees"] for row in result["rows"]} == {0.0, 30.0}
+    assert {row["requested_axial_min"] for row in result["rows"]} == {60.0, 800.0}
     for row in result["rows"]:
         # The per-column L1 criterion directly bounds non-negative image L1
         # error, while a constant emission is preserved to roundoff by A 1=1.
