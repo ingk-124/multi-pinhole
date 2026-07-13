@@ -577,6 +577,25 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
 
 
+def test_center_sub_voxel_interpolator_reproduces_affine_profile_on_nonuniform_grid():
+    voxel = Voxel(
+        x_axis=np.array([0.0, 0.5, 1.5, 3.0]),
+        y_axis=np.array([-2.0, -1.0, 1.0, 4.0]),
+        z_axis=np.array([10.0, 10.5, 12.0, 15.0]),
+    )
+    center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
+    points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
+    matrix = voxel.sub_voxel_interpolator_from_centers(
+        n=np.array([center_voxel]), res=3, points=points,
+    )
+    center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
+        - 0.25 * voxel.gravity_center[:, 1] + 0.75 * voxel.gravity_center[:, 2]
+    expected = 2.0 + 0.5 * points[:, 0] - 0.25 * points[:, 1] + 0.75 * points[:, 2]
+    expected *= voxel.volume[center_voxel] / 3 ** 3
+
+    np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
+
+
 def test_one_dimensional_refinement_matches_aligned_fine_projection():
     """A 5x4 subgrid must match 20 explicit cells at identical sample points."""
     ranges = ((-1.0, 1.0), (-0.05, 0.05), (30.0, 30.1))
