@@ -408,16 +408,50 @@ def test_unit_circle_rectangle_overlap_matches_analytic_areas(bounds, expected):
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-14)
 
 
+def _finite_eye_etendue_reference(eye, point, order=64):
+    """High-order aperture quadrature independent of detector rasterization."""
+    nodes, weights = np.polynomial.legendre.leggauss(order)
+    axial_distance = point[2] - eye.position[2]
+    source_offset_x = point[0] - eye.position[0]
+    source_offset_y = point[1] - eye.position[1]
+    half_u, half_v = 0.5 * eye.eye_size
+
+    if eye.eye_shape == "rectangle":
+        eye_y = half_u * nodes[:, None]
+        eye_x = half_v * nodes[None, :]
+        area_weights = half_u * half_v * weights[:, None] * weights[None, :]
+        distance2 = (axial_distance ** 2
+                     + (source_offset_x - eye_x) ** 2
+                     + (source_offset_y - eye_y) ** 2)
+        return float(np.sum(
+            area_weights * axial_distance / (4.0 * np.pi * distance2 ** 1.5)
+        ))
+
+    # Uniform ellipse area is uniform in t=r**2 and theta.
+    t = 0.5 * (nodes + 1.0)
+    t_weights = 0.5 * weights
+    theta_count = 4 * order
+    theta = 2.0 * np.pi * np.arange(theta_count) / theta_count
+    eye_y = half_u * np.sqrt(t)[:, None] * np.cos(theta)[None, :]
+    eye_x = half_v * np.sqrt(t)[:, None] * np.sin(theta)[None, :]
+    distance2 = (axial_distance ** 2
+                 + (source_offset_x - eye_x) ** 2
+                 + (source_offset_y - eye_y) ** 2)
+    density = axial_distance / (4.0 * np.pi * distance2 ** 1.5)
+    eye_area = np.pi * half_u * half_v
+    return float(eye_area * np.sum(t_weights[:, None] * density) / theta_count)
+
+
 @pytest.mark.parametrize(
-    ("eye_shape", "eye_size", "eye_area"),
+    ("eye_shape", "eye_size"),
     [
-        ("circle", 0.2, np.pi * 0.1 ** 2),
-        ("ellipse", (0.2, 0.4), np.pi * 0.1 * 0.2),
-        ("rectangle", (0.2, 0.4), 0.2 * 0.4),
+        ("circle", 0.2),
+        ("ellipse", (0.2, 0.4)),
+        ("rectangle", (0.2, 0.4)),
     ],
 )
 def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
-        eye_shape, eye_size, eye_area):
+        eye_shape, eye_size):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0,
               eye_size=eye_size, eye_shape=eye_shape)
     screen = Screen(screen_shape="square", screen_size=20.0,
@@ -427,10 +461,32 @@ def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
     point = np.array([[0.0, 0.0, 30.0]])
 
     value = float(camera.calc_image_vec(0, point, check_visibility=False).sum())
-    axial_distance = point[0, 2] - eye.position[2]
-    expected = eye_area / (4.0 * np.pi * axial_distance ** 2)
+    expected = _finite_eye_etendue_reference(eye, point[0])
 
-    np.testing.assert_allclose(value, expected, rtol=2e-7, atol=0.0)
+    np.testing.assert_allclose(value, expected, rtol=2e-5, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size", "relative_tolerance"),
+    [
+        ("circle", 4.0, 2e-6),
+        ("ellipse", (0.5, 4.0), 2e-6),
+        ("rectangle", (0.5, 4.0), 3e-5),
+    ],
+)
+def test_large_finite_eye_uses_local_ray_etendue(
+        eye_shape, eye_size, relative_tolerance):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    screen = Screen(screen_shape="square", screen_size=30.0,
+                    pixel_shape=(1, 1), subpixel_resolution=1)
+    point = np.array([8.0, -3.0, 30.0])
+    rays = eye.calc_rays(point[None, :])
+
+    actual = float(screen.ray2image_grid(eye, rays).sum())
+    expected = _finite_eye_etendue_reference(eye, point)
+
+    np.testing.assert_allclose(actual, expected, rtol=relative_tolerance, atol=0.0)
 
 
 @pytest.mark.parametrize(

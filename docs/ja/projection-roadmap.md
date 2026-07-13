@@ -103,16 +103,12 @@ g = P_fine B c
 
 ### Eye 内部位置ごとの局所 etendue
 
-screen 側の etendue はすでに subpixel ごとに `A cos^4(theta) / (4 pi)` を評価し、
-projected Eye spot との正確な交差面積を掛けている。一方、source 側の距離と角度補正は
-Eye 中心を通る光線で一度だけ評価し、spot 全体で再利用している。
+screen上のoverlap位置をEye内の通過位置へ逆写像し、位置ごとの距離、角度、etendueを
+積分する処理は実装済み。spotが1 pixelより小さい場合もEye形状上のquadratureを使う。
+circle、ellipse、rectangleについて、独立な高次開口積分との回帰テストを持つ。
 
-大きい、または細長い Eye については、screen 上の overlap 位置を Eye 内の通過位置へ
-逆写像し、位置ごとの距離、角度、etendue を評価する候補がある。wall や aperture による
-visibility も Eye 内部で変化する場合は、局所 visibility も同時に扱う必要がある。
-
-実装前に、現在の中心光線近似と局所積分の差を `0.5 x 4 mm` 程度の slit で測り、
-必要な分割数と計算量を見積もる。
+未実装なのは、wallやapertureによるvisibilityがEye内部位置によって変わる場合の局所
+visibilityである。必要性を`0.5 x 4 mm`程度のslitと実際のwall配置で評価する。
 
 ## Detector と aperture の拡張
 

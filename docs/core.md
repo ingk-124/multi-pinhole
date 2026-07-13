@@ -174,10 +174,10 @@ images.【F:multi_pinhole/core.py†L793-L818】
 between the eye's optical axis and the line from the eye to that subpixel:
 if `tangent = |subpixel_position − eye_position| / focal_length`, then
 `cosine = 1 / sqrt(1 + tangent²)` (the standard `cos(atan(x)) = 1/√(1+x²)`
-identity).【F:multi_pinhole/core.py†L820-L842】 `etendue_per_subpixel` then
-weights each subpixel's area by `cos⁴(θ)` — the classic radiometric falloff
-for a flat detector viewed through a small aperture — divided by `4π`:
-`G_subpix = A_subpixel · cos(θ)⁴ / (4π)`.【F:multi_pinhole/core.py†L844-L862】
+identity).【F:multi_pinhole/core.py†L820-L842】 `etendue_per_subpixel` retains
+the corresponding small-aperture `A_subpixel · cos⁴(θ) / (4π)` diagnostic,
+but the production rasterizer no longer reuses that detector-only value: a
+finite Eye requires source- and Eye-position-dependent local ray geometry.
 
 ### `ray2image_grid`: turning a ray bundle into a sparse image
 
@@ -211,22 +211,16 @@ algorithm:
    the whole screen) is what makes this scale to millions of rays. Because
    coverage is no longer decided from the cell center, a spot smaller than
    one pixel is retained even with `subpixel_resolution=1`.
-5. **Assemble the sparse matrix and apply etendue weights.** The per-tile
-   hit lists are concatenated into a CSR/CSC matrix, then scaled by two
-   factors: `etendue_per_subpixel(eye)` multiplied by the exact covered-area
-   fraction, and a per-ray factor
-   `etendue_per_ray = 1 / (zoom_rate² · Z² · ray_cosine)`, where
-   `ray_cosine` is the same `cos(atan(tangent))` quantity evaluated at the
-   ray's own screen position. The inline comment explains the intent: since
-   the footprint area on the detector grows as `zoom_rate²`, dividing by
-   that factor keeps the *integrated* signal equal to the point source's
-   solid angle through the pinhole, and `ray_cosine` converts the
-   subpixel-side `cos⁴` factor into the source-side `cos³` solid-angle
-   factor.【F:multi_pinhole/core.py†L986-L999】 (This module does not derive
-   that radiometric identity from first principles in the docstring beyond
-   the inline comment; readers wanting the full derivation should treat the
-   comment as the authoritative statement of intent rather than re-derive it
-   here.)
+5. **Integrate local-ray etendue and assemble the sparse matrix.** A detector
+   point `q` in the footprint is mapped back to its finite-Eye position by
+   `a = (q - q_center) / zoom_rate`. If `rho` is the transverse source offset
+   from the Eye centre, the local distance is
+   `D² = Z² + |rho - a|²`, and the detector-area density is
+   `Z / (4π · zoom_rate² · D³)`. The rasterizer integrates this density over
+   each exact spot/cell overlap with bounded deterministic quadrature, then
+   stores the resulting weights directly in CSR/CSC form. A complete spot
+   contained in one large detector pixel is integrated over the Eye shape
+   itself, so local etendue does not depend on detector subpixel refinement.
 
 The other `Screen` helpers are simpler coordinate/accumulation utilities:
 `xy2uv` (camera `(X,Y)` → image `(u,v)`, described above),

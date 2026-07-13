@@ -161,12 +161,150 @@ def _spot_cell_overlap(u0, u1, v0, v1, center_u, center_v,
     return overlap_u * overlap_v
 
 
+@njit(cache=True, nogil=True, inline="always")
+def _local_etendue_density(q_u, q_v, center_u, center_v, zoom_rate,
+                           axial_distance, source_offset_x, source_offset_y):
+    """Etendue density on the detector for one ray through the finite Eye."""
+    # Image u is camera Y and image v is camera X.  Inverting
+    # q = q_center + zoom_rate * a maps the detector location back to the
+    # corresponding position a inside the Eye.
+    eye_offset_x = (q_v - center_v) / zoom_rate
+    eye_offset_y = (q_u - center_u) / zoom_rate
+    dx = source_offset_x - eye_offset_x
+    dy = source_offset_y - eye_offset_y
+    distance2 = axial_distance * axial_distance + dx * dx + dy * dy
+    return (axial_distance
+            / (4.0 * np.pi * zoom_rate * zoom_rate
+               * distance2 * np.sqrt(distance2)))
+
+
+@njit(cache=True, nogil=True, inline="always")
+def _rectangle_density_average(u0, u1, v0, v1, center_u, center_v,
+                               zoom_rate, axial_distance,
+                               source_offset_x, source_offset_y):
+    """Two-point Gauss average of local etendue density on a rectangle."""
+    midpoint_u = 0.5 * (u0 + u1)
+    midpoint_v = 0.5 * (v0 + v1)
+    offset_u = 0.5 * (u1 - u0) / np.sqrt(3.0)
+    offset_v = 0.5 * (v1 - v0) / np.sqrt(3.0)
+    total = 0.0
+    for sign_u in (-1.0, 1.0):
+        for sign_v in (-1.0, 1.0):
+            total += _local_etendue_density(
+                midpoint_u + sign_u * offset_u,
+                midpoint_v + sign_v * offset_v,
+                center_u, center_v, zoom_rate, axial_distance,
+                source_offset_x, source_offset_y,
+            )
+    return 0.25 * total
+
+
+@njit(cache=True, nogil=True)
+def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
+                             half_u, half_v, use_ellipse, overlap_area,
+                             zoom_rate, axial_distance,
+                             source_offset_x, source_offset_y):
+    """Integrate local-ray etendue over one spot/cell intersection.
+
+    Exact overlap areas are retained.  The slowly varying angular density is
+    integrated with low-order deterministic quadrature: Gauss quadrature for
+    rectangles, disk quadrature when a complete ellipse lies in one cell, and
+    a bounded midpoint rule only on clipped ellipse boundary cells.
+    """
+    if overlap_area <= 0.0:
+        return 0.0
+
+    clipped_u0 = max(u0, center_u - half_u)
+    clipped_u1 = min(u1, center_u + half_u)
+    clipped_v0 = max(v0, center_v - half_v)
+    clipped_v1 = min(v1, center_v + half_v)
+
+    if not use_ellipse:
+        average = _rectangle_density_average(
+            clipped_u0, clipped_u1, clipped_v0, clipped_v1,
+            center_u, center_v, zoom_rate, axial_distance,
+            source_offset_x, source_offset_y,
+        )
+        return overlap_area * average
+
+    # A complete ellipse in one detector cell is common when detector pixels
+    # are large.  Integrate it independently of detector subpixel resolution.
+    if (center_u - half_u >= u0 and center_u + half_u <= u1 and
+            center_v - half_v >= v0 and center_v + half_v <= v1):
+        # Uniform ellipse area is uniform in t=r**2 and theta.  Two Gauss
+        # points in t and eight equally spaced angles capture the leading
+        # finite-aperture correction without detector-grid sampling noise.
+        total = 0.0
+        inverse_sqrt_three = 1.0 / np.sqrt(3.0)
+        for t_sign in (-1.0, 1.0):
+            t = 0.5 * (1.0 + t_sign * inverse_sqrt_three)
+            radius = np.sqrt(t)
+            for angle_index in range(8):
+                angle = 2.0 * np.pi * angle_index / 8.0
+                q_u = center_u + half_u * radius * np.cos(angle)
+                q_v = center_v + half_v * radius * np.sin(angle)
+                total += _local_etendue_density(
+                    q_u, q_v, center_u, center_v, zoom_rate,
+                    axial_distance, source_offset_x, source_offset_y,
+                )
+        return overlap_area * total / 16.0
+
+    # If the whole detector cell is inside the ellipse, its intersection is a
+    # rectangle and the Gauss rule above applies directly.
+    all_corners_inside = True
+    for corner_u in (u0, u1):
+        for corner_v in (v0, v1):
+            normalized = (((corner_u - center_u) / half_u) ** 2
+                          + ((corner_v - center_v) / half_v) ** 2)
+            if normalized > 1.0:
+                all_corners_inside = False
+    if all_corners_inside:
+        average = _rectangle_density_average(
+            u0, u1, v0, v1, center_u, center_v, zoom_rate,
+            axial_distance, source_offset_x, source_offset_y,
+        )
+        return overlap_area * average
+
+    # Only boundary intersections require masked quadrature.  The exact area
+    # remains supplied by _spot_cell_overlap; these samples estimate only the
+    # mean of the smooth angular density over that area.
+    density_sum = 0.0
+    sample_count = 0
+    for sample_u_index in range(4):
+        q_u = clipped_u0 + (sample_u_index + 0.5) * (clipped_u1 - clipped_u0) / 4.0
+        for sample_v_index in range(4):
+            q_v = clipped_v0 + (sample_v_index + 0.5) * (clipped_v1 - clipped_v0) / 4.0
+            normalized = (((q_u - center_u) / half_u) ** 2
+                          + ((q_v - center_v) / half_v) ** 2)
+            if normalized <= 1.0:
+                density_sum += _local_etendue_density(
+                    q_u, q_v, center_u, center_v, zoom_rate,
+                    axial_distance, source_offset_x, source_offset_y,
+                )
+                sample_count += 1
+
+    if sample_count == 0:
+        # A very thin intersection can fall between all midpoint samples.
+        # The closest point in the clipped rectangle is still inside the
+        # ellipse whenever the exact overlap is positive (up to tangency).
+        q_u = min(clipped_u1, max(clipped_u0, center_u))
+        q_v = min(clipped_v1, max(clipped_v0, center_v))
+        average = _local_etendue_density(
+            q_u, q_v, center_u, center_v, zoom_rate,
+            axial_distance, source_offset_x, source_offset_y,
+        )
+    else:
+        average = density_sum / sample_count
+    return overlap_area * average
+
+
 @njit(cache=True, nogil=True)
 def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
                      u_center, v_center, half_u, half_v,
                      i_min, i_max, j_min, j_max, valid, v_subpixels,
-                     use_ellipse):
-    """Rasterize spots into flat cell indices and exact overlap areas."""
+                     use_ellipse, zoom_rate, axial_distance,
+                     source_offset_x, source_offset_y):
+    """Rasterize spots into cell indices, areas, and local etendue weights."""
     counts = np.zeros(u_center.size, dtype=np.int64)
     for valid_index in range(valid.size):
         ray = valid[valid_index]
@@ -190,7 +328,7 @@ def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
     for ray in range(counts.size):
         offsets[ray + 1] = offsets[ray] + counts[ray]
     pixel_indices = np.empty(offsets[-1], dtype=np.int32)
-    overlap_areas = np.empty(offsets[-1], dtype=np.float32)
+    etendue_weights = np.empty(offsets[-1], dtype=np.float32)
 
     for valid_index in range(valid.size):
         ray = valid[valid_index]
@@ -207,9 +345,14 @@ def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
                 )
                 if overlap > 0.0:
                     pixel_indices[output_index] = i * v_subpixels + j
-                    overlap_areas[output_index] = overlap
+                    etendue_weights[output_index] = _spot_cell_local_etendue(
+                        u0, u1, v0, v1, u_center[ray], v_center[ray],
+                        half_u[ray], half_v[ray], use_ellipse, overlap,
+                        zoom_rate[ray], axial_distance[ray],
+                        source_offset_x[ray], source_offset_y[ray],
+                    )
                     output_index += 1
-    return pixel_indices, overlap_areas, counts
+    return pixel_indices, etendue_weights, counts
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 # 3D vector like object (accepts numpy.ndarray, list, tuple)
@@ -1101,8 +1244,9 @@ class Screen:
         verbose : int, optional (default is 0)
             verbose level for parallel calculation
         etendue_per_subpixel : np.ndarray, optional
-            Precomputed detector-side etendue for ``eye``. When omitted it is
-            calculated for this call.
+            Deprecated compatibility argument.  Local etendue now depends on
+            both the source ray and the position inside the finite Eye, so a
+            detector-only cache is no longer used by this calculation.
         parallel : int, optional (default is 0)
             number of parallel processes for parallel calculation (0: no parallel calculation)
 
@@ -1182,42 +1326,31 @@ class Screen:
         j_min[valid] = np.clip(np.floor(v_low[valid] / dv), 0, V_sub - 1).astype(np.int32)
         j_max[valid] = np.clip(np.ceil(v_high[valid] / dv) - 1, 0, V_sub - 1).astype(np.int32)
 
-        pixel_indices, overlap_areas, counts = _rasterize_spots(
+        # Source offset from the Eye centre follows from the central projected
+        # ray: q0-eye = -f * source_offset / Z.  The rasterizer maps every
+        # detector integration point back into the finite Eye and evaluates
+        # its own local source-to-Eye ray geometry.
+        source_offset = -(rays.Z[:, None] / eye.focal_length) \
+            * (rays.XY - eye.position[None, :2])
+        pixel_indices, local_etendue, counts = _rasterize_spots(
             u_axis, v_axis, du, dv, u_center, v_center, a_u, a_v,
             i_min, i_max, j_min, j_max, valid, V_sub, use_ellipse,
+            rays.zoom_rate, rays.Z, source_offset[:, 0], source_offset[:, 1],
         )
         indptr = np.concatenate([np.array([0], dtype=np.int64),
                                  np.cumsum(counts, dtype=np.int64)])
-        # The spot area grows as zoom_rate**2 on the detector.  Dividing by
-        # that factor keeps the integrated signal equal to the point-source
-        # solid angle of the pinhole.  The extra ray_cosine converts the
-        # subpixel cos**4 factor to the source-side cos**3 solid-angle factor.
-        #
-        # TODO: Integrate etendue over positions inside a finite-sized Eye.
-        # ``etendue_per_subpixel`` already varies across detector subpixels,
-        # but the source-side distance/angle correction below is evaluated
-        # only for the ray through the Eye centre and reused over the whole
-        # projected Eye footprint.  A large or elongated Eye may require
-        # mapping each overlap location back to an Eye position and evaluating
-        # its local ray geometry (and eventually its local visibility).
-        ray_offset = rays.XY - eye.position[None, :2]
-        ray_tangent = np.linalg.norm(ray_offset, axis=-1) / eye.focal_length
-        ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
-        etendue_per_ray = (1.0 / ((rays.zoom_rate ** 2) * (rays.Z ** 2) * ray_cosine)).astype(np.float32)
-        if etendue_per_subpixel is None:
-            etendue_per_subpixel = self.etendue_per_subpixel(eye).astype(np.float32)
-        else:
+        if etendue_per_subpixel is not None:
             etendue_per_subpixel = np.asarray(etendue_per_subpixel, dtype=np.float32)
             if etendue_per_subpixel.shape != (self.N_subpixel,):
                 raise ValueError(
                     f"etendue_per_subpixel must have shape {(self.N_subpixel,)}"
                 )
-        # ``etendue_per_subpixel`` contains the full-cell area. Scale it by
-        # the exact fraction covered by the projected eye spot.
-        data = (etendue_per_subpixel[pixel_indices]
-                * (overlap_areas / self._A_subpixel)).astype(np.float32)
-        mat = sparse.csc_matrix((data, pixel_indices, indptr), shape=(self.N_subpixel, rays.n)).tocsr()
-        mat.data = mat.data * etendue_per_ray[mat.indices]
+        # ``local_etendue`` already includes exact overlap area and the local
+        # source-to-Eye solid-angle density for each spot/cell intersection.
+        mat = sparse.csc_matrix(
+            (local_etendue, pixel_indices, indptr),
+            shape=(self.N_subpixel, rays.n),
+        ).tocsr()
         return mat  # (N_subpixel, n) csr matrix
 
     def xy2uv(self, xy: np.ndarray):
@@ -1879,7 +2012,9 @@ class Camera:
         check_visibility : bool, optional
             Whether to cull rays occluded by apertures before projection.
         etendue_per_subpixel : np.ndarray, optional
-            Cached detector-side etendue passed to :meth:`Screen.ray2image_grid`.
+            Deprecated compatibility argument passed to
+            :meth:`Screen.ray2image_grid`; local finite-Eye etendue is now
+            evaluated from each source ray and Eye position.
 
         Returns
         -------

@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from multi_pinhole import Eye, Screen
-from multi_pinhole.core import _spot_cell_overlap
+from multi_pinhole.core import _spot_cell_local_etendue, _spot_cell_overlap
 
 
 def analytic_point_source_etendue(eye, points):
@@ -32,7 +32,7 @@ def analytic_point_source_etendue(eye, points):
 
 
 def analytic_spot_image(screen, eye, point):
-    """Analytic top-hat spot integrated over each screen subpixel."""
+    """Assemble a finite-Eye spot from per-cell local-ray etendue integrals."""
     rays = eye.calc_rays(point[None, :])
     uv_center = screen.xy2uv(rays.XY)[0]
     spot_size = eye.eye_size * rays.zoom_rate[0]
@@ -45,23 +45,27 @@ def analytic_spot_image(screen, eye, point):
     j0 = max(0, int(np.floor((uv_center[1] - half[1]) / dv)))
     j1 = min(len(v_axis) - 1, int(np.ceil((uv_center[1] + half[1]) / dv) - 1))
     overlap = np.zeros(screen.N_subpixel)
+    etendue = np.zeros(screen.N_subpixel)
     use_ellipse = eye.eye_shape in ("circle", "ellipse")
+    source_offset_x = point[0] - eye.position[0]
+    source_offset_y = point[1] - eye.position[1]
+    axial_distance = point[2] - eye.position[2]
     for i in range(i0, i1 + 1):
         for j in range(j0, j1 + 1):
             flat_index = i * len(v_axis) + j
+            u0, u1 = u_axis[i] - 0.5 * du, u_axis[i] + 0.5 * du
+            v0, v1 = v_axis[j] - 0.5 * dv, v_axis[j] + 0.5 * dv
             overlap[flat_index] = _spot_cell_overlap(
-                u_axis[i] - 0.5 * du, u_axis[i] + 0.5 * du,
-                v_axis[j] - 0.5 * dv, v_axis[j] + 0.5 * dv,
+                u0, u1, v0, v1,
                 uv_center[0], uv_center[1], half[0], half[1], use_ellipse,
             )
-
-    z = point[2] - eye.position[2]
-    ray_offset = rays.XY[0] - eye.position[:2]
-    ray_tangent = np.linalg.norm(ray_offset) / eye.focal_length
-    ray_cosine = 1.0 / np.sqrt(1.0 + ray_tangent ** 2)
-    weight_density = (screen.etendue_per_subpixel(eye) / screen.A_subpixel
-                      / ((rays.zoom_rate[0] ** 2) * (z ** 2) * ray_cosine))
-    return overlap * weight_density
+            etendue[flat_index] = _spot_cell_local_etendue(
+                u0, u1, v0, v1, uv_center[0], uv_center[1],
+                half[0], half[1], use_ellipse, overlap[flat_index],
+                rays.zoom_rate[0], axial_distance,
+                source_offset_x, source_offset_y,
+            )
+    return etendue
 
 
 def analytic_screen_image(screen, eye, points, source_strength):
@@ -134,7 +138,7 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
     axes[0].set_ylim(spot_uv_center[0] + margin, spot_uv_center[0] - margin)
     fig.colorbar(im0, ax=axes[0], fraction=0.046)
     im1 = axes[1].imshow(analytic_spot.reshape(image_shape), origin="upper", extent=extent, vmax=vmax)
-    axes[1].set_title("analytic top-hat")
+    axes[1].set_title("local-ray reference")
     axes[1].set_xlabel("v")
     axes[1].set_xlim(spot_uv_center[1] - margin, spot_uv_center[1] + margin)
     axes[1].set_ylim(spot_uv_center[0] + margin, spot_uv_center[0] - margin)
@@ -179,7 +183,7 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
                          screen.screen_size[1] - screen.subpixel_size[1] * 0.5,
                          image_shape[1])
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    ax.plot(v_axis, analytic_profile, label="analytic convolution", color="black", linewidth=1.5)
+    ax.plot(v_axis, analytic_profile, label="local-ray reference", color="black", linewidth=1.5)
     ax.scatter(v_axis, numerical_profile, label="P @ f", color="tab:blue", s=4)
     ax.set_xlabel("v")
     ax.set_ylabel("center-row intensity")
