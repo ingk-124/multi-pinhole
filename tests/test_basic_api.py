@@ -33,6 +33,31 @@ def test_eye_screen_voxel_world_initialization():
     assert world.voxel is voxel
 
 
+def test_uniform_voxel_from_centers_preserves_requested_gravity_center_ranges():
+    cx = np.linspace(-2.0, 2.0, 5)
+    cy = np.linspace(10.0, 14.0, 3)
+    cz = np.linspace(-1.5, 1.5, 7)
+
+    voxel = Voxel.uniform_voxel_from_centers(
+        ranges=[[-2.0, 2.0], [10.0, 14.0], [-1.5, 1.5]],
+        shape=[5, 3, 7],
+    )
+
+    np.testing.assert_allclose(voxel.cx_axis, cx)
+    np.testing.assert_allclose(voxel.cy_axis, cy)
+    np.testing.assert_allclose(voxel.cz_axis, cz)
+    assert voxel.shape == (5, 3, 7)
+    np.testing.assert_allclose(voxel.ranges, [(-2.5, 2.5), (9.0, 15.0), (-1.75, 1.75)])
+
+
+def test_uniform_voxel_from_centers_rejects_single_center_axis():
+    with pytest.raises(ValueError, match="at least two"):
+        Voxel.uniform_voxel_from_centers(
+            ranges=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            shape=[1, 2, 2],
+        )
+
+
 def test_camera_initialization_preserves_public_api():
     camera = make_camera()
 

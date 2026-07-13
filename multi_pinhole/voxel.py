@@ -687,6 +687,55 @@ class Voxel:
         voxel = Voxel(*axes, **kwargs)
         return voxel
 
+    @classmethod
+    def uniform_voxel_from_centers(cls, ranges, shape, **kwargs):
+        """Create a uniform voxel grid from gravity-center ranges.
+
+        This is the center-based counterpart of :meth:`uniform_voxel`.
+        ``ranges`` specifies the first and last gravity-center coordinates
+        instead of the outer grid boundaries.  Boundaries are placed half a
+        center spacing beyond those coordinates.
+
+        Every shape entry must be at least two because a single center does
+        not contain enough information to infer the corresponding voxel width.
+
+        Parameters
+        ----------
+        ranges : ((float, float), (float, float), (float, float))
+            First and last gravity-center coordinates along each axis.
+        shape : (int, int, int)
+            Number of voxel centers along each axis.
+        **kwargs
+            Additional arguments forwarded to :class:`Voxel`.
+
+        Returns
+        -------
+        Voxel
+            Voxel grid whose gravity-center axes equal the supplied axes.
+        """
+
+        ranges = np.asarray(ranges, dtype=float)
+        shape = np.asarray(shape)
+        if ranges.shape != (3, 2):
+            raise ValueError("ranges must have shape (3, 2)")
+        if shape.shape != (3,) or not np.issubdtype(shape.dtype, np.integer):
+            raise ValueError("shape must contain three integers")
+        if not np.all(np.isfinite(ranges)):
+            raise ValueError("ranges must contain only finite values")
+        if np.any(ranges[:, 1] <= ranges[:, 0]):
+            raise ValueError("each center range must be strictly increasing")
+        if np.any(shape < 2):
+            raise ValueError("each shape entry must be at least two to infer voxel width")
+
+        axes = []
+        for (start, end), num in zip(ranges, shape):
+            centers, spacing = np.linspace(start, end, int(num), retstep=True)
+            axes.append(np.append(
+                centers - spacing / 2,
+                centers[-1] + spacing / 2,
+            ))
+        return cls(*axes, **kwargs)
+
     def update(self):
         """
         Update attributes.

@@ -144,9 +144,12 @@ if __name__ == '__main__':
         #                             shape=[101, 201, 51],
         #                             coordinate_type="torus_inverse", coordinate_parameters=dict(a=500, R_0=1500))
 
-        voxel = Voxel.uniform_voxel(ranges=[[-2010, 2010], [-2010, 2010], [-510, 510]],
-                                    shape=[201, 201, 51],
-                                    coordinate_type="torus_inverse", coordinate_parameters=dict(a=500, R_0=1500))
+        voxel = Voxel.uniform_voxel_from_centers(
+            ranges=[[-2000, 2000], [-2000, 2000], [-500, 500]],
+            shape=[201, 201, 51],
+            coordinate_type="torus_inverse",
+            coordinate_parameters=dict(a=500, R_0=1500),
+        )
 
         world = World(voxel=voxel,
                       cameras=cameras,
