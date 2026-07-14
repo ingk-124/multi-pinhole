@@ -52,6 +52,24 @@ def test_work_chunks_cover_each_sample_once_without_splitting_scopes():
     assert max(scope.size for scope in binning.scopes()) <= 6
 
 
+def test_scope_and_work_limits_use_expanded_sample_costs():
+    camera = _camera()
+    points = np.array([
+        [-0.3, 0.0, 120.0], [-0.1, 0.0, 120.0],
+        [0.1, 0.0, 120.0], [0.3, 0.0, 120.0],
+    ])
+    sample_costs = np.array([8, 8, 1, 1])
+    binning = make_optical_binning(
+        camera, 0, points, bin_width_pixels=2.0,
+        max_scope_samples=9, sample_costs=sample_costs,
+    )
+
+    assert binning.scope_costs.sum() == sample_costs.sum()
+    assert np.all(binning.scope_costs <= 9)
+    work_offsets = binning.work_offsets(max_samples=9)
+    assert set(work_offsets).issubset(set(binning.scope_offsets))
+
+
 def test_invalid_optical_binning_parameters_are_rejected():
     camera = _camera()
     points = _points()

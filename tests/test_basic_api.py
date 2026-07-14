@@ -693,22 +693,6 @@ def test_center_sub_voxel_interpolator_preserves_constants_and_is_sparse():
     assert np.all(matrix.data >= 0.0)
 
 
-def test_weighted_center_interpolator_supports_arbitrary_sample_order():
-    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
-    voxel_indices = np.array([0, 13, 26])
-    points = voxel.get_sub_voxel_centers(n=voxel_indices, res=2)
-    complete = voxel.sub_voxel_interpolator_from_centers(
-        n=voxel_indices, res=2, points=points,
-    )
-    order = np.array([17, 0, 23, 8, 3, 14])
-    row_scale = np.asarray(complete.sum(axis=1)).ravel()[order]
-
-    arbitrary = voxel.weighted_interpolator_from_centers(points[order], row_scale)
-
-    np.testing.assert_allclose(arbitrary.toarray(), complete[order].toarray(),
-                               rtol=0.0, atol=1e-15)
-
-
 def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     voxel = Voxel.uniform_voxel(ranges=((0.0, 3.0),) * 3, shape=(3, 3, 3))
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)

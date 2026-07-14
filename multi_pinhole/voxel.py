@@ -99,7 +99,8 @@ def _uniform_axis_bracket(coordinate, center_start, center_step, center_count):
 
 @njit(cache=True, nogil=True)
 def _uniform_center_interpolator_csr(points, center_starts, center_steps,
-                                     voxel_shape, row_scale):
+                                     voxel_shape, owner_volumes,
+                                     samples_per_voxel):
     """Construct direct trilinear CSR arrays for a uniform voxel grid."""
     n_rows = points.shape[0]
     indptr = np.empty(n_rows + 1, dtype=np.int64)
@@ -138,7 +139,7 @@ def _uniform_center_interpolator_csr(points, center_starts, center_steps,
         x_weights = (wx0, wx1)
         y_weights = (wy0, wy1)
         z_weights = (wz0, wz1)
-        scale = row_scale[row]
+        scale = owner_volumes[row // samples_per_voxel] / samples_per_voxel
         output = indptr[row]
         for x_side in range(2):
             if x_weights[x_side] == 0.0:
@@ -543,38 +544,6 @@ class Voxel:
                 f"points must have shape {(expected_points, 3)}, not {points.shape}"
             )
 
-        row_scale = np.repeat(self.volume[voxel_indices] / samples_per_voxel,
-                              samples_per_voxel)
-        return self.weighted_interpolator_from_centers(points, row_scale)
-
-    def weighted_interpolator_from_centers(self, points, row_scale):
-        """Interpolate voxel-center values at arbitrary weighted points.
-
-        Unlike :meth:`sub_voxel_interpolator_from_centers`, rows need not
-        contain every sub-voxel sample of their owning voxel.  ``row_scale``
-        supplies the integration weight for each point, which lets an optical
-        work chunk reconstruct only the rows assigned to that chunk.
-
-        Parameters
-        ----------
-        points : ndarray, shape (n, 3)
-            Arbitrarily ordered sample coordinates.
-        row_scale : ndarray, shape (n,)
-            Multiplicative integration weight for each interpolation row.
-        """
-        points = np.asarray(points, dtype=float)
-        row_scale = np.asarray(row_scale, dtype=float)
-        if points.ndim != 2 or points.shape[1] != 3:
-            raise ValueError("points must have shape (n, 3)")
-        if row_scale.shape != (points.shape[0],):
-            raise ValueError(f"row_scale must have shape {(points.shape[0],)}")
-        if not np.all(np.isfinite(row_scale)):
-            raise ValueError("row_scale must contain only finite values")
-
-        n_points = points.shape[0]
-        if n_points == 0:
-            return sparse.csr_matrix((0, self.N_voxel))
-
         center_axes = (self.cx_axis, self.cy_axis, self.cz_axis)
         center_starts, center_steps = [], []
         uniform = True
@@ -597,15 +566,18 @@ class Voxel:
                 np.asarray(center_starts),
                 np.asarray(center_steps),
                 np.asarray(self.voxel_shape, dtype=np.int64),
-                np.ascontiguousarray(row_scale),
+                np.ascontiguousarray(self.volume[voxel_indices]),
+                samples_per_voxel,
             )
             return sparse.csr_matrix(
-                (data, indices, indptr), shape=(n_points, self.N_voxel)
+                (data, indices, indptr), shape=(expected_points, self.N_voxel)
             )
 
         axis_data = [self._center_axis_interpolation(axis, points[:, dim])
                      for dim, axis in enumerate(center_axes)]
-        rows = np.arange(n_points, dtype=np.int64)
+        row_scale = np.repeat(self.volume[voxel_indices] / samples_per_voxel,
+                              samples_per_voxel)
+        rows = np.arange(expected_points, dtype=np.int64)
         row_parts, col_parts, data_parts = [], [], []
         for x_side in (0, 1):
             ix = axis_data[0][x_side]
@@ -629,7 +601,7 @@ class Voxel:
         return sparse.coo_matrix(
             (np.concatenate(data_parts),
              (np.concatenate(row_parts), np.concatenate(col_parts))),
-            shape=(n_points, self.N_voxel),
+            shape=(expected_points, self.N_voxel),
         ).tocsr()
 
     @property

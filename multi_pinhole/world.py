@@ -869,74 +869,52 @@ class World:
             full_subvoxel_res, partial_subvoxel_res,
             max_nnz: int, max_working_memory: int,
             optical_bin_width_pixels, verbose: int):
-        """Build the ordinary sparse P after optical-bin sample reordering.
+        """Build ordinary sparse P using visible-voxel optical bins.
 
-        This is an experimental, deliberately uncompressed path.  It first
-        materializes visible sample coordinates and their integration weights,
-        then evaluates ``I_chunk @ S_chunk`` in optical work-chunk order.  Its
-        purpose is to validate indexing and visibility before PSF grouping is
-        introduced.
+        This experimental path bins visible voxel centers, packs complete bins
+        into work chunks, and only then expands those voxels into sub-voxel
+        samples.  It deliberately performs no PSF compression yet.
         """
         camera = self.cameras[camera_idx]
         screen = camera.screen
         n_vox = self.voxel.N
-        volumes = self.voxel.volume
-        metadata_budget = max(1, max_working_memory // 4)
-        point_blocks: list[np.ndarray] = []
-        scale_blocks: list[np.ndarray] = []
-
-        # TODO(projection-compression): Replace the materialized point array
-        # with packed (voxel index, local sample index, resolution tag) records
-        # before attempting d~10 grids.  This first implementation prioritizes
-        # exact comparison with the existing sparse-P builder.
-        def _collect(voxel_indices, resolution, check_point_visibility):
-            resolution = tuple(int(r) for r in np.broadcast_to(resolution, 3))
-            samples_per_voxel = int(np.prod(resolution))
-            bytes_per_voxel = samples_per_voxel * (3 * 8 + 8)
-            voxel_batch = max(1, metadata_budget // max(1, bytes_per_voxel))
-            for start in range(0, voxel_indices.size, voxel_batch):
-                owners = voxel_indices[start:start + voxel_batch]
-                points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
-                row_scale = np.repeat(
-                    volumes[owners] / samples_per_voxel, samples_per_voxel,
-                )
-                if check_point_visibility:
-                    mask = self.find_visible_points(
-                        points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
-                    ).reshape(-1)
-                    mask &= self._inside_points(points)
-                    points = points[mask]
-                    row_scale = row_scale[mask]
-                if points.size:
-                    point_blocks.append(points)
-                    scale_blocks.append(row_scale)
-
         index_start = time.perf_counter()
-        _collect(full_voxels, full_subvoxel_res, check_point_visibility=False)
-        _collect(partial_voxels, partial_subvoxel_res, check_point_visibility=True)
-        if not point_blocks:
+        full_resolution = tuple(int(r) for r in np.broadcast_to(full_subvoxel_res, 3))
+        partial_resolution = tuple(int(r) for r in np.broadcast_to(partial_subvoxel_res, 3))
+        full_cost = int(np.prod(full_resolution))
+        partial_cost = int(np.prod(partial_resolution))
+        visible_voxels = np.concatenate((full_voxels, partial_voxels))
+        sample_costs = np.concatenate((
+            np.full(full_voxels.size, full_cost, dtype=np.int64),
+            np.full(partial_voxels.size, partial_cost, dtype=np.int64),
+        ))
+        voxel_centers = self.voxel.get_gravity_center(visible_voxels)
+        if visible_voxels.size == 0:
             return sparse.csr_matrix((screen.N_subpixel, n_vox))
-        points = np.concatenate(point_blocks)
-        row_scale = np.concatenate(scale_blocks)
-        del point_blocks, scale_blocks
 
         def _sparse_nbytes(matrix):
             matrix = matrix.tocsr()
             return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
-        sample_count = min(points.shape[0], 256)
-        sample_points = points[:sample_count]
-        sample_scale = row_scale[:sample_count]
-        sample_S = self.voxel.weighted_interpolator_from_centers(
-            sample_points, sample_scale,
+        if full_voxels.size:
+            sample_voxels = full_voxels[:min(full_voxels.size, 20)]
+            sample_resolution = full_resolution
+        else:
+            sample_voxels = partial_voxels[:min(partial_voxels.size, 20)]
+            sample_resolution = partial_resolution
+        sample_points = self.voxel.get_sub_voxel_centers(
+            sample_voxels, res=sample_resolution,
+        )
+        sample_S = self.voxel.sub_voxel_interpolator_from_centers(
+            sample_voxels, res=sample_resolution, points=sample_points,
         )
         sample_I = camera.calc_image_vec(
             eye_idx, points=sample_points, verbose=0, check_visibility=False,
         )
         sample_result = sample_I @ sample_S
+        sample_count = sample_points.shape[0]
         transient_bytes = (
-            sample_points.nbytes + sample_scale.nbytes
-            + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
+            sample_points.nbytes + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
             + _sparse_nbytes(sample_result)
         )
         bytes_per_sample = max(1.0, transient_bytes / sample_count)
@@ -945,18 +923,20 @@ class World:
         if nnz_per_sample == 0.0:
             nnz_per_sample = screen.N_subpixel * 0.01
         nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
-        max_samples = min(memory_samples, nnz_samples, points.shape[0])
+        max_samples = min(memory_samples, nnz_samples, int(sample_costs.sum()))
         del sample_I, sample_S, sample_result
 
         binning = make_optical_binning(
-            camera, eye_idx, points,
+            camera, eye_idx, voxel_centers,
             bin_width_pixels=optical_bin_width_pixels,
             max_scope_samples=max_samples,
+            sample_costs=sample_costs,
         )
         work_chunks = binning.work_chunks(max_samples=max_samples)
         index_elapsed = time.perf_counter() - index_start
         my_print(
-            f"Processing {points.shape[0]} visible samples in "
+            f"Processing {visible_voxels.size} visible voxels "
+            f"({sample_costs.sum()} sub-voxel samples before partial masking) in "
             f"{binning.n_scopes} optical scopes and {len(work_chunks)} work chunks "
             f"(max_samples={max_samples})",
             show=verbose > 0,
@@ -981,20 +961,43 @@ class World:
             data_buf, row_buf, col_buf = [], [], []
             buffer_nbytes = 0
 
+        def _project_voxels(owners, resolution, check_point_visibility):
+            if owners.size == 0:
+                return None
+            points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
+            S = self.voxel.sub_voxel_interpolator_from_centers(
+                owners, res=resolution, points=points,
+            )
+            if check_point_visibility:
+                mask = self.find_visible_points(
+                    points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
+                ).reshape(-1)
+                mask &= self._inside_points(points)
+                if not np.any(mask):
+                    return None
+                points = points[mask]
+                S = S[mask]
+            I = camera.calc_image_vec(
+                eye_idx, points=points, verbose=0, check_visibility=False,
+            )
+            return (I @ S).tocoo()
+
         for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
                              disable=verbose <= 0):
-            chunk_points = points[chunk]
-            S_chunk = self.voxel.weighted_interpolator_from_centers(
-                chunk_points, row_scale[chunk],
+            ordered_voxels = visible_voxels[chunk]
+            is_full = chunk < full_voxels.size
+            chunk_results = (
+                _project_voxels(ordered_voxels[is_full], full_resolution, False),
+                _project_voxels(ordered_voxels[~is_full], partial_resolution, True),
             )
-            I_chunk = camera.calc_image_vec(
-                eye_idx, points=chunk_points, verbose=0, check_visibility=False,
-            )
-            P_chunk = (I_chunk @ S_chunk).tocoo()
-            data_buf.append(P_chunk.data)
-            row_buf.append(P_chunk.row)
-            col_buf.append(P_chunk.col)
-            buffer_nbytes += P_chunk.data.nbytes + P_chunk.row.nbytes + P_chunk.col.nbytes
+            for P_chunk in chunk_results:
+                if P_chunk is None:
+                    continue
+                data_buf.append(P_chunk.data)
+                row_buf.append(P_chunk.row)
+                col_buf.append(P_chunk.col)
+                buffer_nbytes += (P_chunk.data.nbytes + P_chunk.row.nbytes
+                                  + P_chunk.col.nbytes)
             if buffer_nbytes >= result_buffer_limit:
                 _flush()
         _flush()
@@ -1041,7 +1044,8 @@ class World:
         chunk_strategy : {"voxel", "optical"}, optional
             ``"voxel"`` uses the established contiguous-voxel chunks.
             ``"optical"`` is an experimental, uncompressed validation path
-            that reorders visible sub-voxel samples by detector-pitch bins.
+            that reorders visible voxel centers by detector-pitch bins before
+            expanding each work chunk into sub-voxel samples.
         optical_bin_width_pixels : float or (float, float), optional
             Optical bin width in detector-pixel pitches for the experimental
             optical strategy.

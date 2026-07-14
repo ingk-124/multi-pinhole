@@ -35,6 +35,7 @@ class OpticalBinning:
     order: np.ndarray
     scope_offsets: np.ndarray
     scope_keys: np.ndarray
+    scope_costs: np.ndarray
     bin_width_uv: np.ndarray
 
     @property
@@ -62,18 +63,17 @@ class OpticalBinning:
         if self.n_scopes == 0:
             return np.array([0], dtype=np.int64)
         offsets = [0]
-        chunk_start = 0
-        for scope_stop in self.scope_offsets[1:]:
-            if scope_stop - chunk_start > max_samples and offsets[-1] != scope_stop:
-                previous_stop = int(self.scope_offsets[
-                    np.searchsorted(self.scope_offsets, scope_stop) - 1
-                ])
-                if previous_stop > chunk_start:
-                    offsets.append(previous_stop)
-                    chunk_start = previous_stop
-            if scope_stop - chunk_start >= max_samples:
-                offsets.append(int(scope_stop))
-                chunk_start = int(scope_stop)
+        accumulated_cost = 0
+        for scope_number, scope_cost in enumerate(self.scope_costs):
+            scope_start = int(self.scope_offsets[scope_number])
+            scope_stop = int(self.scope_offsets[scope_number + 1])
+            if accumulated_cost and accumulated_cost + scope_cost > max_samples:
+                offsets.append(scope_start)
+                accumulated_cost = 0
+            accumulated_cost += int(scope_cost)
+            if accumulated_cost >= max_samples:
+                offsets.append(scope_stop)
+                accumulated_cost = 0
         if offsets[-1] != self.n_samples:
             offsets.append(self.n_samples)
         return np.asarray(offsets, dtype=np.int64)
@@ -87,7 +87,8 @@ class OpticalBinning:
 
 def make_optical_binning(camera, eye_index: int, points: np.ndarray,
                          bin_width_pixels=1.0,
-                         max_scope_samples: int | None = None) -> OpticalBinning:
+                         max_scope_samples: int | None = None,
+                         sample_costs: np.ndarray | None = None) -> OpticalBinning:
     """Order already-visible source samples by Eye projection direction.
 
     Parameters
@@ -102,9 +103,11 @@ def make_optical_binning(camera, eye_index: int, points: np.ndarray,
         Optical-bin width in detector-pixel pitches.  ``1`` means one detector
         pixel, ``0.5`` half a pixel, and ``2`` two pixels.
     max_scope_samples : int, optional
-        Split an oversized bin in increasing ``f / Z_e`` order.  The split
-        pieces remain separate compression scopes even though their bin keys
-        are identical.
+        Split an oversized bin in increasing ``f / Z_e`` order when its
+        cumulative expanded-sample cost exceeds this value.
+    sample_costs : ndarray of int, shape (n,), optional
+        Expanded sub-voxel count represented by each input point.  Defaults to
+        one, as used when the input points are already sub-voxel samples.
     """
     points = np.asarray(points, dtype=float)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -115,11 +118,21 @@ def make_optical_binning(camera, eye_index: int, points: np.ndarray,
                 int(max_scope_samples) != max_scope_samples or max_scope_samples < 1:
             raise ValueError("max_scope_samples must be a positive integer")
         max_scope_samples = int(max_scope_samples)
+    if sample_costs is None:
+        sample_costs = np.ones(points.shape[0], dtype=np.int64)
+    else:
+        sample_costs = np.asarray(sample_costs)
+        if sample_costs.shape != (points.shape[0],) or \
+                not np.issubdtype(sample_costs.dtype, np.integer) or \
+                np.any(sample_costs <= 0):
+            raise ValueError("sample_costs must be positive integers with shape (n,)")
+        sample_costs = sample_costs.astype(np.int64, copy=False)
     if points.shape[0] == 0:
         return OpticalBinning(
             order=np.empty(0, dtype=np.int64),
             scope_offsets=np.array([0], dtype=np.int64),
             scope_keys=np.empty((0, 2), dtype=np.int64),
+            scope_costs=np.empty(0, dtype=np.int64),
             bin_width_uv=camera.screen.pixel_size * width_pixels,
         )
 
@@ -138,20 +151,35 @@ def make_optical_binning(camera, eye_index: int, points: np.ndarray,
     order = np.lexsort((zoom_rate, bin_keys[:, 1], bin_keys[:, 0])).astype(np.int64)
 
     ordered_keys = bin_keys[order]
+    ordered_costs = sample_costs[order]
     boundaries = np.flatnonzero(np.any(np.diff(ordered_keys, axis=0), axis=1)) + 1
     bin_offsets = np.concatenate(([0], boundaries, [order.size])).astype(np.int64)
 
     scope_offsets = [0]
     scope_keys = []
+    scope_costs = []
     for start, stop in zip(bin_offsets[:-1], bin_offsets[1:]):
-        step = stop - start if max_scope_samples is None else max_scope_samples
-        for scope_start in range(int(start), int(stop), int(step)):
-            scope_offsets.append(min(scope_start + int(step), int(stop)))
+        scope_start = int(start)
+        accumulated_cost = 0
+        for position in range(int(start), int(stop)):
+            cost = int(ordered_costs[position])
+            if max_scope_samples is not None and accumulated_cost and \
+                    accumulated_cost + cost > max_scope_samples:
+                scope_offsets.append(position)
+                scope_keys.append(ordered_keys[start])
+                scope_costs.append(accumulated_cost)
+                scope_start = position
+                accumulated_cost = 0
+            accumulated_cost += cost
+        if scope_start < stop:
+            scope_offsets.append(int(stop))
             scope_keys.append(ordered_keys[start])
+            scope_costs.append(accumulated_cost)
 
     return OpticalBinning(
         order=order,
         scope_offsets=np.asarray(scope_offsets, dtype=np.int64),
         scope_keys=np.asarray(scope_keys, dtype=np.int64).reshape(-1, 2),
+        scope_costs=np.asarray(scope_costs, dtype=np.int64),
         bin_width_uv=bin_width_uv,
     )
