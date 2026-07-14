@@ -63,6 +63,7 @@ class ToyProblem:
     xi_eta: np.ndarray
     projected_uv: np.ndarray
     optical_chunks: list[np.ndarray]
+    work_chunks: list[np.ndarray]
     optical_bin_id: np.ndarray
 
 
@@ -175,6 +176,37 @@ def make_optical_chunks(camera: Camera, eye_index: int, points: np.ndarray,
     return chunks, sample_bin_id, np.asarray(chunk_bin_ids), points_eye, xi_eta, projected_uv
 
 
+def pack_optical_chunks(optical_chunks: list[np.ndarray],
+                        max_work_chunk_size: int) -> list[np.ndarray]:
+    """Pack complete optical compression scopes into memory work chunks.
+
+    ``optical_chunks`` remain the independent grouping scopes.  Several of
+    them may share one PSF calculation, but samples from different scopes are
+    never clustered together.  Oversized optical bins have already been split
+    by :func:`make_optical_chunks`.
+    """
+    if max_work_chunk_size < 1:
+        raise ValueError("max_work_chunk_size must be positive")
+    work_chunks: list[np.ndarray] = []
+    pending: list[np.ndarray] = []
+    pending_size = 0
+    for optical_chunk in optical_chunks:
+        optical_chunk = np.asarray(optical_chunk, dtype=np.int64)
+        if pending and pending_size + optical_chunk.size > max_work_chunk_size:
+            work_chunks.append(np.concatenate(pending))
+            pending = []
+            pending_size = 0
+        pending.append(optical_chunk)
+        pending_size += optical_chunk.size
+        if pending_size >= max_work_chunk_size:
+            work_chunks.append(np.concatenate(pending))
+            pending = []
+            pending_size = 0
+    if pending:
+        work_chunks.append(np.concatenate(pending))
+    return work_chunks
+
+
 def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
                   angular_bins_per_pixel: int = 1) -> ToyProblem:
     """Construct production P plus explicit visible I and S for one resolution."""
@@ -213,6 +245,7 @@ def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
         camera, 0, active_points, max_chunk_size=max_chunk_size,
         angular_bins_per_pixel=angular_bins_per_pixel,
     )
+    work_chunks = pack_optical_chunks(chunks, max_work_chunk_size=max_chunk_size)
     return ToyProblem(
         world=world, resolution=resolution, points=points,
         owner_voxel=owner_voxel, visibility_state=visibility_state,
@@ -221,8 +254,32 @@ def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
         P_existing=P_existing, P_manual=P_manual,
         eye_coordinates=eye_coordinates, xi_eta=xi_eta,
         projected_uv=projected_uv, optical_chunks=chunks,
+        work_chunks=work_chunks,
         optical_bin_id=bin_id,
     )
+
+
+def project_by_optical_work_chunks(problem: ToyProblem,
+                                   work_chunks: list[np.ndarray] | None = None):
+    """Rebuild the ordinary sparse P after optical-bin reordering.
+
+    This deliberately performs no PSF grouping: every work chunk evaluates
+    ``I_chunk @ S_chunk`` and the contributions are summed.  It isolates the
+    correctness of optical ordering and batching from compression error.
+    """
+    chunks = problem.work_chunks if work_chunks is None else work_chunks
+    camera = problem.world.cameras[0]
+    result = sparse.csr_matrix(problem.P_existing.shape)
+    for chunk in chunks:
+        chunk = np.asarray(chunk, dtype=np.int64)
+        if chunk.size == 0:
+            continue
+        I_chunk = camera.calc_image_vec(
+            0, points=problem.active_points[chunk], verbose=0,
+            check_visibility=False,
+        ).tocsr()
+        result += I_chunk @ problem.S[chunk]
+    return result.tocsr()
 
 
 def _distances(H: np.ndarray, q: np.ndarray):
@@ -536,7 +593,7 @@ def plot_optical_distribution(problem: ToyProblem, output: Path):
                 title="optical-coordinate density")
     counts = np.bincount(problem.optical_bin_id)
     axes[2].hist(counts, bins=min(30, max(5, counts.size)), color="tab:blue", alpha=0.8)
-    axes[2].axvline(max(chunk.size for chunk in problem.optical_chunks),
+    axes[2].axvline(max(chunk.size for chunk in problem.work_chunks),
                     color="tab:red", label="largest work chunk")
     axes[2].set(xlabel="samples per optical bin", ylabel="bin count",
                 title="X/Z, Y/Z bucket occupancy")
