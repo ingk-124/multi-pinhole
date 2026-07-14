@@ -423,6 +423,37 @@ def test_adaptive_source_resolution_matches_fixed_endpoint_resolutions():
                                rtol=1e-13, atol=1e-15)
 
 
+def test_adaptive_none_uses_uncapped_ideal_resolution():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    ideal = tuple(world.estimate_source_resolution(
+        0, 0, max_resolution=None,
+    ).resolution[0])
+
+    world.set_projection_matrix(
+        res=None, adaptive_source_resolution=True,
+        verbose=0, parallel=1, force=True,
+    )
+    adaptive = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=ideal, adaptive_source_resolution=False,
+        verbose=0, parallel=1, force=True,
+    )
+
+    assert ideal != (1, 1, 1)
+    np.testing.assert_allclose(adaptive.toarray(), world.P_matrix[0].toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+
 def test_adaptive_source_resolution_rejects_optical_work_ordering():
     world = World(cameras=[make_camera()], verbose=0)
 

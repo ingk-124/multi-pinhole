@@ -59,6 +59,10 @@ rho = projected_diameter / reference_size
 なら `res=(1, 1, 1)`とする。それ以外は同じ閾値から立方体に近いsubvoxelを作る理想軸別resを
 計算し、指定されたfixed resを上限としてclipする。
 
+`adaptive_source_resolution=True, res=None`ではideal resをそのまま使用する。intまたはtupleの`res`を
+指定した場合だけ軸別上限としてclipする。局所近似が無効でidealを有限に決められないvoxelについて、
+上限なしの計算は明示的にerrorとし、上限resの指定を要求する。
+
 ### scalar resからaxis-wise resへの変換
 
 scalar `res=r`は最長辺方向の分割数と解釈し、subvoxelが立方体に近くなるように変換する。

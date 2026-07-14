@@ -231,7 +231,9 @@ the local finite-Eye PSF/detector scale. `point_source_threshold` defaults to
 `1/8`. It selects res 1 when the complete voxel is negligible and determines a
 near-cubic ideal axis-wise resolution otherwise. Voxels are bucketed by the
 clipped `(r_x, r_y, r_z)`. This is a geometry heuristic, not a bound on image
-error. Partially-visible voxels keep the explicit fixed `partial_res`.
+error. Passing `res=None` uses the uncapped ideal resolution; an integer or
+tuple provides an axis-wise ceiling. Partially-visible voxels keep the explicit
+fixed `partial_res` (or the voxel default when both resolutions are omitted).
 
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye

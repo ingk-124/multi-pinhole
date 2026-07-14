@@ -130,16 +130,20 @@ def select_circumsphere_resolution(
             point_source_threshold <= 0.0):
         raise ValueError("point_source_threshold must be positive and finite")
 
-    try:
-        fallback = np.asarray(np.broadcast_to(fallback_resolution, 3), dtype=float)
-    except ValueError as exc:
-        raise ValueError(
-            "fallback_resolution must be an integer or length-3 sequence",
-        ) from exc
-    if (not np.all(np.isfinite(fallback)) or np.any(fallback < 1) or
-            np.any(fallback != np.floor(fallback))):
-        raise ValueError("fallback_resolution must contain positive integers")
-    fallback = fallback.astype(np.int64)
+    fallback = None
+    if fallback_resolution is not None:
+        try:
+            fallback = np.asarray(
+                np.broadcast_to(fallback_resolution, 3), dtype=float,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "fallback_resolution must be None, an integer, or a length-3 sequence",
+            ) from exc
+        if (not np.all(np.isfinite(fallback)) or np.any(fallback < 1) or
+                np.any(fallback != np.floor(fallback))):
+            raise ValueError("fallback_resolution must contain positive integers")
+        fallback = fallback.astype(np.int64)
 
     reference_size = np.asarray(reference_size, dtype=float)
     if reference_size.ndim == 0:
@@ -192,12 +196,23 @@ def select_circumsphere_resolution(
             -np.inf,
         )),
     )
-    capped = (~np.isfinite(ideal_float)) | (ideal_float > fallback[None, :])
-    resolution = np.where(
-        np.isfinite(ideal_float),
-        np.minimum(ideal_float, fallback[None, :]),
-        fallback[None, :],
-    ).astype(np.int64)
+    if fallback is None:
+        if not np.all(np.isfinite(ideal_float)):
+            raise ValueError(
+                "uncapped ideal resolution is undefined for invalid geometry; "
+                "specify fallback_resolution",
+            )
+        if np.any(ideal_float > np.iinfo(np.int64).max):
+            raise OverflowError("ideal source resolution exceeds int64")
+        capped = np.zeros(ideal_float.shape, dtype=bool)
+        resolution = ideal_float.astype(np.int64)
+    else:
+        capped = (~np.isfinite(ideal_float)) | (ideal_float > fallback[None, :])
+        resolution = np.where(
+            np.isfinite(ideal_float),
+            np.minimum(ideal_float, fallback[None, :]),
+            fallback[None, :],
+        ).astype(np.int64)
     return PointSourceResolutionEstimate(
         resolution=resolution,
         ratio=ratio,

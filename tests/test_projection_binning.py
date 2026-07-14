@@ -244,3 +244,21 @@ def test_circumsphere_resolution_falls_back_for_invalid_or_capped_geometry():
     np.testing.assert_array_equal(estimate.valid, [False, True])
     np.testing.assert_array_equal(estimate.resolution, [[2, 3, 4], [2, 3, 4]])
     assert np.all(estimate.capped)
+
+
+def test_circumsphere_resolution_can_return_uncapped_ideal_resolution():
+    estimate = select_circumsphere_resolution(
+        np.array([[0.0, 0.0, 100.0]]), np.ones((1, 3)),
+        focal_length=20.0, reference_size=1.0,
+        fallback_resolution=None,
+    )
+
+    np.testing.assert_array_equal(estimate.resolution, [[3, 3, 3]])
+    assert not np.any(estimate.capped)
+
+    with np.testing.assert_raises_regex(ValueError, "undefined for invalid geometry"):
+        select_circumsphere_resolution(
+            np.array([[0.0, 0.0, 1.0]]), np.full((1, 3), 2.0),
+            focal_length=20.0, reference_size=1.0,
+            fallback_resolution=None,
+        )

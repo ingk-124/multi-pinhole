@@ -1234,10 +1234,19 @@ class World:
         _camera = self.cameras[camera_idx]
         screen = _camera.screen
         N_vox = self.voxel.N
-        self.voxel.res = res
-        full_subvoxel_res = self.voxel.res
-        self.voxel.res = partial_res
-        partial_subvoxel_res = self.voxel.res
+        default_subvoxel_res = self.voxel.res
+        if res is None:
+            full_subvoxel_res = (None if adaptive_source_resolution
+                                 else default_subvoxel_res)
+        else:
+            self.voxel.res = res
+            full_subvoxel_res = self.voxel.res
+        if partial_res is None:
+            partial_subvoxel_res = (default_subvoxel_res if res is None
+                                    else full_subvoxel_res)
+        else:
+            self.voxel.res = partial_res
+            partial_subvoxel_res = self.voxel.res
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
         self.find_visible_voxels(verbose=verbose)
@@ -1702,7 +1711,9 @@ class World:
         ----------
         res : int, optional
             Sub-voxel resolution used when recomputing projection matrices.
-            ``None`` preserves the voxel default.
+            With fixed resolution, ``None`` preserves the voxel default. With
+            ``adaptive_source_resolution=True``, ``None`` uses the uncapped
+            ideal resolution derived from geometry.
         verbose : int, optional
             Verbosity level controlling progress logging. Defaults to ``1``.
         parallel : int, optional

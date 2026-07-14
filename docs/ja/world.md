@@ -79,7 +79,7 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 
 この一連の処理（手順1〜3。完全可視・部分可視の各グループに対して別々に実行されます）は純粋にメモリ／スループットのトレードオフのために存在しています——数学的な結果は `n_jobs` や `max_nnz` に関わらず同じ疎行列になります。変わるのは計算の分割方法だけで、答えではありません。
 
-完全可視voxelでは `adaptive_source_resolution=True` を指定でき、この場合 `res` は固定値ではなく軸別上限になります。voxelの外接球をoff-axisの `1/cos(theta)` を含む局所worst-case倍率でscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅で無次元化します。`point_source_threshold`のdefaultは `1/8`です。voxel全体を無視できる場合はres 1、それ以外は立方体に近いsubvoxelを作る理想軸別resを計算し、`res`でclipしてbucket化します。これは幾何学heuristicであり画像誤差の上限ではありません。部分可視voxelは明示した固定 `partial_res`を使います。
+完全可視voxelでは `adaptive_source_resolution=True` を指定でき、この場合 `res` は固定値ではなく軸別上限になります。voxelの外接球をoff-axisの `1/cos(theta)` を含む局所worst-case倍率でscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅で無次元化します。`point_source_threshold`のdefaultは `1/8`です。voxel全体を無視できる場合はres 1、それ以外は立方体に近いsubvoxelを作る理想軸別resを計算します。`res=None`ならidealを上限なしで使用し、intまたはtupleなら軸別上限としてclipします。これは幾何学heuristicであり画像誤差の上限ではありません。部分可視voxelは固定`partial_res`を使い、両方とも省略した場合はvoxel既定値を使います。
 
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 
