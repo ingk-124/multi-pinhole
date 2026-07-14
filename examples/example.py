@@ -35,11 +35,11 @@ if __name__ == "__main__":
 
     # sample_profile
     f = x ** 2 + y ** 2
-    im_sub = world.projection["main"][0] @ f.flatten()
+    im_eye = world.projection["main"][0] @ f.flatten()
     im = world.P_matrix["main"] @ f.flatten()
     fig, axes = plt.subplots(1, 2, figsize=(6, 3))
-    axes[0].set_title("Subpixel profile")
-    camera.screen.show_image(im_sub, ax=axes[0])
+    axes[0].set_title("Eye 0 pixel profile")
+    camera.screen.show_image(im_eye, ax=axes[0])
     axes[1].set_title("Pixel profile")
     camera.screen.show_image(im, ax=axes[1])
     fig.subplots_adjust(wspace=0.7)

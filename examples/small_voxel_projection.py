@@ -87,16 +87,16 @@ def draw_geometry(world, output_path):
 
 
 def draw_projection_result(world, emission, output_path):
-    """Draw subpixel image, pixel image, and source values."""
+    """Draw per-eye image, aggregated image, and source values."""
     camera = world.cameras[0]
-    subpixel_image = world.projection[0][0] @ emission
+    eye_image = world.projection[0][0] @ emission
     pixel_image = world.P_matrix[0] @ emission
 
     fig, axes = plt.subplots(1, 3, figsize=(9, 3))
-    camera.screen.show_image(subpixel_image, ax=axes[0], colorbar=True)
-    axes[0].set_title("Subpixel")
+    camera.screen.show_image(eye_image, ax=axes[0], colorbar=True)
+    axes[0].set_title("Eye 0 pixels")
     camera.screen.show_image(pixel_image, ax=axes[1], colorbar=True)
-    axes[1].set_title("Pixel")
+    axes[1].set_title("All-eye pixels")
 
     centers = world.voxel.gravity_center
     sc = axes[2].scatter(centers[:, 0], centers[:, 1], c=emission, s=80, cmap="viridis")
@@ -109,7 +109,7 @@ def draw_projection_result(world, emission, output_path):
     fig.tight_layout()
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
-    return subpixel_image, pixel_image
+    return eye_image, pixel_image
 
 
 def run(output_dir=None):
@@ -124,12 +124,12 @@ def run(output_dir=None):
     geometry_path = output_dir / "small_voxel_geometry.png"
     projection_path = output_dir / "small_voxel_projection.png"
     draw_geometry(world, geometry_path)
-    subpixel_image, pixel_image = draw_projection_result(world, emission, projection_path)
+    eye_image, pixel_image = draw_projection_result(world, emission, projection_path)
 
     return {
         "world": world,
         "emission": emission,
-        "subpixel_image": subpixel_image,
+        "eye_image": eye_image,
         "pixel_image": pixel_image,
         "geometry_path": geometry_path,
         "projection_path": projection_path,

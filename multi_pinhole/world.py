@@ -44,7 +44,7 @@ from .utils.my_stdio import *
 # Increment when a serialized projection representation or its numerical
 # meaning becomes incompatible with an older cached matrix. Legacy pickles do
 # not have this attribute and are invalidated when loaded.
-PROJECTION_CACHE_SCHEMA_VERSION = 1
+PROJECTION_CACHE_SCHEMA_VERSION = 2
 
 
 def type_list(obj, type_):
@@ -902,8 +902,10 @@ class World:
 
         This experimental path bins visible voxel centers, packs complete bins
         into work chunks, and only then expands those voxels into sub-voxel
-        samples.  Hybrid mode groups PSFs independently inside each optical
-        scope and stores either a direct block or ``Q @ A`` for that scope.
+        samples. Subpixels are transient quadrature samples: their images are
+        binned to detector pixels before either sparse assembly or hybrid PSF
+        grouping. Hybrid mode groups pixel-space PSFs independently inside
+        each optical scope and stores either a direct block or ``Q @ A``.
         """
         camera = self.cameras[camera_idx]
         screen = camera.screen
@@ -920,7 +922,7 @@ class World:
         ))
         voxel_centers = self.voxel.get_gravity_center(visible_voxels)
         if visible_voxels.size == 0:
-            return sparse.csr_matrix((screen.N_subpixel, n_vox))
+            return sparse.csr_matrix((screen.N_pixel, n_vox))
 
         def _sparse_nbytes(matrix):
             matrix = matrix.tocsr()
@@ -938,9 +940,10 @@ class World:
         sample_S = self.voxel.sub_voxel_interpolator_from_centers(
             sample_voxels, res=sample_resolution, points=sample_points,
         )
-        sample_I = camera.calc_image_vec(
+        sample_I_subpixel = camera.calc_image_vec(
             eye_idx, points=sample_points, verbose=0, check_visibility=False,
         )
+        sample_I = screen.transform_matrix @ sample_I_subpixel
         sample_result = sample_I @ sample_S
         sample_count = sample_points.shape[0]
         transient_bytes = (
@@ -951,10 +954,10 @@ class World:
         memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
         nnz_per_sample = sample_I.nnz / sample_count
         if nnz_per_sample == 0.0:
-            nnz_per_sample = screen.N_subpixel * 0.01
+            nnz_per_sample = screen.N_pixel * 0.01
         nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
         max_samples = min(memory_samples, nnz_samples, int(sample_costs.sum()))
-        del sample_I, sample_S, sample_result
+        del sample_I_subpixel, sample_I, sample_S, sample_result
 
         binning = make_optical_binning(
             camera, eye_idx, voxel_centers,
@@ -1082,10 +1085,15 @@ class World:
                     continue
                 points_work = np.concatenate(scope_points, axis=0)
                 S_work = sparse.vstack(scope_interpolators, format="csr")
-                I_work = camera.calc_image_vec(
+                I_subpixel_work = camera.calc_image_vec(
                     eye_idx, points=points_work, verbose=0,
                     check_visibility=False,
                 )
+                # Subpixels are integration samples, not persistent detector
+                # coordinates. Grouping after this exact linear binning keeps
+                # area-integration accuracy while reducing the PSF row count.
+                I_work = screen.transform_matrix @ I_subpixel_work
+                del I_subpixel_work
                 work_scope_operators = []
 
                 # I and S use the same expanded subvoxel row/column order.
@@ -1116,7 +1124,7 @@ class World:
 
             if not operators:
                 return HybridProjectionOperator.empty(
-                    (screen.N_subpixel, n_vox),
+                    (screen.N_pixel, n_vox),
                 )
             result = combine_projection_operators(operators)
             n_active = sum(stats.n_active_samples for stats in compression_stats)
@@ -1137,7 +1145,7 @@ class World:
             return result
 
         projection_start = time.perf_counter()
-        result = sparse.csr_matrix((screen.N_subpixel, n_vox))
+        result = sparse.csr_matrix((screen.N_pixel, n_vox))
         data_buf, row_buf, col_buf = [], [], []
         buffer_nbytes = 0
         result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
@@ -1171,10 +1179,13 @@ class World:
                     return None
                 points = points[mask]
                 S = S[mask]
-            I = camera.calc_image_vec(
+            I_subpixel = camera.calc_image_vec(
                 eye_idx, points=points, verbose=0, check_visibility=False,
             )
-            return (I @ S).tocoo()
+            # In the uncompressed path, integrate subvoxel columns before
+            # detector binning. This keeps the transient multiplication small
+            # while still returning only the persistent pixel-space matrix.
+            return (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
 
         for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
                              disable=verbose <= 0):
@@ -1254,8 +1265,9 @@ class World:
 
         Notes
         -----
-        The resulting sparse matrix is stored in
-        ``self._projection[camera_idx][eye_idx]``.
+        The resulting pixel-space matrix/operator is stored in
+        ``self._projection[camera_idx][eye_idx]``. Subpixel images exist only
+        as transient numerical-integration data.
         """
         n_jobs = os.cpu_count() + 1 + n_jobs if n_jobs < 0 else n_jobs
         n_jobs = max(1, n_jobs)
@@ -1293,19 +1305,19 @@ class World:
         vis_flag = self.visible_voxels[camera_idx][eye_idx]  # (N_vox, )
         partial_voxels = np.flatnonzero(vis_flag == 1)
         full_voxels = np.flatnonzero(vis_flag == 2)
-        full_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
-        partial_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
+        full_res = sparse.coo_matrix((screen.N_pixel, N_vox))
+        partial_res = sparse.coo_matrix((screen.N_pixel, N_vox))
 
         # No visible voxels
         if partial_voxels.size + full_voxels.size == 0:
             my_print("No visible voxels. Setting projection matrix to zero matrix.", show=verbose > 0)
             if projection_representation == "hybrid":
                 self._projection[camera_idx][eye_idx] = HybridProjectionOperator.empty(
-                    (screen.N_subpixel, N_vox),
+                    (screen.N_pixel, N_vox),
                 )
             else:
                 self._projection[camera_idx][eye_idx] = sparse.csr_matrix(
-                    (screen.N_subpixel, N_vox),
+                    (screen.N_pixel, N_vox),
                 )
             return
 
@@ -1345,12 +1357,13 @@ class World:
             -------
             tuple[np.ndarray, np.ndarray, np.ndarray]
                 COO ``(data, row, col)`` triplet of the resulting
-                ``(N_subpixel, N_vox)`` sparse contribution.
+                ``(N_pixel, N_vox)`` sparse contribution.
             """
-            I = _camera.calc_image_vec(eye_idx, points=sv_gc, verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_vox * K)
-            res = (I @ S).tocoo()  # (N_subpixel, N_vox)
-            del I, sv_gc
+            I_subpixel = _camera.calc_image_vec(
+                eye_idx, points=sv_gc, verbose=0, check_visibility=False,
+            )
+            res = (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
+            del I_subpixel, sv_gc
             return res.data, res.row, res.col
 
         def _partial_vox_proc(sv_gc, S, mask):
@@ -1368,11 +1381,13 @@ class World:
             """
             if not np.any(mask):
                 return np.array([]), np.array([], dtype=np.int32), np.array([], dtype=np.int32)
-            I = _camera.calc_image_vec(eye_idx, points=sv_gc[mask], verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_visible*K)
+            I_subpixel = _camera.calc_image_vec(
+                eye_idx, points=sv_gc[mask], verbose=0,
+                check_visibility=False,
+            )
             S = S[mask, :]
-            res = (I @ S).tocoo()  # (N_subpixel, N_vox)
-            del I, sv_gc, mask
+            res = (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
+            del I_subpixel, sv_gc, mask
             return res.data, res.row, res.col
 
         def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res, points=None):
@@ -1436,9 +1451,9 @@ class World:
             Returns
             -------
             scipy.sparse.coo_matrix
-                Sum of all future results, shape ``(screen.N_subpixel, N_vox)``.
+                Sum of all future results, shape ``(screen.N_pixel, N_vox)``.
             """
-            res = sparse.csr_matrix((screen.N_subpixel, N_vox))
+            res = sparse.csr_matrix((screen.N_pixel, N_vox))
             data_buf, row_buf, col_buf = [], [], []
             buffer_nbytes = 0
             chunk_iter = iter(chunks)
@@ -1451,7 +1466,7 @@ class World:
                 block = sparse.coo_matrix(
                     (np.concatenate(data_buf),
                      (np.concatenate(row_buf), np.concatenate(col_buf))),
-                    shape=(screen.N_subpixel, N_vox),
+                    shape=(screen.N_pixel, N_vox),
                 ).tocsr()
                 res += block
                 data_buf, row_buf, col_buf = [], [], []
@@ -1496,11 +1511,12 @@ class World:
             # random sample voxels to estimate n_step
             sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
             sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=full_subvoxel_res)
-            sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
-                                              check_visibility=False)  # (N_subpixel, sample_size * K)
+            sample_I = _camera.calc_image_vec(
+                eye_idx, points=sample_gc, verbose=0, check_visibility=False,
+            )
             sample_S = _sub_voxel_interpolator_matrix(sample_n, full_subvoxel_res,
                                                       points=sample_gc)
-            sample_result = sample_I @ sample_S
+            sample_result = screen.transform_matrix @ (sample_I @ sample_S)
             batch_size = _estimate_batch_size(
                 sample_n.size, sample_gc, sample_I, sample_S, sample_result,
                 full_voxels.size,
@@ -1529,7 +1545,7 @@ class World:
                     if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
+                                                       shape=(screen.N_pixel, N_vox))
                         full_res = full_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
@@ -1538,7 +1554,7 @@ class World:
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                     (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                   shape=(screen.N_subpixel, N_vox))
+                                                   shape=(screen.N_pixel, N_vox))
                     full_res = full_res + sum_of_buf
                     del data_buf, row_buf, col_buf
             else:
@@ -1571,15 +1587,17 @@ class World:
                     break
 
             if sample_mask is not None and np.any(sample_mask):
-                sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
-                                                  check_visibility=False)  # (N_subpixel, num_visible)
+                sample_I = _camera.calc_image_vec(
+                    eye_idx, points=sample_gc[sample_mask], verbose=0,
+                    check_visibility=False,
+                )
                 sample_S = _sub_voxel_interpolator_matrix(sample_n, partial_subvoxel_res,
                                                           points=sample_gc)
                 sample_S = sample_S[sample_mask, :]
             else:
                 sample_I = sparse.csr_matrix((screen.N_subpixel, 0))
                 sample_S = sparse.csr_matrix((0, N_vox))
-            sample_result = sample_I @ sample_S
+            sample_result = screen.transform_matrix @ (sample_I @ sample_S)
             batch_size = _estimate_batch_size(
                 sample_n.size, sample_gc, sample_I, sample_S, sample_result,
                 partial_voxels.size,
@@ -1611,7 +1629,7 @@ class World:
                     if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
+                                                       shape=(screen.N_pixel, N_vox))
                         partial_res = partial_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
@@ -1620,7 +1638,7 @@ class World:
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                     (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                   shape=(screen.N_subpixel, N_vox))
+                                                   shape=(screen.N_pixel, N_vox))
                     partial_res = partial_res + sum_of_buf
                     del data_buf, row_buf, col_buf
             else:
@@ -1749,7 +1767,8 @@ class World:
         Notes
         -----
         Aggregated matrices are stored in :attr:`_P_matrix` keyed by camera
-        index, while per-eye subpixel matrices remain in :attr:`_projection`.
+        index. Per-eye pixel-space matrices/operators remain in
+        :attr:`_projection`; subpixels are transient integration samples.
         """
         my_print("Calculating projection matrix", show=verbose > 0)
         indices = list(self.cameras.keys())
@@ -1767,7 +1786,7 @@ class World:
                 )
                 if force or chunk_strategy == "optical" or not representation_matches or \
                         (cached_projection is None) or \
-                        (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_subpixel, self.voxel.N)):
+                        (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                     my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
                     self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
@@ -1789,19 +1808,18 @@ class World:
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                 # at least one eye is recalculated
                 if projection_representation == "hybrid":
-                    # Eye operators share the same subpixel/global-voxel
-                    # coordinates. Concatenate their factor rows, then apply
-                    # subpixel-to-pixel binning only on detector rows.
-                    eye_operator = combine_projection_operators(
+                    # Each eye is already in the same pixel/global-voxel
+                    # coordinates, so aggregation is a direct operator sum.
+                    self._P_matrix[_c] = combine_projection_operators(
                         self._projection[_c],
                     )
-                    self._P_matrix[_c] = eye_operator.left_multiply(
-                        self.cameras[_c].screen.transform_matrix,
-                    )
                 else:
-                    # combine all projection matrices
-                    _proj = sum(self._projection[_c], sparse.csr_matrix((self.cameras[_c].screen.N_subpixel, self.voxel.N)))
-                    self._P_matrix[_c] = self.cameras[_c].screen.transform_matrix * _proj
+                    self._P_matrix[_c] = sum(
+                        self._projection[_c],
+                        sparse.csr_matrix(
+                            (self.cameras[_c].screen.N_pixel, self.voxel.N),
+                        ),
+                    )
                 my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
                 my_print(f"Projection matrix for camera {_c!r} is already calculated.",

@@ -251,13 +251,13 @@ def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
         z_axis=np.array([0.0, 1.0]),
     )
     world = World(voxel=voxel, cameras={"main": make_camera()}, verbose=0)
-    projection = sparse.csr_matrix(([2.0], ([0], [0])), shape=(
-        world.cameras["main"].screen.N_subpixel, world.voxel.N,
+    eye_projection = sparse.csr_matrix(([2.0], ([0], [0])), shape=(
+        world.cameras["main"].screen.N_pixel, world.voxel.N,
     ))
     pixel_projection = sparse.csr_matrix(([3.0], ([0], [0])), shape=(
         world.cameras["main"].screen.N_pixel, world.voxel.N,
     ))
-    world._projection["main"][0] = projection
+    world._projection["main"][0] = eye_projection
     world._P_matrix["main"] = pixel_projection
     path = tmp_path / "current-world.pkl"
 
@@ -265,7 +265,9 @@ def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
     loaded = World.load_world(path)
 
     assert loaded.projection_cache_schema_version == world.projection_cache_schema_version
-    np.testing.assert_allclose(loaded.projection["main"][0].toarray(), projection.toarray())
+    np.testing.assert_allclose(
+        loaded.projection["main"][0].toarray(), eye_projection.toarray(),
+    )
     np.testing.assert_allclose(loaded.P_matrix["main"].toarray(), pixel_projection.toarray())
 
 
@@ -294,7 +296,7 @@ def test_loading_incompatible_projection_cache_invalidates_only_projection(
     np.testing.assert_array_equal(loaded.visible_voxels["main"], visible)
     assert loaded.projection["main"] == [None]
     assert loaded.P_matrix["main"] is None
-    assert loaded.projection_cache_schema_version == 1
+    assert loaded.projection_cache_schema_version == 2
 
 
 def test_world_list_camera_keys_are_not_renumbered_after_removal():
@@ -333,7 +335,7 @@ def test_projection_pipeline_supports_string_camera_key():
 
     world.set_projection_matrix(res=1, verbose=0, parallel=1)
 
-    assert world.projection["right"][0].shape == (camera.screen.N_subpixel, voxel.N_voxel)
+    assert world.projection["right"][0].shape == (camera.screen.N_pixel, voxel.N_voxel)
     assert world.P_matrix["right"].shape == (camera.screen.N_pixel, voxel.N_voxel)
 
 
@@ -686,7 +688,7 @@ def test_small_projection_matrix_case_completes_and_preserves_sparse_columns():
 
     world.set_projection_matrix(res=1, verbose=0, parallel=1)
 
-    assert world.projection[0][0].shape == (screen.N_subpixel, voxel.N_voxel)
+    assert world.projection[0][0].shape == (screen.N_pixel, voxel.N_voxel)
     assert world.P_matrix[0].shape == (screen.N_pixel, voxel.N_voxel)
     assert world.projection[0][0].tocsc()[:, 0].nnz > 0
 
@@ -695,7 +697,7 @@ def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
     screen = Screen(
         screen_shape="square", screen_size=20.0,
-        pixel_shape=(8, 8), subpixel_resolution=1,
+        pixel_shape=(8, 8), subpixel_resolution=5,
     )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
     camera = Camera(
@@ -741,6 +743,13 @@ def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
     assert sum(
         stats.n_samples for stats in factorized_operator.compression_stats
     ) > 0
+    # Detector subpixels are transient integration samples. PSF grouping and
+    # both public projection caches use only the physical pixel row space.
+    assert world.projection[0][0].shape[0] == screen.N_pixel
+    assert max(
+        stats.n_active_pixel_rows
+        for stats in factorized_operator.compression_stats
+    ) <= screen.N_pixel
     approximation = factorized_operator.to_sparse()
     np.testing.assert_allclose(
         np.asarray(approximation.sum(axis=0)),
@@ -1047,7 +1056,7 @@ def test_partial_res_refines_only_partial_voxel_quadrature():
         world.set_projection_matrix(res=1, partial_res=partial_res, verbose=0, parallel=1, force=True)
         totals.append(float(world.P_matrix[0][:, 0].sum()))
 
-    assert world.projection[0][0].shape == (screen.N_subpixel, voxel.N_voxel)
+    assert world.projection[0][0].shape == (screen.N_pixel, voxel.N_voxel)
     assert world.P_matrix[0].shape == (screen.N_pixel, voxel.N_voxel)
     np.testing.assert_allclose(totals[1], totals[0], rtol=3e-2, atol=0.0)
 
@@ -1063,16 +1072,16 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     camera = world.cameras[0]
     voxel = world.voxel
     projection = world.P_matrix[0].tocsc()
-    subpixel_projection = world.projection[0][0].tocsc()
+    eye_projection = world.projection[0][0].tocsc()
 
     assert projection.shape == (camera.screen.N_pixel, voxel.N_voxel)
-    assert subpixel_projection.shape == (camera.screen.N_subpixel, voxel.N_voxel)
+    assert eye_projection.shape == (camera.screen.N_pixel, voxel.N_voxel)
     assert projection.nnz > 0
-    assert subpixel_projection.nnz > 0
+    assert eye_projection.nnz > 0
     assert result["pixel_image"].shape == (camera.screen.N_pixel,)
-    assert result["subpixel_image"].shape == (camera.screen.N_subpixel,)
+    assert result["eye_image"].shape == (camera.screen.N_pixel,)
     assert np.isfinite(result["pixel_image"]).all()
-    assert np.isfinite(result["subpixel_image"]).all()
+    assert np.isfinite(result["eye_image"]).all()
     assert np.any(result["pixel_image"] > 0)
     assert result["geometry_path"].is_file()
     assert result["projection_path"].is_file()

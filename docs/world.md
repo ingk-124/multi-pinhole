@@ -181,17 +181,19 @@ total integrated signal. Direct center interpolation also reproduces affine
 emission profiles in the grid interior without the wider smoothing stencil of
 the former center-to-vertex-to-sub-voxel interpolation.
 
-Concretely, for a batch of voxels the per-eye subpixel image is
+Concretely, for a batch of voxels the persistent per-eye pixel projection is
 
 ```
-I_subpixel = calc_image_vec(eye, sub_voxel_centers)  @  S
+P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 ```
 
 where `calc_image_vec` (from `docs/core.md`) is the `(N_subpixel,
-N_sub_voxel_samples)` ray-tracing/rasterization matrix, and `S` is the
-`(N_sub_voxel_samples, N_voxel_batch)` interpolation/integration matrix
-above — so `I_subpixel` ends up `(N_subpixel, N_voxel_batch)`: exactly the
-per-eye contribution to the projection matrix for that batch of voxels.
+N_sub_voxel_samples)` ray-tracing/rasterization matrix, `T` is the exact
+`(N_pixel, N_subpixel)` detector binning matrix, and `S` is the
+`(N_sub_voxel_samples, N_voxel_batch)` interpolation/integration matrix.
+Thus `P_eye` has shape `(N_pixel, N_voxel_batch)`. The multiplication by `T`
+is performed before sparse assembly or PSF grouping, so retaining subpixel
+quadrature accuracy does not require retaining subpixel projection rows.
 
 ### Chunking and parallelism
 
@@ -221,11 +223,12 @@ partial-visibility voxel groups) exists purely as a memory/throughput
 trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
 
-Per-eye results are stored in `self._projection[camera_idx][eye_idx]`.
-`set_projection_matrix` then sums all eyes on a camera and applies the
-screen's `transform_matrix` (subpixel → pixel binning, from `docs/core.md`)
-to produce the final pixel-space matrix in
-`self._P_matrix[camera_idx]`.【F:multi_pinhole/world.py†L1228-L1234】
+Each projected subvoxel image is immediately passed through the screen's
+`transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye
+pixel-space results are stored in `self._projection[camera_idx][eye_idx]`.
+`set_projection_matrix` then sums all eyes on a camera to produce
+`self._P_matrix[camera_idx]`. Subpixel rows are transient integration data,
+not a persistent projection representation.
 
 ### `trace_line`: projecting a handful of points without building the full matrix
 
@@ -269,10 +272,10 @@ Putting the pipeline together end to end (see
      center), projects fully-visible voxels' centers through the eye with
      `calc_image_vec`, and (for any partially-visible voxels) re-checks
      visibility at the sample level before projecting.
-   * The per-eye subpixel matrix lands in `world.projection[0][0]`
-     (shape `(N_subpixel, 27)`); `set_projection_matrix` then applies the
-     screen's pixel-binning transform to produce `world.P_matrix[0]`
-     (shape `(N_pixel, 27)`).
+   * Pixel binning is applied while each chunk is assembled. The per-eye
+     pixel matrix lands in `world.projection[0][0]` (shape
+     `(N_pixel, 27)`); `set_projection_matrix` sums the eye matrices into
+     `world.P_matrix[0]`, also with shape `(N_pixel, 27)`.
 4. Given any 27-element `emission` vector, `world.P_matrix[0] @ emission`
    is the simulated pixel image — no further ray-tracing needed unless the
    geometry (camera, voxel grid, apertures, walls, or inside-vertex mask)

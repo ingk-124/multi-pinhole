@@ -324,11 +324,26 @@ detector res 1で通常のoptical sparseが`2.98 s`、hybridが`9.64 s`だった
 168 scopeである。
 
 実運用のdetector res 5では通常`6.51 s`、hybrid`71.68 s`、保存量は`8.80 MB`対`8.92 MB`
-（比`0.987`）、factorized採用は40/1251 scopeだった。現状はsubpixel PSFをそのままgroup化するため、
-detector res 5で距離計算のrow数が最大25倍になる。一方、最終観測量はpixel平均後なので、次の候補は
-`I_pixel = T_pixel<-subpixel I_subpixel`を先に作り、pixel空間でPSF group化する方法である。
-これは`P_pixel = T I S`の線形性を保ち、subpixel面積積分を捨てずにgrouping次元だけを削減できる。
-ただしeyeごとの`_projection`が現在subpixel行列であるAPIとの分離方法を先に決める。
+（比`0.987`）、factorized採用は40/1251 scopeだった。当時はsubpixel PSFをそのままgroup化したため、
+detector res 5で距離計算のrow数が最大25倍になっていた。
+
+これを受け、`I_pixel = T_pixel<-subpixel I_subpixel`を各work chunkで直ちに作り、pixel空間で
+疎行列組み立てとPSF group化を行うよう変更した。`P_pixel = T I S`の線形性を保つため、subpixel
+面積積分の精度は維持される。subpixelは一時的なquadrature表現となり、eyeごとの`_projection`も
+`(N_pixel, N_voxel)`へ破壊的に変更した。`_P_matrix`はeye演算子の単純な和である。旧仕様はGit履歴で
+追跡でき、projection cache schemaを2へ上げたため旧pickleのvisibilityは残してprojectionだけを
+再計算する。
+
+同じMST `d=75 mm`、source res 2、閾値0.1を再測定した。今回の実行環境では通常sparseが
+detector res 1/5で`9.04/10.36 s`、hybridが`15.39/16.51 s`だった。絶対時間は以前の測定より
+全経路で長いため単純比較できないが、旧実装でhybridだけがres 5で`71.68 s`まで増えた現象は消え、
+res 1/5のhybrid保存量、factorized scope数、group数はそれぞれ`9,270,320 bytes`、`168/1251`、
+`1449`で完全に一致した。すなわち圧縮処理はdetector subpixel数から独立した。
+
+detector res 5で通常sparseとhybridを直接比較すると、行列Frobenius相対誤差は`3.19e-3`、最大要素
+絶対誤差は`6.87e-6`、voxelごとの総光量の相対L2誤差は`2.73e-16`だった。総光量は丸め誤差範囲で
+保存されている。一方、保存量は通常Pの`8,802,860 bytes`に対してhybridが`9,270,320 bytes`で、
+この閾値・scope採用基準ではまだ約5.3%不利である。次はexact Bytesによるscope採否判定が必要。
 
 cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
 整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
@@ -390,7 +405,7 @@ clip または数値積分を追加する。
 ## 実施順序案
 
 1. ~~projection cache schema version と旧pickleのprojection無効化~~（完了）
-2. `d=75 mm` MST 数値検証と detector res の決定
+2. `d=75 mm` MST 数値検証と detector res の決定（pixel空間group化後を再測定）
 3. inside 境界仕様の確定
 4. main への統合
 5. source `res` 自動判定と fully/partial の適応化
