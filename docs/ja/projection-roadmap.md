@@ -165,7 +165,7 @@ xi  = X_e / Z_e
 eta = Y_e / Z_e
 ```
 
-の2次元空間をdetector pixel相当、またはそれより細かい角度binに分割する。これはscreen上の
+の2次元空間をdetector pixel pitch基準の角度binに分割する。これはscreen上の
 投影中心 `q = q0 - f (xi, eta)` で分けることと同値である。同じ `(xi, eta)` bin内では、
 必要に応じて `f / Z_e`、`log(Z_e)`、またはzoom rateで奥行き方向を並べる・bin分けする。
 最後に各binをメモリ上限に収まる最大要素数で分割し、これを圧縮候補chunkとする。
@@ -173,10 +173,22 @@ eta = Y_e / Z_e
 `(xi, eta, depth_bin)`から整数bin IDを計算してbucketへscatterする。各subvoxel PSF columnは
 必ず1個の光学chunkだけに所属する。
 
+bin幅はvisible pointsのAABBをpixel数で等分して決めず、screen原点に固定した格子を使う。
+`optical_bin_width_pixels`をscreen pixel pitchに掛け、`1`を1 pixel、`0.5`を半pixel、`2`を
+2 pixels相当とする。subpixel resolutionとは独立に指定し、初期defaultは`1`とする。
+wall/apertureに対して不可視なvoxelとpartial voxel内の不可視subvoxelはbinning前に除外する。
+screenと重ならずPSF感度が0になる可視点は、既存Pとの同値性を保つ初期実装では残し、PSF計算後に
+除外する。
+
 角度binとdepth binは類似columnを探す範囲を制限するためのもので、近似を受理する閾値そのもの
 ではない。binを細かくしすぎると圧縮候補を見逃すが精度は悪化せず、粗くしすぎても最終的な
 column距離判定でrejectまたは再分割される。最初はdetector pixel幅を角度bin幅として使い、
 depth binなしでzoom rate順に並べ、計算量が大きい場合だけdepth binを追加する。
+
+実装では、(1) optical bin、(2) compression scope、(3) work chunkを区別する。bin間圧縮は
+初期実装では行わない。1個のbinがメモリ上限を超える場合だけ`f / Z_e`順に複数scopeへ分割し、
+scope間も圧縮しない。work chunkはPSF計算呼び出しを細かくしすぎないため複数の完全なscopeを
+メモリ上限まで束ねるが、同じwork chunk内でも異なるscopeのPSFを同じgroupには入れない。
 
 この方法なら、world座標では離れていても同じview cone上にあり、ほぼ同じPSFを持つ点を
 比較できる。一方、投影方向が異なる点を「配列上で隣だった」という理由だけで同じgroup候補に
@@ -186,6 +198,11 @@ fully visible voxel由来かpartial voxel由来かだけを理由に分ける必
 診断用に保持し、wall/inside境界をまたいだgroupで誤差が増えていないかを可視化する。
 
 #### projection計算への組み込み
+
+圧縮導入前に、optical bin順へ並べ替えたwork chunkごとに通常の`P_chunk = I_chunk S_chunk`を
+計算し、既存のvoxel-index chunk版と一致することを確認する。Toyではwork chunk上限を変えても
+絶対誤差`1e-14`以下で一致済みである。次に同じ経路を`World`内部へ実験optionとして移し、
+visibility、sampleの過不足、構築時間、peak memoryを比較してから`I ~= Q R`を追加する。
 
 処理単位はcamera・Eye・光学chunkとする。各chunkで `I_chunk` と、それに対応する `S_chunk` の
 rowを作り、正規化PSFをgroup化して `Q_chunk`, `R_chunk` を得る。続いて

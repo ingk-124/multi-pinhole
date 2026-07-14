@@ -33,6 +33,7 @@ import numpy as np
 from scipy import sparse
 
 from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
+from multi_pinhole.projection import make_optical_binning
 
 
 FOCAL_LENGTH = 20.0
@@ -145,34 +146,27 @@ def _optical_coordinates(camera: Camera, eye_index: int, points: np.ndarray):
 
 def make_optical_chunks(camera: Camera, eye_index: int, points: np.ndarray,
                         max_chunk_size: int = 256,
-                        angular_bins_per_pixel: int = 1):
+                        optical_bin_width_pixels=1.0):
     """Bucket arbitrary point indices in Eye X/Z, Y/Z coordinates."""
-    if max_chunk_size < 1 or angular_bins_per_pixel < 1:
-        raise ValueError("chunk and angular bin sizes must be positive")
+    if max_chunk_size < 1:
+        raise ValueError("max_chunk_size must be positive")
     points_eye, xi_eta, projected_uv = _optical_coordinates(camera, eye_index, points)
-    bin_size = camera.screen.pixel_size / angular_bins_per_pixel
-    bin_indices = np.floor(projected_uv / bin_size[None, :]).astype(np.int64)
-    zoom_rate = 1.0 + camera.eyes[eye_index].focal_length / points_eye[:, 2]
-    order = np.lexsort((zoom_rate, xi_eta[:, 1], xi_eta[:, 0],
-                        bin_indices[:, 1], bin_indices[:, 0]))
-    chunks: list[np.ndarray] = []
+    binning = make_optical_binning(
+        camera, eye_index, points,
+        bin_width_pixels=optical_bin_width_pixels,
+        max_scope_samples=max_chunk_size,
+    )
+    chunks = binning.scopes()
     chunk_bin_ids: list[int] = []
     sample_bin_id = np.empty(points.shape[0], dtype=np.int64)
-    start = 0
-    next_bin_id = 0
-    while start < order.size:
-        first = order[start]
-        key = bin_indices[first]
-        stop = start + 1
-        while stop < order.size and np.array_equal(bin_indices[order[stop]], key):
-            stop += 1
-        bucket = order[start:stop]
-        sample_bin_id[bucket] = next_bin_id
-        for offset in range(0, bucket.size, max_chunk_size):
-            chunks.append(bucket[offset:offset + max_chunk_size])
-            chunk_bin_ids.append(next_bin_id)
-        next_bin_id += 1
-        start = stop
+    next_bin_id = -1
+    previous_key = None
+    for chunk, key in zip(chunks, binning.scope_keys):
+        if previous_key is None or not np.array_equal(key, previous_key):
+            next_bin_id += 1
+            previous_key = key
+        sample_bin_id[chunk] = next_bin_id
+        chunk_bin_ids.append(next_bin_id)
     return chunks, sample_bin_id, np.asarray(chunk_bin_ids), points_eye, xi_eta, projected_uv
 
 
@@ -208,7 +202,7 @@ def pack_optical_chunks(optical_chunks: list[np.ndarray],
 
 
 def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
-                  angular_bins_per_pixel: int = 1) -> ToyProblem:
+                  optical_bin_width_pixels=1.0) -> ToyProblem:
     """Construct production P plus explicit visible I and S for one resolution."""
     if resolution < 1:
         raise ValueError("resolution must be positive")
@@ -243,7 +237,7 @@ def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
 
     chunks, bin_id, _, eye_coordinates, xi_eta, projected_uv = make_optical_chunks(
         camera, 0, active_points, max_chunk_size=max_chunk_size,
-        angular_bins_per_pixel=angular_bins_per_pixel,
+        optical_bin_width_pixels=optical_bin_width_pixels,
     )
     work_chunks = pack_optical_chunks(chunks, max_work_chunk_size=max_chunk_size)
     return ToyProblem(
