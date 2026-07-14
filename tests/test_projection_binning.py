@@ -3,7 +3,11 @@
 import numpy as np
 
 from multi_pinhole import Camera, Eye, Screen
-from multi_pinhole.projection import make_optical_binning
+from multi_pinhole.projection import (
+    make_optical_binning,
+    projected_axis_spans,
+    select_source_resolution,
+)
 
 
 def _camera():
@@ -80,3 +84,100 @@ def test_invalid_optical_binning_parameters_are_rejected():
             pass
         else:
             raise AssertionError(f"invalid bin width accepted: {width!r}")
+
+
+def test_projected_axis_spans_matches_exact_on_axis_pinhole_geometry():
+    camera = _camera()
+    centers = np.array([[0.0, 0.0, 120.0]])
+    edge_lengths = np.array([[12.0, 8.0, 20.0]])
+
+    spans = projected_axis_spans(camera, 0, centers, edge_lengths)
+
+    # The Eye is at camera z=f=20, hence source depth from the Eye is 100.
+    # screen.xy2uv swaps x/y, so world x maps to detector v and world y to u.
+    np.testing.assert_allclose(spans[0, 0], [0.0, 20.0 * 12.0 / 100.0])
+    np.testing.assert_allclose(spans[0, 1], [20.0 * 8.0 / 100.0, 0.0])
+    np.testing.assert_allclose(spans[0, 2], [0.0, 0.0])
+
+
+def test_projected_depth_axis_span_includes_off_axis_perspective():
+    camera = _camera()
+    centers = np.array([[10.0, 0.0, 120.0]])
+    edge_lengths = np.array([[2.0, 2.0, 20.0]])
+
+    spans = projected_axis_spans(camera, 0, centers, edge_lengths)
+
+    near_depth, far_depth = 90.0, 110.0
+    expected = 20.0 * 10.0 * abs(1.0 / near_depth - 1.0 / far_depth)
+    np.testing.assert_allclose(spans[0, 2], [0.0, expected])
+
+
+def test_projected_axis_spans_respects_camera_rotation():
+    camera = _camera()
+    camera.set_rotation_euler("z", 90.0)
+    centers = np.array([[0.0, 0.0, 120.0]])
+    edge_lengths = np.array([[12.0, 8.0, 20.0]])
+
+    spans = projected_axis_spans(camera, 0, centers, edge_lengths)
+
+    # A 90-degree camera rotation exchanges which detector axis receives the
+    # world-x and world-y source chords.
+    np.testing.assert_allclose(spans[0, 0], [20.0 * 12.0 / 100.0, 0.0], atol=1e-15)
+    np.testing.assert_allclose(spans[0, 1], [0.0, 20.0 * 8.0 / 100.0], atol=1e-15)
+
+
+def test_projected_axis_spans_rejects_invalid_inputs():
+    camera = _camera()
+    with np.testing.assert_raises(ValueError):
+        projected_axis_spans(camera, 0, np.zeros((2, 2)), np.ones((2, 3)))
+    with np.testing.assert_raises(ValueError):
+        projected_axis_spans(camera, 0, np.zeros((2, 3)), np.ones((3, 3)))
+    with np.testing.assert_raises(ValueError):
+        projected_axis_spans(camera, 0, np.zeros((2, 3)), np.zeros((2, 3)))
+
+
+def test_select_source_resolution_is_axiswise_and_reports_ceiling():
+    spans = np.array([[[0.2, 0.4], [1.1, 0.2], [4.1, 0.0]]])
+
+    estimate = select_source_resolution(
+        spans, detector_pitch=(1.0, 1.0), max_resolution=(4, 2, 3),
+    )
+
+    np.testing.assert_array_equal(estimate.resolution, [[1, 2, 3]])
+    np.testing.assert_allclose(estimate.projected_span_cells, [[0.4, 1.1, 4.1]])
+    np.testing.assert_allclose(estimate.uncapped_resolution, [[1.0, 2.0, 5.0]])
+    np.testing.assert_array_equal(estimate.capped, [[False, False, True]])
+
+
+def test_select_source_resolution_tracks_detector_subpixel_pitch():
+    spans = np.array([[[0.6, 0.0], [0.0, 0.6], [0.0, 0.0]]])
+
+    pixel_estimate = select_source_resolution(spans, detector_pitch=1.0,
+                                              max_resolution=8)
+    subpixel_estimate = select_source_resolution(spans, detector_pitch=0.25,
+                                                 max_resolution=8)
+
+    np.testing.assert_array_equal(pixel_estimate.resolution, [[1, 1, 1]])
+    np.testing.assert_array_equal(subpixel_estimate.resolution, [[3, 3, 1]])
+
+
+def test_select_source_resolution_honors_stricter_step_fraction():
+    spans = np.array([[[0.6, 0.0], [0.0, 0.6], [0.0, 0.0]]])
+
+    estimate = select_source_resolution(
+        spans, detector_pitch=1.0, max_resolution=8,
+        max_projected_step=0.25,
+    )
+
+    np.testing.assert_array_equal(estimate.resolution, [[3, 3, 1]])
+
+
+def test_select_source_resolution_uses_ceiling_for_nonfinite_geometry():
+    spans = np.zeros((1, 3, 2))
+    spans[0, 1] = np.nan
+
+    estimate = select_source_resolution(spans, detector_pitch=1.0,
+                                        max_resolution=(2, 3, 4))
+
+    np.testing.assert_array_equal(estimate.resolution, [[1, 3, 1]])
+    np.testing.assert_array_equal(estimate.capped, [[False, True, False]])

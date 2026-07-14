@@ -21,6 +21,150 @@ def _pair(value, name: str) -> np.ndarray:
     return pair
 
 
+def projected_axis_spans(camera, eye_index: int, centers: np.ndarray,
+                         edge_lengths: np.ndarray) -> np.ndarray:
+    """Project each source-cell axis chord onto the detector plane.
+
+    For every cell center and each world axis, this function projects the two
+    endpoints ``center +/- edge_length[axis] / 2`` through one Eye.  The
+    absolute endpoint displacement is returned in physical screen ``(u, v)``
+    coordinates.  Evaluating the actual endpoints, instead of using a
+    far-field scalar approximation, includes camera rotation, off-axis
+    perspective, nonuniform cell sizes, and depth-axis perspective exactly.
+
+    Parameters
+    ----------
+    camera : Camera
+        Camera defining the world-to-camera transform and detector plane.
+    eye_index : int
+        Eye used for the point projection.
+    centers : ndarray, shape (n, 3)
+        Cell centers in world coordinates.
+    edge_lengths : ndarray, shape (n, 3)
+        Positive cell lengths along the world x, y, and z axes.
+
+    Returns
+    -------
+    ndarray, shape (n, 3, 2)
+        Absolute projected chord lengths. Axis 1 selects the source world axis
+        and axis 2 selects detector ``(u, v)``. Cells with an endpoint behind
+        the Eye receive ``nan`` for the affected source axis.
+    """
+    centers = np.asarray(centers, dtype=float)
+    edge_lengths = np.asarray(edge_lengths, dtype=float)
+    if centers.ndim != 2 or centers.shape[1] != 3:
+        raise ValueError("centers must have shape (n, 3)")
+    if edge_lengths.shape != centers.shape:
+        raise ValueError("edge_lengths must have the same shape as centers")
+    if not np.all(np.isfinite(centers)):
+        raise ValueError("centers must contain only finite values")
+    if not np.all(np.isfinite(edge_lengths)) or np.any(edge_lengths <= 0.0):
+        raise ValueError("edge_lengths must contain only positive finite values")
+    if not 0 <= eye_index < len(camera.eyes):
+        raise IndexError("eye_index is out of range")
+
+    n_cells = centers.shape[0]
+    offsets = np.zeros((n_cells, 3, 3), dtype=float)
+    diagonal = np.arange(3)
+    offsets[:, diagonal, diagonal] = 0.5 * edge_lengths
+    endpoints = np.stack((centers[:, None, :] - offsets,
+                          centers[:, None, :] + offsets), axis=2)
+
+    points_camera = camera.world2camera(endpoints.reshape(-1, 3))
+    rays = camera.eyes[eye_index].calc_rays(points_camera)
+    projected_uv = camera.screen.xy2uv(rays.XY).reshape(n_cells, 3, 2, 2)
+    return np.abs(projected_uv[:, :, 1] - projected_uv[:, :, 0])
+
+
+@dataclass(frozen=True)
+class SourceResolutionEstimate:
+    """Axis-wise source quadrature recommendation and its diagnostics."""
+
+    resolution: np.ndarray
+    projected_span_cells: np.ndarray
+    uncapped_resolution: np.ndarray
+    capped: np.ndarray
+
+
+def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
+                             max_resolution=4,
+                             max_projected_step: float = 1.0
+                             ) -> SourceResolutionEstimate:
+    """Choose axis-wise source resolution from projected cell-axis spans.
+
+    The projected displacement of one source subcell is approximated by the
+    full cell-axis displacement divided by the number of source samples on
+    that axis.  The smallest integer resolution is selected such that this
+    displacement is no larger than ``max_projected_step`` detector cells in
+    either detector direction.
+
+    ``detector_pitch`` may be the physical pixel pitch or subpixel pitch.  The
+    latter is the conservative default intended for the future World-level
+    adaptive mode because it ties source quadrature to the detector quadrature
+    already used by ``calc_image_vec``.
+
+    Parameters
+    ----------
+    projected_spans : ndarray, shape (n, 3, 2)
+        Output of :func:`projected_axis_spans` in physical screen units.
+    detector_pitch : float or (float, float)
+        Reference detector-cell pitch in screen ``(u, v)`` coordinates.
+    max_resolution : int or (int, int, int), optional
+        Per-source-axis resolution ceiling. Defaults to four.
+    max_projected_step : float, optional
+        Maximum projected source-subcell displacement in detector-cell units.
+        ``1`` permits one reference detector cell per source subcell; smaller
+        values request finer source quadrature.
+
+    Returns
+    -------
+    SourceResolutionEstimate
+        ``resolution`` has shape ``(n, 3)``. ``projected_span_cells`` stores
+        the unrefined displacement of each source axis, and ``capped`` marks
+        axes whose requested resolution exceeded the ceiling or was invalid.
+    """
+    projected_spans = np.asarray(projected_spans, dtype=float)
+    if projected_spans.ndim != 3 or projected_spans.shape[1:] != (3, 2):
+        raise ValueError("projected_spans must have shape (n, 3, 2)")
+    if np.any(projected_spans < 0.0):
+        raise ValueError("projected_spans must be nonnegative")
+    detector_pitch = _pair(detector_pitch, "detector_pitch")
+    if not np.isfinite(max_projected_step) or max_projected_step <= 0.0:
+        raise ValueError("max_projected_step must be positive and finite")
+
+    try:
+        maximum = np.asarray(np.broadcast_to(max_resolution, 3), dtype=float)
+    except ValueError as exc:
+        raise ValueError("max_resolution must be an integer or length-3 sequence") from exc
+    if not np.all(np.isfinite(maximum)) or np.any(maximum < 1) or \
+            np.any(maximum != np.floor(maximum)):
+        raise ValueError("max_resolution must contain positive integers")
+    maximum = maximum.astype(np.int64)
+
+    span_cells = np.max(projected_spans / detector_pitch[None, None, :], axis=2)
+    requested_float = span_cells / max_projected_step
+    # Move exact floating-point integers infinitesimally downward so a value
+    # such as 1.0000000000000002 from projection arithmetic does not
+    # spuriously request the next resolution.
+    finite = np.isfinite(requested_float)
+    uncapped = np.full(requested_float.shape, np.inf)
+    uncapped[finite] = np.maximum(
+        1.0, np.ceil(np.nextafter(requested_float[finite], -np.inf)),
+    )
+    capped = (~finite) | (uncapped > maximum[None, :])
+    resolution = np.where(
+        finite,
+        np.minimum(uncapped, maximum[None, :]),
+        maximum[None, :],
+    ).astype(np.int64)
+    return SourceResolutionEstimate(
+        resolution=resolution,
+        projected_span_cells=span_cells,
+        uncapped_resolution=uncapped,
+        capped=capped,
+    )
+
+
 @dataclass(frozen=True)
 class OpticalBinning:
     """Packed visible-sample ordering for independent optical bins.
