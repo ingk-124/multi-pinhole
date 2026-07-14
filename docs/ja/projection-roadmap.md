@@ -3,6 +3,18 @@
 この文書には、projection matrixの高精度化・高速化について今後実施する項目だけを記録する。
 完了した変更と撤回した設計はGit履歴で追跡し、ここには残さない。
 
+## 積み残しサマリー
+
+| 優先度 | 項目 | 完了条件 | 依存関係 |
+|---|---|---|---|
+| P0 | Source quadratureの単純化 | 外接球方式へ置換し、ToyとMSTで精度・時間を受け入れ | なし。現在の作業対象 |
+| P1 | MST実形状とinside境界 | profile・detector res・境界仕様を回帰テストで固定 | adaptive比較はP0に依存 |
+| P2 | Fine gridとcompact mapping | `d=10--25 mm`で時間・peak memory・mapping APIを受け入れ | P0、P1の仕様確定後 |
+| P3 | Eye内部局所visibility | slit実形状で必要性を定量判定 | 条件付き。効果がなければ実装しない |
+
+未決定事項は、外接球判定のdefault thresholdとinside/outside未知変数の扱いの2点である。
+前者はToy・MSTの数値結果、後者は境界profileの可視化とinverse problem側の要件から決定する。
+
 ## 1. Source quadratureの単純化
 
 ### 目的
@@ -142,12 +154,16 @@ torus外、inside外、または全cameraから常に不可視なvoxelをproject
 wallやapertureによるvisibilityがEye内部位置で変化する場合を扱う。まず `0.5 x 4 mm`程度のslitと
 実際のwall配置で中心visibilityとの差を定量化し、必要性が確認できた場合だけ実装する。
 
-## 実施順序
+## 実装単位
 
-1. 外接球によるres=1判定とscalar-to-axis res変換を実装
-2. Toy sweepで端点投影方式との精度・判定時間を比較
-3. `d=75 mm` MSTでfixed/adaptive、profile、detector resを比較
-4. inside境界とoutside未知変数の仕様を確定
-5. active voxel compact mappingを実装
-6. `d=10--25 mm`のfine gridで時間・memory・投影誤差を比較
-7. slitでEye内部局所visibilityの必要性を判定
+1. **Geometry utility:** scalar-to-axis res変換、外接球指標、unit test
+2. **Adaptive integration:** fully visible voxelの二値足切り、bucket処理、診断値
+3. **Toy acceptance:** 端点投影方式との精度・判定時間比較、`d`・`Z/f` sweepとpyplot
+4. **MST acceptance:** `d=75 mm`でfixed/adaptive、profile、detector resを比較
+5. **Cleanup:** 外接球方式の受け入れ後に端点投影方式を削除し、default thresholdを確定
+6. **Boundary semantics:** inside/outside仕様と回帰テスト
+7. **Compact mapping:** mapping API、cache、transpose、pickle、memory benchmark
+8. **Fine-grid acceptance:** `d=10--25 mm`で時間・peak memory・投影誤差を比較
+9. **Conditional physics:** slitでEye内部局所visibilityの必要性を判定
+
+1--5を現在のbranchで完了させてから、6以降を独立したbranchへ分ける。
