@@ -343,8 +343,10 @@ def test_screen_print_settings_does_not_require_color_image_attribute():
         screen.print_settings()
 
 
-def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle():
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+@pytest.mark.parametrize("eye_shape", ["circle", "rectangle"])
+def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle(eye_shape):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5,
+              eye_shape=eye_shape)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
     rays = Rays(
         Z=np.array([10.0, -1.0, 10.0]),
@@ -372,7 +374,12 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     rays = eye.calc_rays(points)
 
     mat = screen.ray2image_grid(eye, rays).tocsc()
+    cached_mat = screen.ray2image_grid(
+        eye, rays, etendue_per_subpixel=screen.etendue_per_subpixel(eye)
+    ).tocsc()
     total_etendue = np.asarray(mat.sum(axis=0)).ravel()
+
+    np.testing.assert_allclose(cached_mat.toarray(), mat.toarray(), rtol=0.0, atol=0.0)
 
     z = points[:, 2] - eye.position[2]
     rho = np.linalg.norm(points[:, :2] - eye.position[:2], axis=1)
@@ -381,6 +388,132 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     expected = pinhole_area * cos_theta ** 3 / (4 * np.pi * z ** 2)
 
     np.testing.assert_allclose(total_etendue, expected, rtol=3e-2, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("bounds", "expected"),
+    [
+        ((-2.0, 2.0, -2.0, 2.0), np.pi),
+        ((0.0, 2.0, -2.0, 2.0), np.pi / 2.0),
+        ((0.0, 2.0, 0.0, 2.0), np.pi / 4.0),
+        ((-0.5, 0.5, -0.5, 0.5), 1.0),
+        ((1.1, 2.0, -0.5, 0.5), 0.0),
+    ],
+)
+def test_unit_circle_rectangle_overlap_matches_analytic_areas(bounds, expected):
+    from multi_pinhole.core import _unit_circle_rectangle_overlap
+
+    actual = _unit_circle_rectangle_overlap(*bounds)
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-14)
+
+
+def _finite_eye_etendue_reference(eye, point, order=64):
+    """High-order aperture quadrature independent of detector rasterization."""
+    nodes, weights = np.polynomial.legendre.leggauss(order)
+    axial_distance = point[2] - eye.position[2]
+    source_offset_x = point[0] - eye.position[0]
+    source_offset_y = point[1] - eye.position[1]
+    half_u, half_v = 0.5 * eye.eye_size
+
+    if eye.eye_shape == "rectangle":
+        eye_y = half_u * nodes[:, None]
+        eye_x = half_v * nodes[None, :]
+        area_weights = half_u * half_v * weights[:, None] * weights[None, :]
+        distance2 = (axial_distance ** 2
+                     + (source_offset_x - eye_x) ** 2
+                     + (source_offset_y - eye_y) ** 2)
+        return float(np.sum(
+            area_weights * axial_distance / (4.0 * np.pi * distance2 ** 1.5)
+        ))
+
+    # Uniform ellipse area is uniform in t=r**2 and theta.
+    t = 0.5 * (nodes + 1.0)
+    t_weights = 0.5 * weights
+    theta_count = 4 * order
+    theta = 2.0 * np.pi * np.arange(theta_count) / theta_count
+    eye_y = half_u * np.sqrt(t)[:, None] * np.cos(theta)[None, :]
+    eye_x = half_v * np.sqrt(t)[:, None] * np.sin(theta)[None, :]
+    distance2 = (axial_distance ** 2
+                 + (source_offset_x - eye_x) ** 2
+                 + (source_offset_y - eye_y) ** 2)
+    density = axial_distance / (4.0 * np.pi * distance2 ** 1.5)
+    eye_area = np.pi * half_u * half_v
+    return float(eye_area * np.sum(t_weights[:, None] * density) / theta_count)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size"),
+    [
+        ("circle", 0.2),
+        ("ellipse", (0.2, 0.4)),
+        ("rectangle", (0.2, 0.4)),
+    ],
+)
+def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
+        eye_shape, eye_size):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(1, 1), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    point = np.array([[0.0, 0.0, 30.0]])
+
+    value = float(camera.calc_image_vec(0, point, check_visibility=False).sum())
+    expected = _finite_eye_etendue_reference(eye, point[0])
+
+    np.testing.assert_allclose(value, expected, rtol=2e-5, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size", "relative_tolerance"),
+    [
+        ("circle", 4.0, 2e-6),
+        ("ellipse", (0.5, 4.0), 2e-6),
+        ("rectangle", (0.5, 4.0), 3e-5),
+    ],
+)
+def test_large_finite_eye_uses_local_ray_etendue(
+        eye_shape, eye_size, relative_tolerance):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    screen = Screen(screen_shape="square", screen_size=30.0,
+                    pixel_shape=(1, 1), subpixel_resolution=1)
+    point = np.array([8.0, -3.0, 30.0])
+    rays = eye.calc_rays(point[None, :])
+
+    actual = float(screen.ray2image_grid(eye, rays).sum())
+    expected = _finite_eye_etendue_reference(eye, point)
+
+    np.testing.assert_allclose(actual, expected, rtol=relative_tolerance, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    ("eye_shape", "eye_size", "eye_area"),
+    [
+        ("circle", 0.2, np.pi * 0.1 ** 2),
+        ("ellipse", (0.2, 0.4), np.pi * 0.1 * 0.2),
+        ("rectangle", (0.2, 0.4), 0.2 * 0.4),
+    ],
+)
+def test_area_integrated_spot_flux_is_stable_across_subpixel_resolutions(
+        eye_shape, eye_size, eye_area):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
+              eye_size=eye_size, eye_shape=eye_shape)
+    point = np.array([[0.0, 0.0, 30.0]])
+    totals = []
+    for resolution in (1, 2, 4, 8):
+        screen = Screen(screen_shape="square", screen_size=1.5,
+                        pixel_shape=(3, 3), subpixel_resolution=resolution)
+        totals.append(float(screen.ray2image_grid(
+            eye, eye.calc_rays(point),
+        ).sum()))
+
+    axial_distance = point[0, 2] - eye.position[2]
+    expected = eye_area / (4.0 * np.pi * axial_distance ** 2)
+    np.testing.assert_allclose(totals, np.full(4, expected), rtol=2e-3, atol=0.0)
+    assert np.ptp(totals) / totals[-1] < 1e-3
 
 
 def test_etendue_x_scan_example_matches_analytic_curve(tmp_path):
@@ -537,6 +670,175 @@ def test_sub_voxel_centers_match_sub_voxel_objects():
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-12)
 
 
+def test_get_sub_voxel_centers_does_not_mutate_voxel_resolution():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2),
+                                sub_voxel_resolution=3)
+
+    centers = voxel.get_sub_voxel_centers(n=np.array([0, 1]), res=2)
+
+    assert voxel.res == (3, 3, 3)
+    assert centers.shape == (2 * 2 ** 3, 3)
+
+
+def test_center_sub_voxel_interpolator_preserves_constants_and_is_sparse():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
+    voxel_indices = np.array([0, 13, 26])
+    matrix = voxel.sub_voxel_interpolator_from_centers(n=voxel_indices, res=2)
+    expected_scale = np.repeat(voxel.volume[voxel_indices] / 2 ** 3, 2 ** 3)
+
+    np.testing.assert_allclose(matrix @ np.ones(voxel.N), expected_scale,
+                               rtol=0.0, atol=1e-15)
+    assert matrix.shape == (voxel_indices.size * 2 ** 3, voxel.N)
+    assert matrix.getnnz(axis=1).max() <= 8
+    assert np.all(matrix.data >= 0.0)
+
+
+def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
+    voxel = Voxel.uniform_voxel(ranges=((0.0, 3.0),) * 3, shape=(3, 3, 3))
+    center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
+    points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
+    matrix = voxel.sub_voxel_interpolator_from_centers(
+        n=np.array([center_voxel]), res=3, points=points,
+    )
+    center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
+        - 0.25 * voxel.gravity_center[:, 1] + 0.75 * voxel.gravity_center[:, 2]
+    expected = 2.0 + 0.5 * points[:, 0] - 0.25 * points[:, 1] + 0.75 * points[:, 2]
+    expected *= voxel.volume[center_voxel] / 3 ** 3
+
+    np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
+
+
+def test_center_sub_voxel_interpolator_reproduces_affine_profile_on_nonuniform_grid():
+    voxel = Voxel(
+        x_axis=np.array([0.0, 0.5, 1.5, 3.0]),
+        y_axis=np.array([-2.0, -1.0, 1.0, 4.0]),
+        z_axis=np.array([10.0, 10.5, 12.0, 15.0]),
+    )
+    center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
+    points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
+    matrix = voxel.sub_voxel_interpolator_from_centers(
+        n=np.array([center_voxel]), res=3, points=points,
+    )
+    center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
+        - 0.25 * voxel.gravity_center[:, 1] + 0.75 * voxel.gravity_center[:, 2]
+    expected = 2.0 + 0.5 * points[:, 0] - 0.25 * points[:, 1] + 0.75 * points[:, 2]
+    expected *= voxel.volume[center_voxel] / 3 ** 3
+
+    np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
+
+
+def test_one_dimensional_refinement_matches_aligned_fine_projection():
+    """A 5x4 subgrid must match 20 explicit cells at identical sample points."""
+    ranges = ((-1.0, 1.0), (-0.05, 0.05), (30.0, 30.1))
+
+    def make_world(shape):
+        eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+        screen = Screen(screen_shape="square", screen_size=20.0,
+                        pixel_shape=(40, 40), subpixel_resolution=1)
+        aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+        camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                        camera_position=(0.0, 0.0, 0.0))
+        voxel = Voxel.uniform_voxel(ranges=ranges, shape=shape)
+        world = World(voxel=voxel, cameras=[camera], verbose=0)
+        world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+        return world
+
+    fine_world = make_world((20, 1, 1))
+    coarse_world = make_world((5, 1, 1))
+    fine_points = fine_world.voxel.get_sub_voxel_centers(res=(1, 1, 1))
+    coarse_points = coarse_world.voxel.get_sub_voxel_centers(res=(4, 1, 1))
+    np.testing.assert_allclose(coarse_points, fine_points, rtol=0.0, atol=1e-15)
+
+    # Piecewise linear between coarse centers and zero in the clamped outer
+    # half-cells, matching the interpolation boundary condition exactly.
+    def emission(x):
+        return np.maximum(0.0, 1.0 - np.abs(x) / 0.8)
+
+    fine_profile = emission(fine_world.voxel.gravity_center[:, 0])
+    coarse_profile = emission(coarse_world.voxel.gravity_center[:, 0])
+    fine_world.set_projection_matrix(res=(1, 1, 1), verbose=0, parallel=1)
+    coarse_world.set_projection_matrix(res=(4, 1, 1), verbose=0, parallel=1)
+
+    fine_image = fine_world.P_matrix[0] @ fine_profile
+    coarse_image = coarse_world.P_matrix[0] @ coarse_profile
+    np.testing.assert_allclose(coarse_image, fine_image, rtol=1e-12, atol=1e-15)
+
+
+def test_parallel_projection_matches_serial_projection():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=2.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(8, 8), subpixel_resolution=2)
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                    camera_position=(0.0, 0.0, -20.0))
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
+    expected = world.projection[0][0].copy()
+    world.set_projection_matrix(res=2, verbose=0, parallel=4, force=True,
+                                max_working_memory=10_000)
+
+    np.testing.assert_allclose(world.projection[0][0].toarray(), expected.toarray(),
+                               rtol=1e-12, atol=1e-14)
+
+
+def test_projection_rejects_nonpositive_working_memory():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="max_working_memory"):
+        world.set_projection_matrix(res=1, verbose=0, parallel=1,
+                                    max_working_memory=0)
+
+
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("bin_width", [0.5, 1.0, 2.0])
+def test_optical_chunk_strategy_matches_existing_sparse_projection(partial, bin_width):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=12.0,
+                    pixel_shape=(12, 12), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-2.0, 2.0), (30.0, 34.0)),
+        shape=(4, 4, 3),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    if partial:
+        world.set_inside_vertices(lambda x, y, z: x >= -0.25)
+    else:
+        world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(
+        res=2, partial_res=2, verbose=0, parallel=1, force=True,
+        max_working_memory=2_000_000, chunk_strategy="voxel",
+    )
+    expected = world.projection[0][0].copy()
+    world.set_projection_matrix(
+        res=2, partial_res=2, verbose=0, parallel=1,
+        max_working_memory=2_000_000, chunk_strategy="optical",
+        optical_bin_width_pixels=bin_width,
+    )
+    actual = world.projection[0][0]
+
+    difference = actual - expected
+    np.testing.assert_allclose(difference.data, 0.0, rtol=0.0, atol=1e-13)
+    np.testing.assert_allclose(np.asarray(actual.sum(axis=0)),
+                               np.asarray(expected.sum(axis=0)),
+                               rtol=1e-13, atol=1e-14)
+
+
+def test_projection_rejects_unknown_chunk_strategy():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="chunk_strategy"):
+        world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True,
+                                    chunk_strategy="unknown")
+
+
 def test_partial_voxel_inside_mask_scales_integrated_light():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
@@ -613,3 +915,79 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     assert np.any(result["pixel_image"] > 0)
     assert result["geometry_path"].is_file()
     assert result["projection_path"].is_file()
+
+
+def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "verify_1d_analytic_projection.py")
+    spec = importlib.util.spec_from_file_location("verify_1d_analytic_projection", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_validation(
+        tmp_path / "analytic_projection.png",
+        voxel_count=81,
+        voxel_res=8,
+        subpixel_resolution=24,
+        parallel=1,
+    )
+
+    assert result["output_path"].is_file()
+    assert set(result["metrics"]) == {"constant", "linear", "square", "gaussian"}
+    for metrics in result["metrics"].values():
+        assert metrics["relative_l2"] < 0.01
+        assert metrics["relative_flux"] < 0.01
+        assert metrics["correlation"] > 0.9999
+
+
+def test_optical_chunks_and_local_column_compression(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_projection_column_compression.py")
+    spec = importlib.util.spec_from_file_location("evaluate_projection_column_compression", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_evaluation(
+        tmp_path,
+        rotations=(0.0, 30.0),
+        axial_ranges=((60.0, 140.0), (800.0, 1200.0)),
+        tolerances=(0.03,),
+        chunk_size=24,
+        voxel_shape=(6, 6, 8),
+        pixel_shape=(8, 8),
+    )
+
+    assert result["csv_path"].is_file()
+    assert result["figure_path"].is_file()
+    assert {row["rotation_degrees"] for row in result["rows"]} == {0.0, 30.0}
+    assert {row["requested_axial_min"] for row in result["rows"]} == {60.0, 800.0}
+    for row in result["rows"]:
+        # The per-column L1 criterion directly bounds non-negative image L1
+        # error, while a constant emission is preserved to roundoff by A 1=1.
+        assert row["relative_l1"] <= row["tolerance"] + 1e-12
+        assert row["column_compression_ratio"] >= 1.0
+        if row["profile"] == "constant":
+            assert row["relative_l1"] < 1e-12
+            assert row["relative_flux"] < 1e-12
+
+
+def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_subvoxel_resolution.py")
+    spec = importlib.util.spec_from_file_location("evaluate_subvoxel_resolution", example_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run_sweep(
+        tmp_path,
+        voxel_counts=(21,), pixel_counts=(41,), axial_distances=(80.0,),
+        resolutions=(1, 2), reference_resolution=8,
+    )
+
+    assert result["csv_path"].is_file()
+    assert result["figure_path"].is_file()
+    assert len(result["rows"]) == 8
+    constant_rows = [row for row in result["rows"] if row["profile"] == "constant"]
+    assert len(constant_rows) == 2
+    assert constant_rows[0]["sampling_ratio"] == 2 * constant_rows[1]["sampling_ratio"]
+    assert all(np.isfinite(row["relative_l2"]) for row in result["rows"])

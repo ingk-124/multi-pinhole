@@ -9,9 +9,11 @@ spherical -- see :mod:`multi_pinhole.coordinates`) while the grid itself
 remains Cartesian.
 """
 
+from functools import lru_cache
 from itertools import chain
 
 import numpy as np
+from numba import njit
 from scipy import sparse
 from scipy.spatial.transform import Rotation
 
@@ -69,6 +71,91 @@ def interpolate_matrix_from_vertices(res=None):
         # The matrix is dense, but it is converted to a sparse matrix.
         # Because it is used for dot product with a sparse matrix in Voxel.sub_voxel_interpolator.
         return sparse.csr_matrix(matrix)
+
+
+@lru_cache(maxsize=16)
+def _sub_voxel_center_fractions(resolution):
+    """Return cached Cartesian sub-voxel center fractions for a resolution."""
+    fx, fy, fz = [(np.arange(r, dtype=float) + 0.5) / r for r in resolution]
+    xx, yy, zz = np.meshgrid(fx, fy, fz, indexing="ij")
+    return np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+
+
+@njit(cache=True, nogil=True, inline="always")
+def _uniform_axis_bracket(coordinate, center_start, center_step, center_count):
+    """Return two center indices and weights on one uniform axis."""
+    if center_count == 1:
+        return 0, 0, 1.0, 0.0
+    normalized = (coordinate - center_start) / center_step
+    if normalized <= 0.0:
+        return 0, 0, 1.0, 0.0
+    if normalized >= center_count - 1:
+        last = center_count - 1
+        return last, last, 1.0, 0.0
+    lower = int(np.floor(normalized))
+    fraction = normalized - lower
+    return lower, lower + 1, 1.0 - fraction, fraction
+
+
+@njit(cache=True, nogil=True)
+def _uniform_center_interpolator_csr(points, center_starts, center_steps,
+                                     voxel_shape, owner_volumes,
+                                     samples_per_voxel):
+    """Construct direct trilinear CSR arrays for a uniform voxel grid."""
+    n_rows = points.shape[0]
+    indptr = np.empty(n_rows + 1, dtype=np.int64)
+    indptr[0] = 0
+    for row in range(n_rows):
+        _, _, wx0, wx1 = _uniform_axis_bracket(
+            points[row, 0], center_starts[0], center_steps[0], voxel_shape[0]
+        )
+        _, _, wy0, wy1 = _uniform_axis_bracket(
+            points[row, 1], center_starts[1], center_steps[1], voxel_shape[1]
+        )
+        _, _, wz0, wz1 = _uniform_axis_bracket(
+            points[row, 2], center_starts[2], center_steps[2], voxel_shape[2]
+        )
+        nx = (1 if wx0 != 0.0 else 0) + (1 if wx1 != 0.0 else 0)
+        ny = (1 if wy0 != 0.0 else 0) + (1 if wy1 != 0.0 else 0)
+        nz = (1 if wz0 != 0.0 else 0) + (1 if wz1 != 0.0 else 0)
+        indptr[row + 1] = indptr[row] + nx * ny * nz
+
+    indices = np.empty(indptr[-1], dtype=np.int64)
+    data = np.empty(indptr[-1], dtype=np.float64)
+    ny, nz = voxel_shape[1], voxel_shape[2]
+    for row in range(n_rows):
+        ix0, ix1, wx0, wx1 = _uniform_axis_bracket(
+            points[row, 0], center_starts[0], center_steps[0], voxel_shape[0]
+        )
+        iy0, iy1, wy0, wy1 = _uniform_axis_bracket(
+            points[row, 1], center_starts[1], center_steps[1], voxel_shape[1]
+        )
+        iz0, iz1, wz0, wz1 = _uniform_axis_bracket(
+            points[row, 2], center_starts[2], center_steps[2], voxel_shape[2]
+        )
+        x_indices = (ix0, ix1)
+        y_indices = (iy0, iy1)
+        z_indices = (iz0, iz1)
+        x_weights = (wx0, wx1)
+        y_weights = (wy0, wy1)
+        z_weights = (wz0, wz1)
+        scale = owner_volumes[row // samples_per_voxel] / samples_per_voxel
+        output = indptr[row]
+        for x_side in range(2):
+            if x_weights[x_side] == 0.0:
+                continue
+            for y_side in range(2):
+                if y_weights[y_side] == 0.0:
+                    continue
+                for z_side in range(2):
+                    if z_weights[z_side] == 0.0:
+                        continue
+                    indices[output] = ((x_indices[x_side] * ny + y_indices[y_side]) * nz
+                                       + z_indices[z_side])
+                    data[output] = (scale * x_weights[x_side] * y_weights[y_side]
+                                    * z_weights[z_side])
+                    output += 1
+    return data, indices, indptr
 
 class Voxel:
     """
@@ -372,7 +459,10 @@ class Voxel:
             Center coordinates with shape ``(N_selected * prod(res), 3)``.
             The row order matches :meth:`sub_voxel_interpolator`.
         """
-        self.res = res
+        resolution = self.res if res is None else tuple(np.broadcast_to(res, 3))
+        if any(int(r) != r or r <= 0 for r in resolution):
+            raise ValueError(f"{res=} must contain positive integers")
+        resolution = tuple(int(r) for r in resolution)
         n = self._type_check_n_voxel(n)
         indices = np.atleast_2d(self.get_voxel_position(n)).astype(int)
         i, j, k = indices.T
@@ -381,15 +471,138 @@ class Voxel:
         y0, y1 = self.y_axis[j], self.y_axis[j + 1]
         z0, z1 = self.z_axis[k], self.z_axis[k + 1]
 
-        fx, fy, fz = [(np.arange(r, dtype=float) + 0.5) / r for r in self.res]
-        xx, yy, zz = np.meshgrid(fx, fy, fz, indexing="ij")
-        fractions = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+        fractions = _sub_voxel_center_fractions(resolution)
 
         centers = np.empty((indices.shape[0], fractions.shape[0], 3), dtype=float)
         centers[..., 0] = x0[:, None] + (x1 - x0)[:, None] * fractions[None, :, 0]
         centers[..., 1] = y0[:, None] + (y1 - y0)[:, None] * fractions[None, :, 1]
         centers[..., 2] = z0[:, None] + (z1 - z0)[:, None] * fractions[None, :, 2]
         return centers.reshape(-1, 3)
+
+    @staticmethod
+    def _center_axis_interpolation(axis, coordinates):
+        """Return bracketing center indices and linear weights for one axis."""
+        axis = np.asarray(axis, dtype=float)
+        coordinates = np.asarray(coordinates, dtype=float)
+        if axis.size == 1:
+            index = np.zeros(coordinates.size, dtype=np.int64)
+            return index, index, np.ones(coordinates.size), np.zeros(coordinates.size)
+
+        upper = np.searchsorted(axis, coordinates, side="right")
+        upper = np.clip(upper, 1, axis.size - 1)
+        lower = upper - 1
+        fraction = (coordinates - axis[lower]) / (axis[upper] - axis[lower])
+
+        below = coordinates <= axis[0]
+        above = coordinates >= axis[-1]
+        lower[below] = 0
+        upper[below] = 0
+        fraction[below] = 0.0
+        lower[above] = axis.size - 1
+        upper[above] = axis.size - 1
+        fraction[above] = 0.0
+        return lower, upper, 1.0 - fraction, fraction
+
+    def sub_voxel_interpolator_from_centers(self, n=None, res=None, points=None):
+        """Map voxel-center values directly to weighted sub-voxel samples.
+
+        Each interior sample uses trilinear interpolation from at most eight
+        neighboring voxel centers.  Samples outside the center-coordinate
+        hull (the outer half of boundary voxels) are clamped to the nearest
+        center.  Rows are scaled by the owning voxel volume divided by the
+        number of samples in that voxel, ready for projection integration.
+
+        Parameters
+        ----------
+        n : int or array-like of int, optional
+            Owning voxel indices, in the same order used to generate points.
+        res : int or (int, int, int), optional
+            Number of sub-voxel samples along each axis.
+        points : np.ndarray, optional
+            Precomputed sub-voxel centers.  Supplying this avoids generating
+            the points a second time in the projection worker.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+            Weighted interpolation matrix with one row per sample and at most
+            eight nonzero entries per row.
+        """
+        resolution = self.res if res is None else tuple(np.broadcast_to(res, 3))
+        if any(int(r) != r or r <= 0 for r in resolution):
+            raise ValueError(f"{res=} must contain positive integers")
+        resolution = tuple(int(r) for r in resolution)
+        voxel_indices = self._type_check_n_voxel(n)
+        samples_per_voxel = int(np.prod(resolution))
+        expected_points = voxel_indices.size * samples_per_voxel
+        if points is None:
+            points = self.get_sub_voxel_centers(n=voxel_indices, res=resolution)
+        else:
+            points = np.asarray(points, dtype=float)
+        if points.shape != (expected_points, 3):
+            raise ValueError(
+                f"points must have shape {(expected_points, 3)}, not {points.shape}"
+            )
+
+        center_axes = (self.cx_axis, self.cy_axis, self.cz_axis)
+        center_starts, center_steps = [], []
+        uniform = True
+        for axis in center_axes:
+            center_starts.append(float(axis[0]))
+            if axis.size == 1:
+                center_steps.append(1.0)
+                continue
+            differences = np.diff(axis)
+            step = float(differences[0])
+            tolerance = np.finfo(float).eps * max(1.0, abs(step)) * 16
+            if not np.allclose(differences, step, rtol=1e-12, atol=tolerance):
+                uniform = False
+                break
+            center_steps.append(step)
+
+        if uniform:
+            data, indices, indptr = _uniform_center_interpolator_csr(
+                np.ascontiguousarray(points),
+                np.asarray(center_starts),
+                np.asarray(center_steps),
+                np.asarray(self.voxel_shape, dtype=np.int64),
+                np.ascontiguousarray(self.volume[voxel_indices]),
+                samples_per_voxel,
+            )
+            return sparse.csr_matrix(
+                (data, indices, indptr), shape=(expected_points, self.N_voxel)
+            )
+
+        axis_data = [self._center_axis_interpolation(axis, points[:, dim])
+                     for dim, axis in enumerate(center_axes)]
+        row_scale = np.repeat(self.volume[voxel_indices] / samples_per_voxel,
+                              samples_per_voxel)
+        rows = np.arange(expected_points, dtype=np.int64)
+        row_parts, col_parts, data_parts = [], [], []
+        for x_side in (0, 1):
+            ix = axis_data[0][x_side]
+            wx = axis_data[0][x_side + 2]
+            for y_side in (0, 1):
+                iy = axis_data[1][y_side]
+                wy = axis_data[1][y_side + 2]
+                for z_side in (0, 1):
+                    iz = axis_data[2][z_side]
+                    wz = axis_data[2][z_side + 2]
+                    weights = row_scale * wx * wy * wz
+                    nonzero = weights != 0.0
+                    if not np.any(nonzero):
+                        continue
+                    columns = np.ravel_multi_index((ix[nonzero], iy[nonzero], iz[nonzero]),
+                                                   self.voxel_shape)
+                    row_parts.append(rows[nonzero])
+                    col_parts.append(columns)
+                    data_parts.append(weights[nonzero])
+
+        return sparse.coo_matrix(
+            (np.concatenate(data_parts),
+             (np.concatenate(row_parts), np.concatenate(col_parts))),
+            shape=(expected_points, self.N_voxel),
+        ).tocsr()
 
     @property
     def volume(self):
