@@ -7,8 +7,9 @@
 
 - detector cellとprojected Eye spotの面積積分、有限Eye内の局所etendue、メモリ上限に基づく
   work chunk処理は実装済みである。
-- column group化はwallなしモデルでのpost-processing prototypeと奥行き依存評価まで実施済みで、
-  productionのprojection構築処理にはまだ組み込んでいない。
+- column group化は、最終 `P` のpost-processing prototypeに加え、subvoxel PSF行列 `I` を
+  `I ~= Q R` と圧縮して `A = R S` を作るToy評価まで実施済みである。productionのprojection
+  構築処理にはまだ組み込んでいない。
 - source `res`自動判定、active voxel compact mapping、projection cache version、局所visibilityは
   未実装である。
 - `d=75 mm` MST benchmarkは短時間性能の確認には使用済みだが、全profile・detector res・境界を
@@ -114,19 +115,40 @@ g = P_fine B c
 
 #### 目的と表現
 
-上記の空間的な voxel merging とは別に、似た投影応答を持つfine voxelのcolumnを
-group化する。正規化した `P[:, j]` が十分近いvoxelをまとめ、groupの代表応答を `Q`、
-fine emission `f` をgroup入力へ圧縮する写像を `A` として
+現在のprojection計算を
 
 ```text
-g = P f ~= Q A f
+u = S f
+g = I u
+P = I S
 ```
 
-と計算する。`A` は各fine voxelについてgroup番号と感度weightを1個ずつ持つ疎な
-restrictionとして表せる。これはSVDや直交化ではなく、ほぼ比例するcolumnの代表化であり、
-denseな基底行列は作らない。定数profileのfluxは構成上保存する。profileを別のbasis `B`
-で `f = B c` とパラメータ化する場合も、forward計算は `g ~= Q A B c` となり、`A` の
-適用コストはfine `P` を保持するコストより小さい。
+と分ける。`f` はvoxel中心のemission、`S` は三線形補間とsubvoxel体積weight、`u` は
+weighted subvoxel emission、`I[:, i]` はsubvoxel点 `i` の完全なPSFである。最終 `P` の
+voxel columnではなく、似たsubvoxel PSFを
+
+```text
+I ~= Q R
+P = I S ~= Q R S = Q A
+A = R S
+g ~= Q A f
+```
+
+とgroup化する。subvoxel PSFの総感度を `s_i = sum(I[:, i])`、正規化形状を
+`h_i = I[:, i] / s_i` とする。group `g` の代表 `q_g` は `s_i` 加重平均で総和1に正規化し、
+`R[g, i] = s_i`、それ以外を0とする。したがって `R` はsubvoxel点ごとに1非ゼロ要素を
+持つ。三線形補間によって1 voxelが複数groupへ寄与することは、一般の疎行列 `A = R S`
+として保持する。
+
+これはSVDや直交QR分解ではなく、ほぼ比例するPSF columnの代表化である。各 `q_g` の総和を
+1にするため、signedな `f` を含む任意の入力についてdetectorの符号付き総和は保存される。
+近似されるのはpixel間の分布である。profileを別basis `B` で `f = B c` と表す場合も
+
+```text
+g ~= Q A B c
+```
+
+とそのまま適用できる。
 
 #### 光学座標による chunk 分割
 
@@ -147,8 +169,9 @@ eta = Y_e / Z_e
 投影中心 `q = q0 - f (xi, eta)` で分けることと同値である。同じ `(xi, eta)` bin内では、
 必要に応じて `f / Z_e`、`log(Z_e)`、またはzoom rateで奥行き方向を並べる・bin分けする。
 最後に各binをメモリ上限に収まる最大要素数で分割し、これを圧縮候補chunkとする。
-実装上は全voxelを連続走査して近傍を探すのではなく、各voxelの `(xi, eta, depth_bin)` から
-整数bin IDを計算してbucketへscatterする。各target columnは必ず1個の光学chunkだけに所属する。
+実装上は全点を連続走査して近傍を探すのではなく、各subvoxel点の
+`(xi, eta, depth_bin)`から整数bin IDを計算してbucketへscatterする。各subvoxel PSF columnは
+必ず1個の光学chunkだけに所属する。
 
 角度binとdepth binは類似columnを探す範囲を制限するためのもので、近似を受理する閾値そのもの
 ではない。binを細かくしすぎると圧縮候補を見逃すが精度は悪化せず、粗くしすぎても最終的な
@@ -157,44 +180,50 @@ depth binなしでzoom rate順に並べ、計算量が大きい場合だけdepth
 
 この方法なら、world座標では離れていても同じview cone上にあり、ほぼ同じPSFを持つ点を
 比較できる。一方、投影方向が異なる点を「配列上で隣だった」という理由だけで同じgroup候補に
-入れない。異なるcameraまたはEye、fully visibleとpartial voxel、inside/wall境界をまたぐ点も
-最初から別bucketにする。partial voxelはvisibilityによる不連続性があるため、初期実装では
-group化しないか、十分な検証が済むまでsingletonとして保持する。
+入れない。異なるcameraまたはEyeは必ず別bucketにする。visibilityはgroup化前にsubvoxel点ごとに
+適用し、不可視点を `I` と `S` から除く。残った1点ごとの `I[:, i]` は完全なPSFなので、
+fully visible voxel由来かpartial voxel由来かだけを理由に分ける必要はない。ただし由来flagは
+診断用に保持し、wall/inside境界をまたいだgroupで誤差が増えていないかを可視化する。
 
 #### projection計算への組み込み
 
-処理単位はcamera・Eye・光学chunkとし、各chunkについて必要なfine columnを一時的に完成させ、
-そのchunk内で類似度判定と `Q_chunk`, `A_chunk` の構築を行い、fine columnを破棄する。最後に
-`Q_chunk`を横方向に連結し、各voxelのgroup番号とweightをまとめて、そのcamera/Eyeの
-factorized operatorを作る。複数cameraを連結した `P_allcam` 自体は共同分解しない。
-各cameraの `Q_camera A_camera` を個別に適用し、得られた画像を最後に連結する。
+処理単位はcamera・Eye・光学chunkとする。各chunkで `I_chunk` と、それに対応する `S_chunk` の
+rowを作り、正規化PSFをgroup化して `Q_chunk`, `R_chunk` を得る。続いて
+`A_chunk = R_chunk @ S_chunk` を計算したら、`I_chunk`, `R_chunk`, `S_chunk` は破棄できる。
+最後に `Q_chunk` を横方向、`A_chunk` を縦方向に連結すれば、全体の `Q`, `A` が得られる。
 
-現在の `I @ S` では、あるsubvoxelの寄与が三線形補間によって最大8個のfine columnへ入り、
-メモリ制御用work chunkの境界をまたぐ。そのため、work chunkの部分行列をその場で圧縮すると
-未完成のcolumn同士を比較することになり、最終 `P` の近似誤差を保証できない。本番実装では
-次のどちらかが必要である。
+この順序なら各 `I[:, i]` は1点光源の完全なPSFなので、三線形補間が最大8個のvoxel columnへ
+寄与してもchunk境界のhaloは不要である。複数groupから同じvoxelへ入る寄与は `A` の同一columnに
+別rowとして残る。複数cameraを連結した `P_allcam` 自体は共同分解せず、cameraごとの
+`Q_camera A_camera` を個別に適用して画像を連結する。
 
-1. 光学chunkに属するtarget columnを先に決め、そのcolumnへ寄与するsubvoxel cellをhalo付きで
-   集め、`S[:, target_columns]`に制限して完全な `P_chunk` を作ってから圧縮する。境界haloでは
-   一部のray計算が重複するが、最初の実装として追跡しやすい。
-2. 現在と同様にsubvoxel rayを一度だけ計算し、COO寄与をtarget columnの光学chunkへrouteして、
-   そのchunkの全寄与が揃った時点で圧縮する。重複計算は避けられるが、buffer管理と並列処理が
-   複雑になるため第2段階とする。
+初期clusteringは、chunk全体の `s_i` 加重平均代表を作り、全memberとの距離が閾値内なら受理、
+超えたら平均からの最遠点と、そこからの最遠点をseedに二分する再帰方式とする。分割探索には
+高速な相対L2、最終診断には正規化PSFのL1と相対L2を両方保存する。single-pass leader方式は
+代表更新後に全memberを再確認すればdriftを防げるが、Toy評価では再帰方式より遅くgroup数も
+多かったため第2候補とする。
 
-まず方式1で正しさと実効圧縮率を確認し、haloによる重複計算が支配的な場合だけ方式2へ進む。
 factorized operatorにはforward `Q @ (A @ f)`だけでなく、inverse problemで必要なtranspose
 `A.T @ (Q.T @ g)`、shape、dtype、camera/Eyeごとのmapping、tolerance、最大group誤差を持たせる。
 従来のSciPy sparse `P`を要求するAPIとの互換方法と、projection cache versionも同時に決める。
 
 #### 現在までの評価と次の判定
 
-wallなしのfine grid prototypeは実装済みだが、現状はfine `P` を構築した後に圧縮する
-post-processing診断である。この段階ではprojection構築時間やpeak memoryは削減されない。
+最終 `P` のpost-processing prototypeは予備評価として残すが、本命は `I ~= Q R`, `A = R S`
+である。Toy評価では、手組みした `I @ S` と既存 `World.set_projection_matrix` の `P` が
+Frobenius相対誤差 `1e-16`以下で一致し、visibilityと三線形補間の再構成が確認できた。
 
 無回転の評価では、正規化column L1閾値0.1に対するcolumn圧縮率はmedian `Z_e/f`が
 約5、15、50の順に1.01、1.82、4.05倍、閾値0.2では1.37、2.34、8.00倍だった。
 遠方ほどpinhole PSFが支配的になり、group化が効くという予想と一致する。`Z_e/f ~= 50`では
 Gaussian profileの相対L2誤差は閾値0.1で約`1.0e-5`、0.2で約`2.7e-5`だった。
+
+新しいToy sweep（144 voxel、res 1/2/4、wallなし、相対L2閾値0.1、再帰方式）では、
+`Z_e/f = 5, 15, 50`を比較した。res 4のsubvoxel PSFは9216本で、代表PSF数はそれぞれ
+5772、1623、196本、`N_s/N_g`は1.60、5.68、47.0倍だった。`nnz(I)`に対する
+`nnz(Q)+nnz(A)`の圧縮率は0.92、2.48、15.0倍で、近距離ではfactor化が逆に大きくなり得る。
+同条件のGaussian画像相対L2誤差は約0.00189、0.00296、0.00221だった。したがって本番では
+光学chunkごとに、factor化後のstorageが減らない場合は圧縮せず元のblockを保持する選択も必要である。
 
 cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
 整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
@@ -263,9 +292,10 @@ clip または数値積分を追加する。
 6. active voxel compact mapping と `d=10--25 mm` 比較
 7. 同一のcamera/Eye座標サンプルを使い、回転と `Z_e/f` だけを変えてgroup化を再評価
 8. MST wallあり条件でpost-processing group化を行い、fully/partial境界と許容閾値を決定
-9. target column基準の光学chunkとhalo方式で `Q_chunk`, `A_chunk` を直接構築
+9. subvoxel PSF基準の光学chunkで `I_chunk ~= Q_chunk R_chunk`,
+   `A_chunk = R_chunk S_chunk` を直接構築
 10. factorized operator、transpose、cache、従来のsparse `P`との互換層を実装
 11. fine `P`と構築時間・peak memory・保存容量・forward/transpose時間を比較
-12. halo重複が律速なら、COO寄与を光学chunkへrouteする方式へ変更
+12. 圧縮が不利な近距離chunkを非圧縮blockとして混在させるoperator表現を追加
 13. compact mappingとgroup化だけでは不足する場合に adaptive voxel mergingを検討
 14. PD array、任意 Eye 形状、Eye 内部位置ごとの局所visibilityの必要性を定量化
