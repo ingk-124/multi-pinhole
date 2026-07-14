@@ -482,34 +482,55 @@ class ProjectionCompressionStats:
     direct_nbytes: int
     q_nbytes: int
     a_nbytes: int
+    candidate_direct_nbytes: int
+    candidate_q_nbytes: int
+    candidate_a_nbytes: int
     grouping_seconds: float
     assembly_seconds: float
+    global_direct_fallback: bool = False
 
     @property
     def stored_nbytes(self) -> int:
         """CSR payload bytes selected for this scope."""
         return self.direct_nbytes + self.q_nbytes + self.a_nbytes
 
+    @property
+    def candidate_factorized_nbytes(self) -> int:
+        """CSR payload bytes of the candidate ``Q`` and ``A`` matrices."""
+        return self.candidate_q_nbytes + self.candidate_a_nbytes
+
+    @property
+    def candidate_byte_fraction(self) -> float:
+        """Candidate ``(Q + A) / P`` byte ratio for this scope."""
+        if self.candidate_direct_nbytes == 0:
+            return np.inf if self.candidate_factorized_nbytes else 0.0
+        return self.candidate_factorized_nbytes / self.candidate_direct_nbytes
+
 
 def build_projection_block(
         I, S, *, tolerance: float, metric: str = "relative_l2",
-        algorithm: str = "recursive", max_group_fraction: float | None = 0.8,
+        algorithm: str = "recursive",
+        max_factorized_byte_fraction: float | None = 0.8,
         max_scope_dense_bytes: int | None = None,
 ) -> tuple[HybridProjectionOperator, ProjectionCompressionStats]:
-    """Build one direct or factorized scope without computing both forms.
+    """Build one scope and retain the smaller requested storage form.
 
-    The decision uses ``N_group / N_active_sample``.  If the ratio is at or
-    above ``max_group_fraction``, ``I @ S`` is calculated and the temporary
-    factorization is discarded.  Otherwise A is accumulated directly from the
-    weighted group assignment.  ``tolerance == 0`` bypasses all grouping.
+    The exact direct block ``P = I @ S`` and candidate ``Q, A`` payload sizes
+    are compared. Factorization is retained only when
+    ``bytes(Q) + bytes(A) <= max_factorized_byte_fraction * bytes(P)``.
+    ``None`` always retains a nonempty factorization. Zero, like
+    ``tolerance == 0``, bypasses grouping entirely.
     """
     I_sparse = sparse.csr_matrix(I)
     S_sparse = sparse.csr_matrix(S)
     build_start = time.perf_counter()
     if I_sparse.shape[1] != S_sparse.shape[0]:
         raise ValueError("I columns must match S rows")
-    if max_group_fraction is not None and not 0.0 <= max_group_fraction <= 1.0:
-        raise ValueError("max_group_fraction must be in [0, 1] or None")
+    if max_factorized_byte_fraction is not None and not \
+            0.0 <= max_factorized_byte_fraction <= 1.0:
+        raise ValueError(
+            "max_factorized_byte_fraction must be in [0, 1] or None"
+        )
 
     n_detector, n_samples = I_sparse.shape
     n_voxels = S_sparse.shape[1]
@@ -526,6 +547,9 @@ def build_projection_block(
             direct_nbytes=_sparse_nbytes(operator.direct),
             q_nbytes=_sparse_nbytes(operator.Q),
             a_nbytes=_sparse_nbytes(operator.A),
+            candidate_direct_nbytes=_sparse_nbytes(operator.direct),
+            candidate_q_nbytes=0,
+            candidate_a_nbytes=0,
             grouping_seconds=0.0,
             assembly_seconds=time.perf_counter() - build_start,
         )
@@ -534,7 +558,7 @@ def build_projection_block(
     # Both switches are explicit direct-mode requests.  Test them before any
     # normalization or grouping work, just as tolerance == 0 is handled by
     # factorize_psf_columns itself.
-    if tolerance == 0.0 or max_group_fraction == 0.0:
+    if tolerance == 0.0 or max_factorized_byte_fraction == 0.0:
         assembly_start = time.perf_counter()
         operator = HybridProjectionOperator(
             I_sparse @ S_sparse,
@@ -553,6 +577,9 @@ def build_projection_block(
             direct_nbytes=_sparse_nbytes(operator.direct),
             q_nbytes=_sparse_nbytes(operator.Q),
             a_nbytes=_sparse_nbytes(operator.A),
+            candidate_direct_nbytes=_sparse_nbytes(operator.direct),
+            candidate_q_nbytes=0,
+            candidate_a_nbytes=0,
             grouping_seconds=0.0,
             assembly_seconds=assembly_seconds,
         )
@@ -566,22 +593,28 @@ def build_projection_block(
     )
     grouping_seconds = time.perf_counter() - grouping_start
 
+    assembly_start = time.perf_counter()
+    direct = (I_sparse @ S_sparse).tocsr()
+    A = build_psf_group_matrix(factorization, S_sparse)
+    candidate_direct_nbytes = _sparse_nbytes(direct)
+    candidate_q_nbytes = _sparse_nbytes(factorization.Q)
+    candidate_a_nbytes = _sparse_nbytes(A)
+    candidate_factorized_nbytes = candidate_q_nbytes + candidate_a_nbytes
     n_active = factorization.n_active_samples
     group_fraction = factorization.n_groups / max(n_active, 1)
-    use_factorization = (
-        n_active > 0
-        and (max_group_fraction is None or group_fraction < max_group_fraction)
+    use_factorization = n_active > 0 and (
+        max_factorized_byte_fraction is None
+        or candidate_factorized_nbytes
+        <= max_factorized_byte_fraction * candidate_direct_nbytes
     )
-    assembly_start = time.perf_counter()
     if use_factorization:
-        A = build_psf_group_matrix(factorization, S_sparse)
         operator = HybridProjectionOperator(
             sparse.csr_matrix((n_detector, n_voxels), dtype=I_sparse.dtype),
             factorization.Q, A,
         )
     else:
         operator = HybridProjectionOperator(
-            I_sparse @ S_sparse,
+            direct,
             sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
             sparse.csr_matrix((0, n_voxels), dtype=I_sparse.dtype),
         )
@@ -600,6 +633,9 @@ def build_projection_block(
         direct_nbytes=_sparse_nbytes(operator.direct),
         q_nbytes=_sparse_nbytes(operator.Q),
         a_nbytes=_sparse_nbytes(operator.A),
+        candidate_direct_nbytes=candidate_direct_nbytes,
+        candidate_q_nbytes=candidate_q_nbytes,
+        candidate_a_nbytes=candidate_a_nbytes,
         grouping_seconds=grouping_seconds,
         assembly_seconds=assembly_seconds,
     )

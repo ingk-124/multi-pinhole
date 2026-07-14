@@ -296,7 +296,7 @@ def test_loading_incompatible_projection_cache_invalidates_only_projection(
     np.testing.assert_array_equal(loaded.visible_voxels["main"], visible)
     assert loaded.projection["main"] == [None]
     assert loaded.P_matrix["main"] is None
-    assert loaded.projection_cache_schema_version == 2
+    assert loaded.projection_cache_schema_version == 3
 
 
 def test_world_list_camera_keys_are_not_renumbered_after_removal():
@@ -734,7 +734,29 @@ def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
     world.set_projection_matrix(
         res=2, verbose=0, parallel=1, force=True,
         chunk_strategy="optical", projection_representation="hybrid",
-        psf_tolerance=0.1, max_group_fraction=None,
+        psf_tolerance=0.1, max_factorized_byte_fraction=0.8,
+    )
+    byte_selected_operator = world.P_matrix[0]
+    if byte_selected_operator.Q.shape[1]:
+        reference_nbytes = (
+            reference.data.nbytes + reference.indices.nbytes
+            + reference.indptr.nbytes
+        )
+        assert byte_selected_operator.storage_nbytes <= 0.8 * reference_nbytes
+    else:
+        assert any(
+            stats.global_direct_fallback
+            for stats in byte_selected_operator.compression_stats
+        )
+        np.testing.assert_allclose(
+            byte_selected_operator.to_sparse().toarray(), reference.toarray(),
+            rtol=1e-13, atol=1e-14,
+        )
+
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        chunk_strategy="optical", projection_representation="hybrid",
+        psf_tolerance=0.1, max_factorized_byte_fraction=None,
     )
     factorized_operator = world.P_matrix[0]
     assert isinstance(factorized_operator, HybridProjectionOperator)

@@ -888,7 +888,7 @@ def run_production_sweep(
         tolerances=(0.1,),
         metrics=("relative_l2",),
         algorithms=("recursive",),
-        max_group_fractions=(0.6, 0.8, 1.0, None),
+        max_factorized_byte_fractions=(0.6, 0.8, 1.0, None),
         voxel_shape=(6, 6, 4),
         pixel_shape=(16, 16),
         detector_resolution=1,
@@ -956,7 +956,8 @@ def run_production_sweep(
                 for metric in metrics:
                     for algorithm in algorithms:
                         for tolerance in tolerances:
-                            for max_group_fraction in max_group_fractions:
+                            for max_factorized_byte_fraction in \
+                                    max_factorized_byte_fractions:
                                 tracemalloc.start()
                                 hybrid_start = time.perf_counter()
                                 world.set_projection_matrix(
@@ -969,7 +970,9 @@ def run_production_sweep(
                                     psf_tolerance=tolerance,
                                     psf_metric=metric,
                                     psf_grouping=algorithm,
-                                    max_group_fraction=max_group_fraction,
+                                    max_factorized_byte_fraction=(
+                                        max_factorized_byte_fraction
+                                    ),
                                 )
                                 hybrid_build_seconds = time.perf_counter() - hybrid_start
                                 _, hybrid_peak_bytes = tracemalloc.get_traced_memory()
@@ -1020,10 +1023,15 @@ def run_production_sweep(
                                     "metric": metric,
                                     "algorithm": algorithm,
                                     "tolerance": tolerance,
-                                    "max_group_fraction": max_group_fraction,
+                                    "max_factorized_byte_fraction": (
+                                        max_factorized_byte_fraction
+                                    ),
                                     "scope_count": len(stats),
                                     "factorized_scope_count": sum(
                                         item.used_factorization for item in stats
+                                    ),
+                                    "global_direct_fallback": any(
+                                        item.global_direct_fallback for item in stats
                                     ),
                                     "sample_count": sum(item.n_samples for item in stats),
                                     "active_sample_count": sum(
@@ -1032,6 +1040,17 @@ def run_production_sweep(
                                     "stored_group_count": sum(
                                         item.n_groups for item in stats
                                         if item.used_factorization
+                                    ),
+                                    "candidate_group_count": sum(
+                                        item.n_groups for item in stats
+                                    ),
+                                    "candidate_direct_scope_bytes": sum(
+                                        item.candidate_direct_nbytes
+                                        for item in stats
+                                    ),
+                                    "candidate_factorized_scope_bytes": sum(
+                                        item.candidate_factorized_nbytes
+                                        for item in stats
                                     ),
                                     "median_active_pixel_rows": float(np.median([
                                         item.n_active_pixel_rows for item in stats
@@ -1106,11 +1125,11 @@ def run_production_sweep(
     gaussian_rows = [row for row in rows if row["profile"] == "gaussian"]
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.2))
     for resolution in resolutions:
-        for fraction in max_group_fractions:
+        for fraction in max_factorized_byte_fractions:
             selected = [
                 row for row in gaussian_rows
                 if row["resolution"] == resolution
-                and row["max_group_fraction"] == fraction
+                and row["max_factorized_byte_fraction"] == fraction
                 and row["bin_width_pixels"] == bin_widths[0]
                 and row["metric"] == metrics[0]
                 and row["algorithm"] == algorithms[0]
@@ -1119,10 +1138,10 @@ def run_production_sweep(
             selected.sort(key=lambda row: row["z_over_f"])
             if not selected:
                 continue
-            fraction_label = "always" if fraction is None else f"<{fraction:g}"
+            fraction_label = "always" if fraction is None else f"<={fraction:g}"
             label = (
                 f"source res={resolution}, detector res={detector_resolution}, "
-                f"Ng/Ns {fraction_label}"
+                f"B(QA)/B(P) {fraction_label}"
             )
             z = [row["z_over_f"] for row in selected]
             axes[0, 0].plot(z, [row["storage_compression"] for row in selected],

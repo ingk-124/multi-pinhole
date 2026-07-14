@@ -191,7 +191,7 @@ def test_hybrid_operator_project_backproject_and_transpose_match_materialization
         [1.0, 0.0],
     ]))
     operator, stats = build_projection_block(
-        I, S, tolerance=0.1, max_group_fraction=0.8,
+        I, S, tolerance=0.1, max_factorized_byte_fraction=None,
     )
     assert stats.used_factorization
     assert stats.n_active_samples == 2
@@ -200,6 +200,13 @@ def test_hybrid_operator_project_backproject_and_transpose_match_materialization
     assert stats.direct_nbytes > 0
     assert stats.q_nbytes > 0
     assert stats.a_nbytes > 0
+    assert stats.candidate_direct_nbytes > 0
+    assert stats.candidate_q_nbytes > 0
+    assert stats.candidate_a_nbytes > 0
+    assert stats.candidate_factorized_nbytes == (
+        stats.candidate_q_nbytes + stats.candidate_a_nbytes
+    )
+    assert stats.candidate_byte_fraction > 0.0
     assert stats.stored_nbytes == (
         stats.direct_nbytes + stats.q_nbytes + stats.a_nbytes
     )
@@ -217,7 +224,7 @@ def test_hybrid_operator_project_backproject_and_transpose_match_materialization
     assert operator.T.T is operator
 
 
-def test_group_fraction_selects_direct_without_building_both_storage_forms():
+def test_exact_byte_fraction_selects_smaller_direct_storage():
     I = sparse.eye(3, format="csr")
     S = sparse.csr_matrix(np.array([
         [1.0, 0.0],
@@ -225,10 +232,11 @@ def test_group_fraction_selects_direct_without_building_both_storage_forms():
         [0.0, 1.0],
     ]))
     operator, stats = build_projection_block(
-        I, S, tolerance=0.01, max_group_fraction=0.8,
+        I, S, tolerance=0.01, max_factorized_byte_fraction=0.8,
     )
     assert not stats.used_factorization
     assert stats.group_fraction == 1.0
+    assert stats.candidate_factorized_nbytes > stats.candidate_direct_nbytes * 0.8
     assert operator.Q.shape[1] == operator.A.shape[0] == 0
     np.testing.assert_allclose(operator.to_sparse().toarray(), (I @ S).toarray())
 
@@ -240,7 +248,7 @@ def test_projection_operators_combine_and_left_multiply_without_expanding_qa():
     ]))
     S = sparse.eye(2, format="csr")
     factorized, _ = build_projection_block(
-        I, S, tolerance=0.1, max_group_fraction=None,
+        I, S, tolerance=0.1, max_factorized_byte_fraction=None,
     )
     direct, _ = build_projection_block(I, S, tolerance=0.0)
     combined = combine_projection_operators([factorized, direct])

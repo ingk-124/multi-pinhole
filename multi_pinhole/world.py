@@ -19,6 +19,7 @@ import time
 from collections.abc import Hashable, Mapping
 from concurrent.futures import FIRST_COMPLETED, wait
 from concurrent.futures.thread import ThreadPoolExecutor
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Tuple, List
 
@@ -44,7 +45,7 @@ from .utils.my_stdio import *
 # Increment when a serialized projection representation or its numerical
 # meaning becomes incompatible with an older cached matrix. Legacy pickles do
 # not have this attribute and are invalidated when loaded.
-PROJECTION_CACHE_SCHEMA_VERSION = 2
+PROJECTION_CACHE_SCHEMA_VERSION = 3
 
 
 def type_list(obj, type_):
@@ -897,7 +898,7 @@ class World:
             psf_tolerance: float = 0.0,
             psf_metric: str = "relative_l2",
             psf_grouping: str = "recursive",
-            max_group_fraction: float | None = 0.8):
+            max_factorized_byte_fraction: float | None = 0.8):
         """Build sparse or hybrid projection using visible-voxel optical bins.
 
         This experimental path bins visible voxel centers, packs complete bins
@@ -980,6 +981,12 @@ class World:
             scope_offsets = binning.scope_offsets
             operators = []
             compression_stats = []
+            exact_direct_blocks = []
+            enforce_final_byte_fraction = (
+                psf_tolerance > 0.0
+                and max_factorized_byte_fraction is not None
+                and max_factorized_byte_fraction > 0.0
+            )
             scope_number = 0
 
             def _expand_scope(packed_visible_indices):
@@ -1094,6 +1101,12 @@ class World:
                 # area-integration accuracy while reducing the PSF row count.
                 I_work = screen.transform_matrix @ I_subpixel_work
                 del I_subpixel_work
+                # Keep one exact work-chunk block transiently. Scope-local CSR
+                # payloads are not additive because final summation shares
+                # row pointers and can merge duplicate entries. This block is
+                # used for the final, representation-level byte safety gate.
+                if enforce_final_byte_fraction:
+                    exact_direct_blocks.append((I_work @ S_work).tocsr())
                 work_scope_operators = []
 
                 # I and S use the same expanded subvoxel row/column order.
@@ -1107,7 +1120,7 @@ class World:
                         tolerance=psf_tolerance,
                         metric=psf_metric,
                         algorithm=psf_grouping,
-                        max_group_fraction=max_group_fraction,
+                        max_factorized_byte_fraction=max_factorized_byte_fraction,
                         max_scope_dense_bytes=max(1, max_working_memory // 4),
                     )
                     work_scope_operators.append(operator)
@@ -1127,6 +1140,36 @@ class World:
                     (screen.N_pixel, n_vox),
                 )
             result = combine_projection_operators(operators)
+            if enforce_final_byte_fraction:
+                exact_direct = sum(
+                    exact_direct_blocks,
+                    sparse.csr_matrix((screen.N_pixel, n_vox)),
+                ).tocsr()
+                exact_direct.sum_duplicates()
+                exact_direct.eliminate_zeros()
+                exact_direct_nbytes = _sparse_nbytes(exact_direct)
+            if enforce_final_byte_fraction and result.storage_nbytes > \
+                    max_factorized_byte_fraction * exact_direct_nbytes:
+                # A scope-local byte win need not survive final CSR
+                # consolidation. Fall back globally so the requested storage
+                # saving is enforced on the actual retained representation.
+                compression_stats = [
+                    replace(
+                        stats,
+                        used_factorization=False,
+                        direct_nbytes=stats.candidate_direct_nbytes,
+                        q_nbytes=0,
+                        a_nbytes=0,
+                        global_direct_fallback=True,
+                    )
+                    for stats in compression_stats
+                ]
+                result = HybridProjectionOperator(
+                    exact_direct,
+                    sparse.csr_matrix((screen.N_pixel, 0)),
+                    sparse.csr_matrix((0, n_vox)),
+                    compression_stats=compression_stats,
+                )
             n_active = sum(stats.n_active_samples for stats in compression_stats)
             n_groups = sum(
                 stats.n_groups for stats in compression_stats
@@ -1224,7 +1267,7 @@ class World:
                                   psf_tolerance: float = 0.0,
                                   psf_metric: str = "relative_l2",
                                   psf_grouping: str = "recursive",
-                                  max_group_fraction: float | None = 0.8):
+                                  max_factorized_byte_fraction: float | None = 0.8):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -1286,9 +1329,11 @@ class World:
                 raise ValueError("psf_metric must be 'relative_l2' or 'l1'")
             if psf_grouping not in {"recursive", "leader"}:
                 raise ValueError("psf_grouping must be 'recursive' or 'leader'")
-            if max_group_fraction is not None and \
-                    not 0.0 <= max_group_fraction <= 1.0:
-                raise ValueError("max_group_fraction must be in [0, 1] or None")
+            if max_factorized_byte_fraction is not None and \
+                    not 0.0 <= max_factorized_byte_fraction <= 1.0:
+                raise ValueError(
+                    "max_factorized_byte_fraction must be in [0, 1] or None"
+                )
         verbose = self.verbose if verbose is None else verbose
         timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
@@ -1335,7 +1380,7 @@ class World:
                 psf_tolerance=psf_tolerance,
                 psf_metric=psf_metric,
                 psf_grouping=psf_grouping,
-                max_group_fraction=max_group_fraction,
+                max_factorized_byte_fraction=max_factorized_byte_fraction,
             )
             my_print(
                 f"Optical projection matrix for camera {camera_idx!r}, "
@@ -1719,7 +1764,7 @@ class World:
                               psf_tolerance: float = 0.0,
                               psf_metric: str = "relative_l2",
                               psf_grouping: str = "recursive",
-                              max_group_fraction: float | None = 0.8):
+                              max_factorized_byte_fraction: float | None = 0.8):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1759,10 +1804,11 @@ class World:
             Distance used to accept a PSF group.
         psf_grouping : {"recursive", "leader"}, optional
             PSF grouping algorithm.
-        max_group_fraction : float or None, optional
-            Use ``Q @ A`` only when ``N_group / N_active_sample`` is below
-            this value. Defaults to ``0.8``. ``None`` always retains a
-            nonempty factorization.
+        max_factorized_byte_fraction : float or None, optional
+            Use ``Q @ A`` only when its exact CSR payload is at most this
+            fraction of the exact direct block payload. Defaults to ``0.8``.
+            ``None`` always retains a nonempty factorization; zero bypasses
+            grouping.
 
         Notes
         -----
@@ -1799,7 +1845,7 @@ class World:
                                                    psf_tolerance=psf_tolerance,
                                                    psf_metric=psf_metric,
                                                    psf_grouping=psf_grouping,
-                                                   max_group_fraction=max_group_fraction)
+                                                   max_factorized_byte_fraction=max_factorized_byte_fraction)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "
