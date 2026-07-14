@@ -223,6 +223,16 @@ partial-visibility voxel groups) exists purely as a memory/throughput
 trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
 
+For fully-visible voxels, `adaptive_source_resolution=True` may be used to
+interpret `res` as an axis-wise ceiling rather than a fixed resolution. Each
+world-axis chord of a voxel is projected onto the screen and normalized by the
+larger of the detector subpixel pitch and the local finite-Eye PSF footprint.
+Voxels are bucketed by the resulting `(r_x, r_y, r_z)` and projected in those
+buckets. `max_projected_step` (default `0.25`) is a geometry heuristic in PSF
+units, not a bound on image error. Partially-visible voxels keep the explicit
+fixed `partial_res`, because their binary wall/inside visibility is
+discontinuous and is not controlled by the smooth projected-size criterion.
+
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye
 pixel-space results are stored in `self._projection[camera_idx][eye_idx]`.

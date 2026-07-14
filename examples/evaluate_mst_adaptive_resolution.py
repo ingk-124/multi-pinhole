@@ -37,7 +37,9 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
                                 parallel=parallel, force=True)
     cases = {
         "fixed 1": dict(res=1, partial_res=1),
+        "fixed 2": dict(res=2, partial_res=2),
         "fixed 3": dict(res=3, partial_res=3),
+        "fixed 4": dict(res=4, partial_res=4),
         "adaptive p5": dict(
             res=5, partial_res=5, adaptive_source_resolution=True,
             max_projected_step=0.25,
@@ -71,7 +73,7 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
         for case, camera_matrices in matrices.items()
     }
     reference_name = "fixed 5"
-    compared = [name for name in cases if name != reference_name]
+    compared = ["fixed 1", "fixed 3", "adaptive p5", "adaptive p3"]
     image_l2 = {
         case: [_relative_l2(images[case][profile],
                             images[reference_name][profile])
@@ -175,6 +177,69 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
     output_path = output_dir / "mst_adaptive_resolution.png"
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
+
+    partial_errors = {resolution: [] for resolution in range(1, 5)}
+    for camera in world.cameras:
+        partial = np.flatnonzero(world.visible_voxels[camera][0] == 1)
+        reference_columns = matrices["fixed 5"][camera][:, partial].tocsc()
+        denominator = np.asarray(abs(reference_columns).sum(axis=0)).ravel()
+        for resolution in range(1, 5):
+            candidate = matrices[f"fixed {resolution}"][camera][:, partial].tocsc()
+            numerator = np.asarray(abs(candidate - reference_columns).sum(axis=0)).ravel()
+            relative = np.full(denominator.shape, np.inf)
+            np.divide(numerator, denominator, out=relative, where=denominator > 0.0)
+            relative[(denominator == 0.0) & (numerator == 0.0)] = 0.0
+            partial_errors[resolution].append(relative)
+    partial_errors = {
+        resolution: np.concatenate(parts)
+        for resolution, parts in partial_errors.items()
+    }
+    tolerances = (0.01, 0.03, 0.05)
+    oracle_resolution = {}
+    for tolerance in tolerances:
+        selected = np.full(partial_errors[1].shape, 5, dtype=int)
+        for resolution in range(4, 0, -1):
+            selected[partial_errors[resolution] <= tolerance] = resolution
+        oracle_resolution[tolerance] = selected
+
+    oracle_fig, oracle_axes = plt.subplots(1, 3, figsize=(14, 4.2))
+    for resolution, errors in partial_errors.items():
+        finite_errors = np.sort(errors[np.isfinite(errors)])
+        fraction = np.arange(1, finite_errors.size + 1) / finite_errors.size
+        oracle_axes[0].plot(finite_errors, fraction, label=f"res {resolution}")
+    oracle_axes[0].set_xscale("log")
+    oracle_axes[0].set_xlabel("partial-column relative L1 vs res 5")
+    oracle_axes[0].set_ylabel("cumulative fraction")
+    oracle_axes[0].set_title("Per-voxel impulse-response convergence")
+    oracle_axes[0].legend()
+
+    width = 0.25
+    positions = np.arange(1, 6)
+    for index, tolerance in enumerate(tolerances):
+        selected = oracle_resolution[tolerance]
+        counts = np.array([(selected == resolution).sum()
+                           for resolution in positions])
+        oracle_axes[1].bar(positions + (index - 1) * width, counts, width,
+                           label=f"tol {tolerance:g}")
+    oracle_axes[1].set_xticks(positions)
+    oracle_axes[1].set_xlabel("oracle-selected partial res")
+    oracle_axes[1].set_ylabel("camera–voxel columns")
+    oracle_axes[1].set_title("Best possible selection using known res-5 P")
+    oracle_axes[1].legend()
+
+    sample_ratios = [
+        np.sum(selected ** 3) / (selected.size * 5 ** 3)
+        for selected in oracle_resolution.values()
+    ]
+    oracle_axes[2].bar([str(tolerance) for tolerance in tolerances], sample_ratios)
+    oracle_axes[2].set_xlabel("allowed per-column relative L1")
+    oracle_axes[2].set_ylabel("partial samples / fixed res 5")
+    oracle_axes[2].set_title("Oracle partial-sample reduction")
+    oracle_fig.suptitle("MST d=75 mm partial-visibility adaptation potential")
+    oracle_fig.tight_layout()
+    oracle_path = output_dir / "mst_partial_resolution_oracle.png"
+    oracle_fig.savefig(oracle_path, dpi=180)
+    plt.close(oracle_fig)
     return {
         "world": world,
         "elapsed": elapsed,
@@ -182,7 +247,10 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
         "image_l2": image_l2,
         "flux_error": flux_error,
         "estimates": estimates,
+        "partial_errors": partial_errors,
+        "oracle_resolution": oracle_resolution,
         "output_path": output_path,
+        "oracle_path": oracle_path,
     }
 
 

@@ -66,7 +66,7 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
     axes[0].set_yscale("log")
     axes[0].set_xlabel(f"source samples / fixed {reference_res}")
     axes[0].set_ylabel("image relative L2")
-    axes[0].set_title("Accuracy–sample tradeoff\nlabels: max step [subpixel]")
+    axes[0].set_title("Accuracy–sample tradeoff\nlabels: max step [PSF scale]")
     axes[0].legend()
 
     axes[1].plot([row["elapsed"] for row in rows],
@@ -82,7 +82,7 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
 
     axes[2].bar([str(row["step"]) for row in rows],
                 [row["capped_fraction"] for row in rows])
-    axes[2].set_xlabel("max projected step [subpixel]")
+    axes[2].set_xlabel("max projected step [PSF scale]")
     axes[2].set_ylabel("fraction of capped source axes")
     axes[2].set_title(f"Axes requesting more than res={reference_res}")
 

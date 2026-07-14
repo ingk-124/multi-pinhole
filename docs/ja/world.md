@@ -79,6 +79,8 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 
 この一連の処理（手順1〜3。完全可視・部分可視の各グループに対して別々に実行されます）は純粋にメモリ／スループットのトレードオフのために存在しています——数学的な結果は `n_jobs` や `max_nnz` に関わらず同じ疎行列になります。変わるのは計算の分割方法だけで、答えではありません。
 
+完全可視voxelでは `adaptive_source_resolution=True` を指定でき、この場合 `res` は固定値ではなく軸別上限になります。各voxelのworld軸方向の線分をscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅の大きい方で無次元化して、同じ `(r_x, r_y, r_z)` のvoxelをbucket化します。`max_projected_step`（暫定default `0.25`）はPSF幅単位の幾何学heuristicであり、画像誤差の上限を意味しません。部分可視voxelはwall/insideによる二値visibilityが不連続なため、この滑らかな投影幅判定を適用せず、明示した固定 `partial_res` を使います。
+
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 
 ### `trace_line`：完全な行列を構築せずに少数の点を投影する

@@ -29,7 +29,7 @@ def build_case():
     return camera, voxel
 
 
-def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
+def run(output_dir=None, max_resolution=8, max_projected_step=0.25):
     """Calculate and plot projected spans and selected axis resolutions."""
     output_dir = (Path(output_dir) if output_dir is not None else
                   Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_res")
@@ -73,7 +73,7 @@ def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
     fig.suptitle(
         "Geometry-only adaptive source resolution\n"
         "reference scale=max(subpixel pitch, local PSF), "
-        f"max step={max_projected_step:g} subpixel, max res={max_resolution}",
+        f"max step={max_projected_step:g} PSF scale, max res={max_resolution}",
     )
     fig.tight_layout()
     output_path = output_dir / "adaptive_source_resolution_geometry.png"

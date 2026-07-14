@@ -1039,7 +1039,7 @@ class World:
     def estimate_source_resolution(
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
             voxel_indices=None, max_resolution=4,
-            max_projected_step: float = 1.0,
+            max_projected_step: float = 0.25,
             detector_grid: str = "psf",
             batch_size: int = 100_000) -> SourceResolutionEstimate:
         """Estimate geometry-only axis-wise source quadrature resolution.
@@ -1047,7 +1047,7 @@ class World:
         This diagnostic does not alter the voxel grid or a cached projection.
         It projects each selected voxel's three world-axis chords through one
         Eye and requests the smallest resolution whose projected subcell step
-        fits within ``max_projected_step`` detector cells.
+        fits within ``max_projected_step`` reference-scale units.
 
         Parameters
         ----------
@@ -1060,7 +1060,8 @@ class World:
         max_resolution : int or (int, int, int), optional
             Axis-wise resolution ceiling.
         max_projected_step : float, optional
-            Maximum source-subcell displacement in reference detector cells.
+            Maximum source-subcell displacement in units selected by
+            ``detector_grid``. Defaults to 0.25.
         detector_grid : {"psf", "subpixel", "pixel"}, optional
             Scale used to normalize projected source displacement. ``"psf"``
             uses the larger of detector subpixel pitch and the local projected
@@ -1144,7 +1145,7 @@ class World:
                                   chunk_strategy: str = "voxel",
                                   optical_bin_width_pixels=1.0,
                                   adaptive_source_resolution: bool = False,
-                                  max_projected_step: float = 1.0):
+                                  max_projected_step: float = 0.25):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -1184,8 +1185,8 @@ class World:
             voxels, using ``res`` as the ceiling. Partially-visible voxels
             retain fixed ``partial_res`` because visibility is discontinuous.
         max_projected_step : float, optional
-            Maximum projected source-subcell displacement in detector
-            subpixel units when adaptive resolution is enabled.
+            Maximum projected source-subcell displacement in local finite-Eye
+            PSF units when adaptive resolution is enabled. Defaults to 0.25.
 
         Notes
         -----
@@ -1665,7 +1666,7 @@ class World:
                               chunk_strategy: str = "voxel",
                               optical_bin_width_pixels=1.0,
                               adaptive_source_resolution: bool = False,
-                              max_projected_step: float = 1.0):
+                              max_projected_step: float = 0.25):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1701,7 +1702,8 @@ class World:
             ``partial_res``. Defaults to false.
         max_projected_step : float, optional
             Maximum projected source-subcell displacement in detector
-            subpixel units for adaptive resolution. Defaults to one.
+            local PSF units for adaptive resolution. The heuristic default is
+            0.25; it is not a numerical-error tolerance.
 
         Notes
         -----
