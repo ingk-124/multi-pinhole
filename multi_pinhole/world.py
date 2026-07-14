@@ -17,7 +17,7 @@ import gc
 import os
 import time
 from collections.abc import Hashable, Mapping
-from concurrent.futures import as_completed
+from concurrent.futures import FIRST_COMPLETED, wait
 from concurrent.futures.thread import ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Tuple, List
@@ -29,10 +29,17 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
+from .projection import make_optical_binning
 from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
 from .utils.my_stdio import *
+
+
+# Increment when a serialized projection representation or its numerical
+# meaning becomes incompatible with an older cached matrix. Legacy pickles do
+# not have this attribute and are invalidated when loaded.
+PROJECTION_CACHE_SCHEMA_VERSION = 2
 
 
 def type_list(obj, type_):
@@ -221,6 +228,7 @@ class World:
         self._visible_voxels = {i: None for i in self._cameras.keys()}
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
+        self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
         self.verbose = verbose
 
         # set inside vertices if inside_func is provided
@@ -308,6 +316,7 @@ class World:
         filename : str or os.PathLike[str]
             Destination path where the serialized world should be written.
         """
+        self._ensure_projection_cache_schema()
         with open(filename, "wb") as f:
             dill.dump(self, f)
 
@@ -328,6 +337,9 @@ class World:
         """
         with open(filename, "rb") as f:
             loaded_world = dill.load(f)
+        if not isinstance(loaded_world, World):
+            raise TypeError("serialized object is not a World")
+        loaded_world._ensure_projection_cache_schema()
         return loaded_world
 
     # MARK: Properties
@@ -386,6 +398,11 @@ class World:
         return self._projection
 
     @property
+    def projection_cache_schema_version(self) -> int:
+        """Version governing compatibility of serialized projection caches."""
+        return self._projection_cache_schema_version
+
+    @property
     def inside_vertices(self):
         """np.ndarray: Boolean mask indicating which voxel vertices lie inside the world."""
         if self._inside_vertices is None:
@@ -403,8 +420,19 @@ class World:
         """
         self._visible_vertices = {i: None for i in self._cameras.keys()}
         self._visible_voxels = {i: None for i in self._cameras.keys()}
+        self._invalidate_projection_cache()
+
+    def _invalidate_projection_cache(self) -> None:
+        """Clear projection data while retaining valid visibility data."""
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
+
+    def _ensure_projection_cache_schema(self) -> None:
+        """Invalidate absent or incompatible serialized projection caches."""
+        cached_version = getattr(self, "_projection_cache_schema_version", None)
+        if cached_version != PROJECTION_CACHE_SCHEMA_VERSION:
+            self._invalidate_projection_cache()
+            self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
 
     # MARK: Setters
     @inside_vertices.setter
@@ -837,8 +865,15 @@ class World:
 
         verbose = self.verbose if verbose is None else verbose
         my_print("Finding visible voxels...", show=verbose > 0)
-        visible_voxels = {c_: None for c_ in self._cameras.keys()}
+        visible_voxels = {}
         for c_ in self._cameras.keys():
+            cached = self._visible_voxels.get(c_)
+            expected_shape = (len(self._cameras[c_].eyes), self.voxel.N)
+            if not force and cached is not None and cached.shape == expected_shape:
+                visible_voxels[c_] = cached
+                my_print(f"Visible voxels for camera {c_!r} is already calculated.",
+                         show=verbose > 1)
+                continue
             self._find_visible_vertices(force=force, verbose=verbose, camera_idx=c_)
             conditions_any = np.any(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
             conditions_all = np.all(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
@@ -847,9 +882,161 @@ class World:
         self._visible_voxels = visible_voxels
         my_print("Finding visible voxels is done.", show=verbose > 0)
 
+    def _calc_voxel_image_for_eye_optical(
+            self, camera_idx: Hashable, eye_idx: int,
+            full_voxels: np.ndarray, partial_voxels: np.ndarray,
+            full_subvoxel_res, partial_subvoxel_res,
+            max_nnz: int, max_working_memory: int,
+            optical_bin_width_pixels, verbose: int):
+        """Build ordinary sparse P using visible-voxel optical bins.
+
+        This experimental path bins visible voxel centers, packs complete bins
+        into work chunks, and only then expands those voxels into sub-voxel
+        samples. Detector subpixels remain transient quadrature samples; each
+        chunk is binned to physical pixels before persistent sparse assembly.
+        """
+        camera = self.cameras[camera_idx]
+        screen = camera.screen
+        n_vox = self.voxel.N
+        index_start = time.perf_counter()
+        full_resolution = tuple(int(r) for r in np.broadcast_to(full_subvoxel_res, 3))
+        partial_resolution = tuple(int(r) for r in np.broadcast_to(partial_subvoxel_res, 3))
+        full_cost = int(np.prod(full_resolution))
+        partial_cost = int(np.prod(partial_resolution))
+        visible_voxels = np.concatenate((full_voxels, partial_voxels))
+        sample_costs = np.concatenate((
+            np.full(full_voxels.size, full_cost, dtype=np.int64),
+            np.full(partial_voxels.size, partial_cost, dtype=np.int64),
+        ))
+        voxel_centers = self.voxel.get_gravity_center(visible_voxels)
+        if visible_voxels.size == 0:
+            return sparse.csr_matrix((screen.N_pixel, n_vox))
+
+        def _sparse_nbytes(matrix):
+            matrix = matrix.tocsr()
+            return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
+
+        if full_voxels.size:
+            sample_voxels = full_voxels[:min(full_voxels.size, 20)]
+            sample_resolution = full_resolution
+        else:
+            sample_voxels = partial_voxels[:min(partial_voxels.size, 20)]
+            sample_resolution = partial_resolution
+        sample_points = self.voxel.get_sub_voxel_centers(
+            sample_voxels, res=sample_resolution,
+        )
+        sample_S = self.voxel.sub_voxel_interpolator_from_centers(
+            sample_voxels, res=sample_resolution, points=sample_points,
+        )
+        sample_I = camera.calc_image_vec(
+            eye_idx, points=sample_points, verbose=0, check_visibility=False,
+        )
+        sample_result = screen.transform_matrix @ (sample_I @ sample_S)
+        sample_count = sample_points.shape[0]
+        transient_bytes = (
+            sample_points.nbytes + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
+            + _sparse_nbytes(sample_result)
+        )
+        bytes_per_sample = max(1.0, transient_bytes / sample_count)
+        memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
+        nnz_per_sample = sample_I.nnz / sample_count
+        if nnz_per_sample == 0.0:
+            nnz_per_sample = screen.N_subpixel * 0.01
+        nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
+        max_samples = min(memory_samples, nnz_samples, int(sample_costs.sum()))
+        del sample_I, sample_S, sample_result
+
+        binning = make_optical_binning(
+            camera, eye_idx, voxel_centers,
+            bin_width_pixels=optical_bin_width_pixels,
+            max_scope_samples=max_samples,
+            sample_costs=sample_costs,
+        )
+        work_chunks = binning.work_chunks(max_samples=max_samples)
+        index_elapsed = time.perf_counter() - index_start
+        my_print(
+            f"Processing {visible_voxels.size} visible voxels "
+            f"({sample_costs.sum()} sub-voxel samples before partial masking) in "
+            f"{binning.n_scopes} optical scopes and {len(work_chunks)} work chunks "
+            f"(max_samples={max_samples})",
+            show=verbose > 0,
+        )
+
+        projection_start = time.perf_counter()
+        result = sparse.csr_matrix((screen.N_pixel, n_vox))
+        data_buf, row_buf, col_buf = [], [], []
+        buffer_nbytes = 0
+        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
+
+        def _flush():
+            nonlocal result, data_buf, row_buf, col_buf, buffer_nbytes
+            if not data_buf:
+                return
+            block = sparse.coo_matrix(
+                (np.concatenate(data_buf),
+                 (np.concatenate(row_buf), np.concatenate(col_buf))),
+                shape=result.shape,
+            ).tocsr()
+            result += block
+            data_buf, row_buf, col_buf = [], [], []
+            buffer_nbytes = 0
+
+        def _project_voxels(owners, resolution, check_point_visibility):
+            if owners.size == 0:
+                return None
+            points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
+            S = self.voxel.sub_voxel_interpolator_from_centers(
+                owners, res=resolution, points=points,
+            )
+            if check_point_visibility:
+                mask = self.find_visible_points(
+                    points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
+                ).reshape(-1)
+                mask &= self._inside_points(points)
+                if not np.any(mask):
+                    return None
+                points = points[mask]
+                S = S[mask]
+            I_subpixel = camera.calc_image_vec(
+                eye_idx, points=points, verbose=0, check_visibility=False,
+            )
+            # Integrate source samples first, then bin detector quadrature
+            # samples. Only the physical-pixel matrix is retained.
+            return (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
+
+        for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
+                             disable=verbose <= 0):
+            ordered_voxels = visible_voxels[chunk]
+            is_full = chunk < full_voxels.size
+            chunk_results = (
+                _project_voxels(ordered_voxels[is_full], full_resolution, False),
+                _project_voxels(ordered_voxels[~is_full], partial_resolution, True),
+            )
+            for P_chunk in chunk_results:
+                if P_chunk is None:
+                    continue
+                data_buf.append(P_chunk.data)
+                row_buf.append(P_chunk.row)
+                col_buf.append(P_chunk.col)
+                buffer_nbytes += (P_chunk.data.nbytes + P_chunk.row.nbytes
+                                  + P_chunk.col.nbytes)
+            if buffer_nbytes >= result_buffer_limit:
+                _flush()
+        _flush()
+        projection_elapsed = time.perf_counter() - projection_start
+        my_print(
+            f"Optical sparse-P timing: index={index_elapsed:.3f}s, "
+            f"projection={projection_elapsed:.3f}s",
+            show=verbose > 1,
+        )
+        return result
+
     def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000,
-                                  partial_res: int | tuple[int, int, int] = None):
+                                  partial_res: int | tuple[int, int, int] = None,
+                                  max_working_memory: int = 1_000_000_000,
+                                  chunk_strategy: str = "voxel",
+                                  optical_bin_width_pixels=1.0):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -873,15 +1060,32 @@ class World:
         partial_res : int or (int, int, int), optional
             Sub-voxel resolution used only for partially visible voxels.
             ``None`` reuses ``res``.
+        max_working_memory : int, optional
+            Approximate byte budget for transient data held by in-flight
+            projection chunks. Defaults to one billion bytes.
+        chunk_strategy : {"voxel", "optical"}, optional
+            ``"voxel"`` uses the established contiguous-voxel chunks.
+            ``"optical"`` is an experimental, uncompressed validation path
+            that reorders visible voxel centers by detector-pitch bins before
+            expanding each work chunk into sub-voxel samples.
+        optical_bin_width_pixels : float or (float, float), optional
+            Optical bin width in detector-pixel pitches for the experimental
+            optical strategy.
 
         Notes
         -----
-        The resulting sparse matrix is stored in
-        ``self._projection[camera_idx][eye_idx]``.
+        The resulting pixel-space sparse matrix is stored in
+        ``self._projection[camera_idx][eye_idx]``. Subpixel images exist only
+        as transient numerical-integration data.
         """
         n_jobs = os.cpu_count() + 1 + n_jobs if n_jobs < 0 else n_jobs
         n_jobs = max(1, n_jobs)
+        if max_working_memory <= 0:
+            raise ValueError("max_working_memory must be positive")
+        if chunk_strategy not in {"voxel", "optical"}:
+            raise ValueError("chunk_strategy must be 'voxel' or 'optical'")
         verbose = self.verbose if verbose is None else verbose
+        timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
         screen = _camera.screen
         N_vox = self.voxel.N
@@ -889,21 +1093,39 @@ class World:
         full_subvoxel_res = self.voxel.res
         self.voxel.res = partial_res
         partial_subvoxel_res = self.voxel.res
-        self.voxel.res = full_subvoxel_res
-        self.voxel.set_voxel2vertices(exist_ok=True, n_jobs=n_jobs, verbose=verbose)
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
-        self.find_visible_voxels()
+        self.find_visible_voxels(verbose=verbose)
+        visibility_elapsed = time.perf_counter() - timing_start
         vis_flag = self.visible_voxels[camera_idx][eye_idx]  # (N_vox, )
         partial_voxels = np.flatnonzero(vis_flag == 1)
         full_voxels = np.flatnonzero(vis_flag == 2)
-        full_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
-        partial_res = sparse.coo_matrix((screen.N_subpixel, N_vox))
+        full_res = sparse.coo_matrix((screen.N_pixel, N_vox))
+        partial_res = sparse.coo_matrix((screen.N_pixel, N_vox))
 
         # No visible voxels
         if partial_voxels.size + full_voxels.size == 0:
             my_print("No visible voxels. Setting projection matrix to zero matrix.", show=verbose > 0)
-            self._projection[camera_idx][eye_idx] = sparse.csr_matrix((screen.N_subpixel, N_vox))
+            self._projection[camera_idx][eye_idx] = sparse.csr_matrix((screen.N_pixel, N_vox))
+            return
+
+        if chunk_strategy == "optical":
+            optical_start = time.perf_counter()
+            self._projection[camera_idx][eye_idx] = self._calc_voxel_image_for_eye_optical(
+                camera_idx=camera_idx, eye_idx=eye_idx,
+                full_voxels=full_voxels, partial_voxels=partial_voxels,
+                full_subvoxel_res=full_subvoxel_res,
+                partial_subvoxel_res=partial_subvoxel_res,
+                max_nnz=max_nnz, max_working_memory=max_working_memory,
+                optical_bin_width_pixels=optical_bin_width_pixels,
+                verbose=verbose,
+            )
+            my_print(
+                f"Optical projection matrix for camera {camera_idx!r}, "
+                f"eye {eye_idx + 1}/{len(_camera.eyes)} calculated in "
+                f"{time.perf_counter() - optical_start:.3f}s after visibility",
+                show=verbose > 0,
+            )
             return
 
         def _full_vox_proc(sv_gc, S):
@@ -918,13 +1140,13 @@ class World:
             -------
             tuple[np.ndarray, np.ndarray, np.ndarray]
                 COO ``(data, row, col)`` triplet of the resulting
-                ``(N_subpixel, N_vox)`` sparse contribution.
+                ``(N_pixel, N_vox)`` sparse contribution.
             """
-            I = _camera.calc_image_vec(eye_idx, points=sv_gc, verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_vox * K)
-            res = (I @ S).tocoo()  # (N_subpixel, N_vox)
-            del I, sv_gc
-            gc.collect()
+            I_subpixel = _camera.calc_image_vec(
+                eye_idx, points=sv_gc, verbose=0, check_visibility=False,
+            )
+            res = (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
+            del I_subpixel, sv_gc
             return res.data, res.row, res.col
 
         def _partial_vox_proc(sv_gc, S, mask):
@@ -942,58 +1164,57 @@ class World:
             """
             if not np.any(mask):
                 return np.array([]), np.array([], dtype=np.int32), np.array([], dtype=np.int32)
-            I = _camera.calc_image_vec(eye_idx, points=sv_gc[mask], verbose=0,
-                                       check_visibility=False)  # (N_subpixel, num_visible*K)
+            I_subpixel = _camera.calc_image_vec(
+                eye_idx, points=sv_gc[mask], verbose=0, check_visibility=False,
+            )
             S = S[mask, :]
-            res = (I @ S).tocoo()  # (N_subpixel, N_vox)
-            del I, sv_gc, mask
-            gc.collect()
+            res = (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
+            del I_subpixel, sv_gc, mask
             return res.data, res.row, res.col
 
-        def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res):
-            """Build the sub-voxel-to-image integration matrix for the given voxels.
+        def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res, points=None):
+            """Build direct center-to-sub-voxel interpolation for a chunk."""
+            return self.voxel.sub_voxel_interpolator_from_centers(
+                n=voxel_indices, res=subvoxel_res, points=points,
+            )
 
-            Combines the vertex-to-sub-voxel interpolation weights for
-            ``voxel_indices`` at resolution ``subvoxel_res`` with a per-row
-            scaling by ``voxel.volume / samples_per_voxel`` so that summing
-            over a voxel's sub-voxel rows approximates an integral over the
-            voxel (independent of ``subvoxel_res``) rather than scaling with
-            the sample count.
+        def _sparse_nbytes(matrix):
+            matrix = matrix.tocsr()
+            return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
-            Parameters
-            ----------
-            voxel_indices : int or array-like of int
-                Voxel numbers to build sub-voxel samples for.
-            subvoxel_res : int or (int, int, int)
-                Sub-voxel resolution; temporarily assigned to ``self.voxel.res``.
+        def _triplet_nbytes(data, row, col):
+            return data.nbytes + row.nbytes + col.nbytes
 
-            Returns
-            -------
-            scipy.sparse.csr_matrix
-                Matrix mapping voxel values to weighted sub-voxel samples,
-                shape ``(len(voxel_indices) * samples_per_voxel, N_voxel)``.
-            """
-            voxel_indices = np.atleast_1d(voxel_indices)
-            self.voxel.res = subvoxel_res
-            sub_voxel_matrix = sparse.csr_matrix(self.voxel._sub_voxel_matrix)
-            samples_per_voxel = sub_voxel_matrix.shape[0]
-            vertex_indices = self.voxel.vertices_indices[voxel_indices].reshape(-1)
-            selector = sparse.coo_matrix((np.ones(vertex_indices.size, dtype=bool),
-                                          (np.arange(vertex_indices.size), vertex_indices)),
-                                         shape=(vertex_indices.size, self.voxel.N_grid),
-                                         dtype=bool).tocsr()
-            vertex_to_voxel = selector @ self.voxel.voxel2vertices
-            block_interp = sparse.kron(sparse.eye(voxel_indices.size, format="csr"),
-                                       sub_voxel_matrix, format="csr")
-            matrix = block_interp @ vertex_to_voxel
-            # Convert interpolated sub-voxel samples into an integral over each
-            # selected voxel, so changing res refines the quadrature instead of
-            # multiplying the total signal by the number of samples.
-            row_weights = np.repeat(self.voxel.volume[voxel_indices] / samples_per_voxel, samples_per_voxel)
-            return sparse.diags(row_weights, format="csr") @ matrix
+        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
 
-        def _process_tasks(futures, desc):
-            """Collect completed executor futures into one sparse ``(N_subpixel, N_vox)`` matrix.
+        def _estimate_batch_size(sample_count, sample_points, sample_image,
+                                 sample_interpolator, sample_result, total_voxels):
+            """Estimate a chunk size from transient bytes and legacy nnz cap."""
+            transient_bytes = (
+                sample_points.nbytes
+                + _sparse_nbytes(sample_image)
+                + _sparse_nbytes(sample_interpolator)
+                + _sparse_nbytes(sample_result)
+            )
+            bytes_per_voxel = max(1.0, transient_bytes / sample_count)
+            in_flight = 1 if n_jobs == 1 else 2 * n_jobs
+            bytes_per_chunk = max(1, max_working_memory // in_flight)
+            memory_batch = max(1, int(bytes_per_chunk // bytes_per_voxel))
+
+            nnz_per_voxel = sample_image.nnz / sample_count
+            if nnz_per_voxel == 0:
+                nnz_per_voxel = screen.N_subpixel * 0.01
+            nnz_batch = max(1, int(np.ceil(max_nnz / nnz_per_voxel) / n_jobs))
+            batch = min(memory_batch, nnz_batch, total_voxels)
+            my_print(
+                f"Estimated transient memory={bytes_per_voxel / 2 ** 20:.3f} MiB/voxel, "
+                f"chunk budget={bytes_per_chunk / 2 ** 20:.1f} MiB",
+                show=verbose > 1,
+            )
+            return max(1, int(batch))
+
+        def _process_parallel_chunks(chunks, process_chunk, desc):
+            """Process a bounded set of chunks and consolidate results as they finish.
 
             Drains ``futures`` as they complete (via
             ``concurrent.futures.as_completed``), periodically consolidating
@@ -1002,61 +1223,86 @@ class World:
 
             Parameters
             ----------
-            futures : list[concurrent.futures.Future]
-                Futures each resolving to a ``(data, row, col)`` COO triplet,
-                e.g. as produced by :func:`_full_vox_proc` or
-                :func:`_partial_vox_proc`.
+            chunks : iterable[slice]
+                Chunk slices to process.
+            process_chunk : callable
+                Callable accepting a chunk and returning a COO triplet.
             desc : str
                 Progress-bar label.
 
             Returns
             -------
             scipy.sparse.coo_matrix
-                Sum of all future results, shape ``(screen.N_subpixel, N_vox)``.
+                Sum of all future results, shape ``(screen.N_pixel, N_vox)``.
             """
-            res = sparse.coo_matrix((screen.N_subpixel, N_vox))
+            res = sparse.csr_matrix((screen.N_pixel, N_vox))
             data_buf, row_buf, col_buf = [], [], []
-            with tqdm(desc=desc, total=len(futures), disable=verbose <= 0) as pbar:
-                for i, fut in enumerate(as_completed(futures)):
-                    data, row, col = fut.result()
-                    futures.remove(fut)  # free memory
-                    data_buf.append(data)
-                    row_buf.append(row)
-                    col_buf.append(col)
-                    # summarize every 10 chunks to reduce memory usage
-                    if i % 10 == 0:
-                        sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                        (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
-                        res += sum_of_buf
-                        # clear buffer
-                        data_buf, row_buf, col_buf = [], [], []
-                    pbar.update()
+            buffer_nbytes = 0
+            chunk_iter = iter(chunks)
+            max_in_flight = 2 * n_jobs
 
-            # summarize remaining buffer
-            if data_buf:
-                sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                               shape=(screen.N_subpixel, N_vox))
-                res += sum_of_buf
-                del data_buf, row_buf, col_buf
-                gc.collect()
+            def _flush_buffer():
+                nonlocal res, data_buf, row_buf, col_buf, buffer_nbytes
+                if not data_buf:
+                    return
+                block = sparse.coo_matrix(
+                    (np.concatenate(data_buf),
+                     (np.concatenate(row_buf), np.concatenate(col_buf))),
+                    shape=(screen.N_pixel, N_vox),
+                ).tocsr()
+                res += block
+                data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
 
-            return res
+            with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+                pending = set()
+
+                def _submit_next():
+                    try:
+                        chunk = next(chunk_iter)
+                    except StopIteration:
+                        return False
+                    pending.add(executor.submit(process_chunk, chunk))
+                    return True
+
+                while len(pending) < max_in_flight and _submit_next():
+                    pass
+
+                with tqdm(desc=desc, total=len(chunks), disable=verbose <= 0) as pbar:
+                    while pending:
+                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                        for fut in done:
+                            data, row, col = fut.result()
+                            data_buf.append(data)
+                            row_buf.append(row)
+                            col_buf.append(col)
+                            buffer_nbytes += _triplet_nbytes(data, row, col)
+                            if buffer_nbytes >= result_buffer_limit:
+                                _flush_buffer()
+                            pbar.update()
+                            _submit_next()
+
+            _flush_buffer()
+
+            return res.tocoo()
 
         if full_voxels.size == 0:
             my_print("Skipping full voxels processing.", show=verbose > 0)
         else:
+            full_start = time.perf_counter()
             # random sample voxels to estimate n_step
             sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
             sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=full_subvoxel_res)
             sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
                                               check_visibility=False)  # (N_subpixel, sample_size * K)
-            est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
-            if est_nnz == 0:
-                density = 0.01
-                est_nnz = screen.N_subpixel * density
-            batch_size = max(1, int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, full_voxels.size)))
+            sample_S = _sub_voxel_interpolator_matrix(sample_n, full_subvoxel_res,
+                                                      points=sample_gc)
+            sample_result = screen.transform_matrix @ (sample_I @ sample_S)
+            batch_size = _estimate_batch_size(
+                sample_n.size, sample_gc, sample_I, sample_S, sample_result,
+                full_voxels.size,
+            )
+            del sample_I, sample_S, sample_result
             _chunks = [slice(_i, min(_i + batch_size, full_voxels.size)) for _i in
                        range(0, full_voxels.size, batch_size)]
             my_print(f"Processing full voxels in {len(_chunks)} chunks "
@@ -1066,47 +1312,50 @@ class World:
             if n_jobs == 1:
                 # initialize result matrix for full voxels
                 data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
                     sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
-                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res,
+                                                       points=sv_gc)
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
                     row_buf.append(row)
                     col_buf.append(col)
+                    buffer_nbytes += _triplet_nbytes(data, row, col)
 
-                    # summarize every 10 chunks to reduce memory usage
-                    if i % 10 == 0:
+                    if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
+                                                       shape=(screen.N_pixel, N_vox))
                         full_res = full_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
+                        buffer_nbytes = 0
                 # summarize remaining buffer
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                     (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                   shape=(screen.N_subpixel, N_vox))
+                                                   shape=(screen.N_pixel, N_vox))
                     full_res = full_res + sum_of_buf
                     del data_buf, row_buf, col_buf
-                    gc.collect()
             else:
-                with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-                    futures = []
-                    # submit tasks
-                    for _slice in my_tqdm(_chunks, desc="Submitting full voxel tasks",
-                                          disable=verbose <= 0, leave=False):
-                        sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
-                        S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res)
-                        futures.append(executor.submit(_full_vox_proc, sv_gc, S))
+                def _process_full_chunk(_slice):
+                    voxel_indices = full_voxels[_slice]
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=full_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, full_subvoxel_res,
+                                                       points=sv_gc)
+                    return _full_vox_proc(sv_gc, S)
 
-                full_res = _process_tasks(futures, desc="Processing full voxels")
+                full_res = _process_parallel_chunks(_chunks, _process_full_chunk,
+                                                    desc="Processing full voxels")
 
             my_print(f"Full voxels processed.", show=verbose > 0)
+        full_elapsed = 0.0 if full_voxels.size == 0 else time.perf_counter() - full_start
 
         if partial_voxels.size == 0:
             my_print("Skipping partial voxels processing.", show=verbose > 0)
         else:
+            partial_start = time.perf_counter()
             # random sample voxels to estimate n_step
             sample_mask = None
             for _ in range(10):  # avoid all non-visible samples without risking an infinite loop
@@ -1121,13 +1370,18 @@ class World:
             if sample_mask is not None and np.any(sample_mask):
                 sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc[sample_mask], verbose=0,
                                                   check_visibility=False)  # (N_subpixel, num_visible)
-                est_nnz = sample_I.nnz / sample_n.size  # average nnz per voxel
+                sample_S = _sub_voxel_interpolator_matrix(sample_n, partial_subvoxel_res,
+                                                          points=sample_gc)
+                sample_S = sample_S[sample_mask, :]
             else:
-                est_nnz = 0
-            if est_nnz == 0:
-                density = 0.01
-                est_nnz = screen.N_subpixel * density
-            batch_size = max(1, int(np.clip(np.ceil(max_nnz / est_nnz) / n_jobs, 1, partial_voxels.size)))
+                sample_I = sparse.csr_matrix((screen.N_subpixel, 0))
+                sample_S = sparse.csr_matrix((0, N_vox))
+            sample_result = screen.transform_matrix @ (sample_I @ sample_S)
+            batch_size = _estimate_batch_size(
+                sample_n.size, sample_gc, sample_I, sample_S, sample_result,
+                partial_voxels.size,
+            )
+            del sample_I, sample_S, sample_result
             _chunks = [slice(_i, min(_i + batch_size, partial_voxels.size)) for _i in
                        range(0, partial_voxels.size, batch_size)]
             my_print(f"Processing partial voxels in {len(_chunks)} chunks "
@@ -1137,53 +1391,64 @@ class World:
             if n_jobs == 1:
                 # initialize result matrix for partial voxels
                 data_buf, row_buf, col_buf = [], [], []
+                buffer_nbytes = 0
                 for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing partial voxels", disable=verbose <= 0)):
                     sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
                     mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
                                                     eye_idx=eye_idx, verbose=0).squeeze()
                     mask = mask & self._inside_points(sv_gc)
-                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
+                    S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res,
+                                                       points=sv_gc)
                     data, row, col = _partial_vox_proc(sv_gc, S, mask)
                     data_buf.append(data)
                     row_buf.append(row)
                     col_buf.append(col)
+                    buffer_nbytes += _triplet_nbytes(data, row, col)
 
-                    # summarize every 10 chunks to reduce memory usage
-                    if i % 10 == 0:
+                    if buffer_nbytes >= result_buffer_limit:
                         sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                         (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_subpixel, N_vox))
+                                                       shape=(screen.N_pixel, N_vox))
                         partial_res = partial_res + sum_of_buf
                         # clear buffer
                         data_buf, row_buf, col_buf = [], [], []
+                        buffer_nbytes = 0
                 # summarize remaining buffer
                 if data_buf:
                     sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
                                                     (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                   shape=(screen.N_subpixel, N_vox))
+                                                   shape=(screen.N_pixel, N_vox))
                     partial_res = partial_res + sum_of_buf
                     del data_buf, row_buf, col_buf
-                    gc.collect()
             else:
-                with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-                    futures = []
-                    # submit tasks
-                    for _slice in my_tqdm(_chunks, desc="Submitting partial voxel tasks",
-                                          disable=verbose <= 0, leave=False):
-                        sv_gc = self.voxel.get_sub_voxel_centers(n=partial_voxels[_slice], res=partial_subvoxel_res)
-                        mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
-                                                        eye_idx=eye_idx, verbose=0).squeeze()
-                        mask = mask & self._inside_points(sv_gc)
-                        S = _sub_voxel_interpolator_matrix(partial_voxels[_slice], partial_subvoxel_res)
-                        futures.append(executor.submit(_partial_vox_proc, sv_gc, S, mask))
+                def _process_partial_chunk(_slice):
+                    voxel_indices = partial_voxels[_slice]
+                    sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=partial_subvoxel_res)
+                    mask = self.find_visible_points(sv_gc, camera_idx=camera_idx,
+                                                    eye_idx=eye_idx, verbose=0).squeeze()
+                    mask = mask & self._inside_points(sv_gc)
+                    S = _sub_voxel_interpolator_matrix(voxel_indices, partial_subvoxel_res,
+                                                       points=sv_gc)
+                    return _partial_vox_proc(sv_gc, S, mask)
 
-                partial_res = _process_tasks(futures, desc="Processing partial voxels")
+                partial_res = _process_parallel_chunks(_chunks, _process_partial_chunk,
+                                                       desc="Processing partial voxels")
 
             my_print(f"Partial voxels processed.", show=verbose > 0)
+        partial_elapsed = 0.0 if partial_voxels.size == 0 else time.perf_counter() - partial_start
 
+        assembly_start = time.perf_counter()
         self._projection[camera_idx][eye_idx] = (full_res + partial_res).tocsr()
         del full_res, partial_res
-        gc.collect()
+        assembly_elapsed = time.perf_counter() - assembly_start
+        total_elapsed = time.perf_counter() - timing_start
+        my_print(
+            "Projection timing: "
+            f"visibility={visibility_elapsed:.3f}s, full={full_elapsed:.3f}s, "
+            f"partial={partial_elapsed:.3f}s, assembly={assembly_elapsed:.3f}s, "
+            f"total={total_elapsed:.3f}s",
+            show=verbose > 1,
+        )
         my_print(f"Projection matrix for camera {camera_idx!r}, "
                  f"eye {eye_idx + 1}/{len(_camera.eyes)} is calculated.", show=verbose > 0)
         return
@@ -1225,7 +1490,10 @@ class World:
 
     def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
                               partial_res: int | tuple[int, int, int] = None,
-                              force: bool = False):
+                              force: bool = False,
+                              max_working_memory: int = 1_000_000_000,
+                              chunk_strategy: str = "voxel",
+                              optical_bin_width_pixels=1.0):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1245,11 +1513,22 @@ class World:
         force : bool, optional
             When ``True`` (default ``False``) forces recalculation even if
             cached matrices already exist with matching shapes.
+        max_working_memory : int, optional
+            Approximate byte budget for transient in-flight chunk data.
+            Defaults to one billion bytes.
+        chunk_strategy : {"voxel", "optical"}, optional
+            Projection work ordering.  The default preserves contiguous voxel
+            chunks.  ``"optical"`` enables the experimental, uncompressed
+            optical-bin validation path.
+        optical_bin_width_pixels : float or (float, float), optional
+            Optical-bin width in detector-pixel pitches when
+            ``chunk_strategy="optical"``. Defaults to one pixel.
 
         Notes
         -----
         Aggregated matrices are stored in :attr:`_P_matrix` keyed by camera
-        index, while per-eye subpixel matrices remain in :attr:`_projection`.
+        index, while per-eye pixel-space matrices remain in
+        :attr:`_projection`. Subpixels are transient integration samples.
         """
         my_print("Calculating projection matrix", show=verbose > 0)
         indices = list(self.cameras.keys())
@@ -1258,13 +1537,18 @@ class World:
             for _e in range(len(self.cameras[_c].eyes)):
                 my_print(f"Processing camera {_c!r}, eye {_e + 1}/{len(self.cameras[_c].eyes)}",
                          show=verbose > 0)
-                if force or (self._projection[_c][_e] is None) or \
-                        (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_subpixel, self.voxel.N)):
+                # The experimental optical ordering is intentionally rebuilt;
+                # cache keys do not encode projection strategy yet.
+                if force or chunk_strategy == "optical" or (self._projection[_c][_e] is None) or \
+                        (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                     my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
                     self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
                                                    verbose=verbose, max_nnz=100_000_000,
-                                                   partial_res=partial_res)
+                                                   partial_res=partial_res,
+                                                   max_working_memory=max_working_memory,
+                                                   chunk_strategy=chunk_strategy,
+                                                   optical_bin_width_pixels=optical_bin_width_pixels)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "
@@ -1272,9 +1556,11 @@ class World:
             if flag or (self._P_matrix[_c] is None) or \
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                 # at least one eye is recalculated
-                # combine all projection matrices
-                _proj = sum(self._projection[_c], sparse.csr_matrix((self.cameras[_c].screen.N_subpixel, self.voxel.N)))
-                self._P_matrix[_c] = self.cameras[_c].screen.transform_matrix * _proj
+                # Per-eye matrices already share physical pixel coordinates.
+                self._P_matrix[_c] = sum(
+                    self._projection[_c],
+                    sparse.csr_matrix((self.cameras[_c].screen.N_pixel, self.voxel.N)),
+                )
                 my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
                 my_print(f"Projection matrix for camera {_c!r} is already calculated.",

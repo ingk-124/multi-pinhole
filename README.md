@@ -6,6 +6,7 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 - `multi_pinhole/`: Python package to simulate multi-pinhole imaging.
 - `multi_pinhole/utils/`: Package-internal utility functions for data processing and visualization.
 - `docs/`: Documentation files and user guides.
+- `docs/ja/projection-roadmap.md`: Projection-matrix validation and improvement backlog.
 - `examples/`: Example and analysis scripts demonstrating how to use the package.
 
 ## Installation

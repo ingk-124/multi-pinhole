@@ -61,7 +61,10 @@ limits for later plotting (`wall_ranges`).
 `save_world`/`load_world` serialize complete scenes with `dill`
 (`pickle`-compatible but able to serialize the closures used internally,
 e.g. by `coordinate_transform`), making it easy to checkpoint long-running
-simulations.【F:multi_pinhole/world.py†L283-L311】 Property setters for
+simulations. Serialized projection caches carry an explicit schema version;
+loading a legacy or incompatible version keeps reusable visibility results but
+invalidates `_projection` and `_P_matrix` so they are recomputed safely.
+【F:multi_pinhole/world.py†L283-L311】 Property setters for
 cameras, voxels, and walls reuse cached visibility/projection data when
 possible but otherwise call `_invalidate_visibility_cache()`, which resets
 `_visible_vertices`, `_visible_voxels`, `_projection`, and `_P_matrix` back
@@ -167,29 +170,30 @@ ray-tracing:
   samples, and only project the surviving ones.
 
 Both paths route through `_sub_voxel_interpolator_matrix`, which builds the
-matrix `S` mapping *voxel corner values* to weighted sub-voxel samples:
-it looks up each voxel's 8 corner vertex indices, applies the trilinear
-interpolation weights from `Voxel.interpolate_matrix_from_vertices(res)`
-(described in `docs/overview.md`'s "Voxel grid geometry" section) to
-combine them into sub-voxel sample values, and then scales each row by
+matrix `S` mapping values at voxel centers directly to weighted sub-voxel
+samples.  An interior sample uses trilinear weights from at most eight
+neighboring voxel centers; samples in the outer half of a boundary voxel are
+clamped to the nearest center.  Each row is scaled by
 `voxel.volume / samples_per_voxel`. That scaling is what turns a sum over a
-voxel's sub-voxel rows into an approximation of the *integral* of the
-projected signal over the voxel's volume — increasing `res` refines the
-quadrature (more, closer sub-voxel samples) without changing the total
-integrated signal, which is the property you want for convergence as `res`
-increases.
+voxel's sub-voxel rows into an approximation of the *integral* over the
+voxel's volume — increasing `res` refines the quadrature without changing the
+total integrated signal. Direct center interpolation also reproduces affine
+emission profiles in the grid interior without the wider smoothing stencil of
+the former center-to-vertex-to-sub-voxel interpolation.
 
-Concretely, for a batch of voxels the per-eye subpixel image is
+Concretely, for a batch of voxels the persistent per-eye pixel projection is
 
 ```
-I_subpixel = calc_image_vec(eye, sub_voxel_centers)  @  S
+P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 ```
 
 where `calc_image_vec` (from `docs/core.md`) is the `(N_subpixel,
-N_sub_voxel_samples)` ray-tracing/rasterization matrix, and `S` is the
-`(N_sub_voxel_samples, N_voxel_batch)` interpolation/integration matrix
-above — so `I_subpixel` ends up `(N_subpixel, N_voxel_batch)`: exactly the
-per-eye contribution to the projection matrix for that batch of voxels.
+N_sub_voxel_samples)` ray-tracing/rasterization matrix, `T` is the exact
+`(N_pixel, N_subpixel)` detector-binning matrix, and `S` is the
+`(N_sub_voxel_samples, N_voxel_batch)` interpolation/integration matrix.
+Thus `P_eye` has shape `(N_pixel, N_voxel_batch)`. Applying `T` before
+persistent sparse assembly retains subpixel quadrature accuracy without
+retaining subpixel projection rows.
 
 ### Chunking and parallelism
 
@@ -200,28 +204,30 @@ function:
 1. **Estimates sparsity** by running `calc_image_vec` on a small random
    sample of voxels (20, or fewer if there aren't that many) and measuring
    the average number of non-zero entries (`nnz`) per voxel.
-2. **Picks a batch size** so that `batch_size × est_nnz` stays under
-   `max_nnz` (default `100_000_000`), divided across `n_jobs` parallel
-   workers.
+2. **Picks a batch size** from a sample of the point, image, interpolation,
+   and result matrices. The estimated transient bytes stay within
+   `max_working_memory` (one billion bytes by default) across the bounded
+   in-flight task set. The legacy `max_nnz` guard remains as a second cap.
 3. **Processes chunks either serially or via a `ThreadPoolExecutor`**
-   (`n_jobs > 1`), submitting one task per chunk. Each task returns a COO
+   (`n_jobs > 1`), keeping at most twice `n_jobs` tasks in flight. Each task
+   creates its sample points and interpolation matrix inside the worker and returns a COO
    `(data, row, col)` triplet rather than a full sparse matrix object, and
-   `_process_tasks` drains completed futures via
-   `concurrent.futures.as_completed`, periodically consolidating buffered
-   triplets (every 10 chunks) into a running `scipy.sparse.coo_matrix` sum
-   to bound peak memory rather than holding every chunk's result in memory
-   simultaneously at once.
+   `_process_parallel_chunks` drains completed futures immediately,
+   consolidating buffered results when their array bytes reach a limit derived
+   from `max_working_memory`, rather than after a fixed number of chunks. The
+   buffered triplets are folded into a running sparse sum to bound peak memory
+   rather than holding every chunk's result simultaneously.
 
 This entire dance (steps 1-3, run separately for the full-visibility and
 partial-visibility voxel groups) exists purely as a memory/throughput
 trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
 
-Per-eye results are stored in `self._projection[camera_idx][eye_idx]`.
-`set_projection_matrix` then sums all eyes on a camera and applies the
-screen's `transform_matrix` (subpixel → pixel binning, from `docs/core.md`)
-to produce the final pixel-space matrix in
-`self._P_matrix[camera_idx]`.【F:multi_pinhole/world.py†L1228-L1234】
+Each projected subvoxel image is immediately passed through the screen's
+`transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye
+pixel-space results are stored in `self._projection[camera_idx][eye_idx]`.
+`set_projection_matrix` sums all eyes into `self._P_matrix[camera_idx]`.
+Subpixel rows are transient integration data, not a persistent projection.
 
 ### `trace_line`: projecting a handful of points without building the full matrix
 
@@ -265,10 +271,10 @@ Putting the pipeline together end to end (see
      center), projects fully-visible voxels' centers through the eye with
      `calc_image_vec`, and (for any partially-visible voxels) re-checks
      visibility at the sample level before projecting.
-   * The per-eye subpixel matrix lands in `world.projection[0][0]`
-     (shape `(N_subpixel, 27)`); `set_projection_matrix` then applies the
-     screen's pixel-binning transform to produce `world.P_matrix[0]`
-     (shape `(N_pixel, 27)`).
+   * Pixel binning is applied while each chunk is assembled. The per-eye
+     pixel matrix lands in `world.projection[0][0]` (shape
+     `(N_pixel, 27)`); `set_projection_matrix` sums the eye matrices into
+     `world.P_matrix[0]`, also with shape `(N_pixel, 27)`.
 4. Given any 27-element `emission` vector, `world.P_matrix[0] @ emission`
    is the simulated pixel image — no further ray-tracing needed unless the
    geometry (camera, voxel grid, apertures, walls, or inside-vertex mask)

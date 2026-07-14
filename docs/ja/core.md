@@ -68,7 +68,7 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 ### cosine による減衰と etendue 重み
 
-`Screen.cosine(eye)` は、各**サブピクセル**について、eye の光軸とそのサブピクセルへの直線とのなす角の余弦を計算します。`tangent = |subpixel_position − eye_position| / focal_length` とすると `cosine = 1 / sqrt(1 + tangent²)`（標準的な `cos(atan(x)) = 1/√(1+x²)` の恒等式）です。【F:multi_pinhole/core.py†L820-L842】`etendue_per_subpixel` はさらに、各サブピクセルの面積を `cos⁴(θ)`——小さな aperture を通して見た平面検出器における古典的な放射照度の減衰則——で重み付けし、`4π` で割ります：`G_subpix = A_subpixel · cos(θ)⁴ / (4π)`。【F:multi_pinhole/core.py†L844-L862】
+`Screen.cosine(eye)` は、各**サブピクセル**について、eye の光軸とそのサブピクセルへの直線とのなす角の余弦を計算します。`tangent = |subpixel_position − eye.position| / focal_length` とすると `cosine = 1 / sqrt(1 + tangent²)` です。`etendue_per_subpixel` は小開口近似の診断値 `A_subpixel · cos⁴(θ) / (4π)` として残していますが、有限EyeではsourceとEye内部位置の両方に依存するため、実際のラスタライザはこのdetector側だけの値を再利用しません。
 
 ### `ray2image_grid`：光線バンドルを疎な画像へ変換する
 
@@ -77,15 +77,14 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 1. **画像座標へ変換する。** `uv = xy2uv(rays.XY)`。
 2. **各光線の screen 上でのスポットサイズを計算する。** 各 eye は物理的な `eye_size`（自身の aperture の広がり）を持ちます。ある光線の拡大率のもとでは、**投影された**足跡の半径（または半径・半辺）は `half = 0.5 · eye_size · zoom_rate` です。これは、有限サイズの pinhole／レンズがその奥行きにある点光源に対して screen 上に落とす幾何光学的なぼやけの円板（または楕円・矩形）です——光源点が焦点面から遠いほど `zoom_rate` は大きくなり、ぼやけたスポットも大きくなります。
 3. **足跡が screen に一切かからない光線を安価に棄却する。** サブピクセルグリッドの範囲（`u_min..u_max`、`v_min..v_max`）に対する軸並行境界ボックス（AABB）テストによって行います——これは（円形とは限らない）足跡を囲むバウンディングボックスを示す ASCII 図とともにコード中にインラインでドキュメント化されています。
-4. **生き残った各光線について、候補サブピクセルの小さなタイルにクリップする**（`i_min..i_max`、`j_min..j_max` は足跡の AABB が重なるサブピクセルインデックスの範囲）。そのタイル内でのみ、正確なメンバーシップテストを実行します：`numba` で JIT コンパイルされた `indexer` 関数が、サブピクセル中心ごとに、円形／楕円形の eye 形状なら `((u−u_c)/a_u)² + ((v−v_c)/a_v)² < 1`、矩形の eye 形状なら `|u−u_c| < a_u/2 かつ |v−v_c| < a_v/2` を判定します。screen 全体ではなく AABB タイルに限定して正確なテストを行うことが、数百万本の光線に対してスケールする鍵です。
-5. **疎行列を組み立て、etendue の重みを適用する。** タイルごとのヒットリストを連結して CSR/CSC 行列を構築し、2種類の係数でスケーリングします：`etendue_per_subpixel(eye)`（上で導出した検出器側の重み）と、光線ごとの係数
-   `etendue_per_ray = 1 / (zoom_rate² · Z² · ray_cosine)`（`ray_cosine` はその光線自身の screen 上の位置で評価した同じ `cos(atan(tangent))` の量）です。インラインコメントはその意図を次のように説明しています：検出器上の足跡面積は `zoom_rate²` で大きくなるため、これで割ることで、点光源が pinhole を通して見る立体角に等しい積分信号を保ち、`ray_cosine` はサブピクセル側の `cos⁴` 係数を光源側の `cos³` 立体角係数へ変換します。【F:multi_pinhole/core.py†L986-L999】（このモジュールは、その放射測定の恒等式をインラインコメント以上に一から導出してはいません。完全な導出を知りたい読者は、このコメントを意図の正式な記述として扱うべきであり、ここで改めて導出するものではありません。）
+4. **生き残った各光線について、候補サブピクセルの小さなタイルにクリップする**（`i_min..i_max`、`j_min..j_max` は足跡の AABB が重なるサブピクセルインデックスの範囲）。各cellについて、完全内ならcell全面積、完全外なら0、境界なら楕円と矩形または矩形同士の解析的な交差面積を計算します。中心点の内外だけで判定しないため、spotが1 pixelより小さくても`subpixel_resolution=1`で面積を保存できます。screen 全体ではなくAABBタイルだけを調べることが、数百万本の光線に対してスケールする鍵です。
+5. **Eye内部位置ごとの局所etendueを積分して疎行列を組み立てる。** spot内のdetector位置 `q` を `a = (q - q_center) / zoom_rate` によりEye内部位置へ逆写像します。Eye中心から見たsourceの横方向offsetを `rho` とすると、局所距離は `D² = Z² + |rho-a|²`、detector面積あたりの重みは `Z / (4π · zoom_rate² · D³)` です。この密度を正確なspot/cell交差領域上で有界な決定論的quadratureにより積分し、その値をCSR/CSCへ格納します。spot全体が大きな1 pixelに入る場合もEye形状上で直接積分するため、局所etendueはdetectorのsubpixel分割に依存しません。
 
 `Screen` のその他のヘルパーは、より単純な座標変換／集約用のユーティリティです：`xy2uv`（カメラの `(X,Y)` → 画像の `(u,v)`。上述）、`uv2subpixel_index`（画像座標 → 整数のサブピクセルインデックス。範囲外のヒットは除外）、`subpixel_to_pixel`（疎なダウンサンプリング。上述）、`show_image`（Matplotlib によるピクセル／サブピクセル画像の表示）。【F:multi_pinhole/core.py†L1001-L1150】
 
 ## Camera：eye・aperture・screen を結びつける
 
-`Camera` は（すべて同じ `eye_type` を共有する）1つ以上の `Eye` インスタンス、`Aperture` オブジェクトのリスト、1つの `Screen` をまとめ、`camera_position` と `rotation_matrix` によってアセンブリ全体をワールド空間に配置・向き付けします。【F:multi_pinhole/core.py†L1185-L1232】コンストラクタは、最小の eye の `eye_size` が screen の `subpixel_size` より大きいことを強制します。これにより、1本の光線の足跡が1サブピクセルより小さくなること（それは上記のラスタライズステップで暗黙のうちに取りこぼされてしまいます）がないようにしています。
+`Camera` は（すべて同じ `eye_type` を共有する）1つ以上の `Eye` インスタンス、`Aperture` オブジェクトのリスト、1つの `Screen` をまとめ、`camera_position` と `rotation_matrix` によってアセンブリ全体をワールド空間に配置・向き付けします。【F:multi_pinhole/core.py†L1185-L1232】Eye spotはpixel/subpixelより小さくても構いません。解析的な重なり面積で光量を保存するため、Camera生成時にdetector解像度の制約は課しません。
 
 1つのscreenと1つのpinholeからなる一般的な構成には、`Camera.single_pinhole(...)` を利用できます。このファクトリは、screen中心とeye中心をカメラ原点に置き、`camera_position=(0, 0, 0)`、単位回転行列のローカル基準姿勢で光学系を生成します。その後、Camera全体を配置します。
 
