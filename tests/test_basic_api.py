@@ -336,6 +336,97 @@ def test_projection_pipeline_supports_string_camera_key():
     assert world.P_matrix["right"].shape == (camera.screen.N_pixel, voxel.N_voxel)
 
 
+def test_world_estimate_source_resolution_is_batched_and_nonmutating():
+    camera = make_camera()
+    camera.screen.subpixel_resolution = 2
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-1.0, 1.0), (20.0, 40.0)),
+        shape=(4, 2, 5),
+    )
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+    selected = np.array([0, 3, 8, 17, 31])
+
+    batched = world.estimate_source_resolution(
+        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=2,
+    )
+    single_batch = world.estimate_source_resolution(
+        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=100,
+    )
+
+    np.testing.assert_array_equal(batched.resolution, single_batch.resolution)
+    np.testing.assert_allclose(batched.projected_span_cells,
+                               single_batch.projected_span_cells)
+    np.testing.assert_array_equal(batched.capped, single_batch.capped)
+    assert batched.resolution.shape == (selected.size, 3)
+    assert world.projection["main"] == [None]
+    assert world.P_matrix["main"] is None
+
+
+def test_world_estimate_source_resolution_can_use_pixel_pitch():
+    camera = make_camera()
+    camera.screen.subpixel_resolution = 4
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-1.0, 1.0), (20.0, 24.0)),
+        shape=(2, 1, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+
+    pixel = world.estimate_source_resolution(0, 0, detector_grid="pixel",
+                                             max_resolution=8)
+    subpixel = world.estimate_source_resolution(0, 0, detector_grid="subpixel",
+                                                max_resolution=8)
+
+    assert np.all(subpixel.resolution >= pixel.resolution)
+    with pytest.raises(ValueError, match="detector_grid"):
+        world.estimate_source_resolution(0, 0, detector_grid="unknown")
+
+
+def test_adaptive_source_resolution_matches_fixed_endpoint_resolutions():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    aperture = Aperture(shape="circle", size=50.0,
+                        position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                    camera_position=(0.0, 0.0, -20.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0), (-1.0, 1.0), (20.0, 24.0)),
+        shape=(2, 2, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True)
+    fixed_one = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        adaptive_source_resolution=True, max_projected_step=1e6,
+    )
+    adaptive_one = world.P_matrix[0].copy()
+    np.testing.assert_allclose(adaptive_one.toarray(), fixed_one.toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+    world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
+    fixed_two = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        adaptive_source_resolution=True, max_projected_step=1e-12,
+    )
+    adaptive_two = world.P_matrix[0].copy()
+    np.testing.assert_allclose(adaptive_two.toarray(), fixed_two.toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+
+def test_adaptive_source_resolution_rejects_optical_work_ordering():
+    world = World(cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="chunk_strategy='voxel'"):
+        world.set_projection_matrix(
+            res=2, verbose=0, parallel=1,
+            chunk_strategy="optical", adaptive_source_resolution=True,
+        )
+
+
 def test_eye_calc_rays_projects_front_points_and_masks_back_points():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
     points = np.array([

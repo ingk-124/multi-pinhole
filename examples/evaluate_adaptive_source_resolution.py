@@ -29,16 +29,6 @@ def build_case():
     return camera, voxel
 
 
-def voxel_edge_lengths(voxel, indices):
-    """Return compact per-cell world-axis lengths for selected voxels."""
-    positions = voxel.get_voxel_position(indices).astype(int)
-    return np.column_stack((
-        voxel.dx_axis[positions[:, 0]],
-        voxel.dy_axis[positions[:, 1]],
-        voxel.dz_axis[positions[:, 2]],
-    ))
-
-
 def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
     """Calculate and plot projected spans and selected axis resolutions."""
     output_dir = (Path(output_dir) if output_dir is not None else
@@ -47,7 +37,7 @@ def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
     camera, voxel = build_case()
     indices = np.arange(voxel.N_voxel)
     centers = voxel.get_gravity_center(indices)
-    edge_lengths = voxel_edge_lengths(voxel, indices)
+    edge_lengths = voxel.get_edge_lengths(indices)
     spans = projected_axis_spans(camera, 0, centers, edge_lengths)
     estimate = select_source_resolution(
         spans,
