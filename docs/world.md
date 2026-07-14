@@ -61,7 +61,10 @@ limits for later plotting (`wall_ranges`).
 `save_world`/`load_world` serialize complete scenes with `dill`
 (`pickle`-compatible but able to serialize the closures used internally,
 e.g. by `coordinate_transform`), making it easy to checkpoint long-running
-simulations.【F:multi_pinhole/world.py†L283-L311】 Property setters for
+simulations. Serialized projection caches carry an explicit schema version;
+loading a legacy or incompatible version keeps reusable visibility results but
+invalidates `_projection` and `_P_matrix` so they are recomputed safely.
+【F:multi_pinhole/world.py†L283-L311】 Property setters for
 cameras, voxels, and walls reuse cached visibility/projection data when
 possible but otherwise call `_invalidate_visibility_cache()`, which resets
 `_visible_vertices`, `_visible_voxels`, `_projection`, and `_P_matrix` back
