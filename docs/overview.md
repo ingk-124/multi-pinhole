@@ -61,8 +61,9 @@ frames; `docs/core.md` walks through that chain in detail.
    worked example below and `docs/world.md` for the full pipeline.
 6. **Render or invert.** Given a voxel-intensity vector `emission`
    (`shape (N_voxel,)`), `world.P_matrix[camera_idx] @ emission` is the
-   simulated pixel image; `world.projection[camera_idx][eye_idx] @ emission`
-   is the finer subpixel image before pixel-binning.
+   simulated pixel image. `world.projection[camera_idx][eye_idx] @ emission`
+   is one eye's contribution in the same pixel coordinates. Detector
+   subpixels are transient quadrature samples and are not cached.
 
 ### Worked example: from an empty `World` to a rendered image
 
@@ -98,8 +99,8 @@ world.set_projection_matrix(res=1, verbose=0, parallel=1)
 emission = np.exp(-((voxel.gravity_center[:, 0] / 2.2) ** 2
                     + (voxel.gravity_center[:, 1] / 1.8) ** 2
                     + (voxel.gravity_center[:, 2] / 2.6) ** 2))
-pixel_image = world.P_matrix[0] @ emission          # shape (N_pixel,)
-subpixel_image = world.projection[0][0] @ emission  # shape (N_subpixel,)
+pixel_image = world.P_matrix[0] @ emission      # all eyes, shape (N_pixel,)
+eye_image = world.projection[0][0] @ emission   # eye 0, shape (N_pixel,)
 ```
 
 Internally, step 5 (`set_projection_matrix`) is the expensive part: for each
