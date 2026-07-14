@@ -7,25 +7,28 @@
 
 - detector cellとprojected Eye spotの面積積分、有限Eye内の局所etendue、メモリ上限に基づく
   work chunk処理は実装済みである。
-- column group化は、最終 `P` のpost-processing prototypeに加え、subvoxel PSF行列 `I` を
-  `I ~= Q R` と圧縮して `A = R S` を作るToy評価まで実施済みである。productionのprojection
-  構築処理にはまだ組み込んでいない。
-- source `res`自動判定、active voxel compact mapping、projection cache version、局所visibilityは
-  未実装である。
+- projection cacheにはschema versionを持たせ、互換性のない旧cacheはvisibilityを残して
+  projectionだけを無効化する。subpixelは面積積分中の一時評価点とし、永続化するeye別projection
+  と全eye合算projectionはいずれもpixel空間 `(N_pixel, N_voxel)` とする。
+- optical bin順に通常のnative sparse `P`を作る非圧縮経路までをproduction候補として残す。
+- `I ~= Q R`, `A = R S` によるPSF group化の実装と評価コードは
+  [Draft PR #9](https://github.com/ingk-124/multi-pinhole/pull/9) に退避した。0.6.0には含めず、
+  native sparse `P`を標準表現とする。
+- source `res`自動判定、active voxel compact mapping、Eye内部位置ごとの局所visibilityは未実装である。
 - `d=75 mm` MST benchmarkは短時間性能の確認には使用済みだが、全profile・detector res・境界を
   含む数値検証は未完了である。
 
-## main 統合前に確認する項目
+## 0.6.0で完了した項目
 
 ### Projection cache の互換性
 
-- projection 計算アルゴリズムと cache schema のバージョンを `World` に保存する。
-- バージョンが存在しない、または一致しない古い world を読み込んだ場合は、
-  `_projection` と `_P_matrix` を無効化して再計算させる。
-- 行列 shape の一致だけでは cache の有効性を判断しない。
-- 古い pickle に存在しない `Screen` の派生値、特に
-  `_subpixel_u_axis` と `_subpixel_v_axis` を読み込み時に再構築する。
-- 現行形式、旧形式、不一致バージョンについて回帰テストを追加する。
+- projection計算の数値的意味を表すcache schema versionを `World` に保存する。
+- versionが存在しない、または一致しない旧worldでは `_projection` と `_P_matrix` だけを
+  無効化し、visibilityなど再利用可能な情報は保持する。
+- 古いpickleに存在しない `Screen` の派生値を読み込み時に再構築する。
+- 現行形式、versionなし、version不一致について回帰テストを持つ。
+
+## 次に確認する項目
 
 ### MST 実形状での数値検証
 
@@ -112,6 +115,11 @@ g = P_fine B c
 後に必要性を判断する。
 
 ### 投影応答による column group 化 (`P ~= Q A`)
+
+> **Future Work:** 以下の設計・Toy実装・benchmarkはDraft PR #9に保存している。
+> tolerance 0.01では多くの条件で保存量削減が小さく、0.1では近距離chunkのfactor化が
+> native sparse blockより大きくなるケースが確認された。このため0.6.0の実行経路・公開API・
+> cacheにはfactorized operatorを入れない。再開時はDraft PRを最新mainへrebaseして評価する。
 
 #### 目的と表現
 
@@ -324,18 +332,17 @@ clip または数値積分を追加する。
 
 ## 実施順序案
 
-1. cache version と旧 pickle migration
-2. `d=75 mm` MST 数値検証と detector res の決定
-3. inside 境界仕様の確定
-4. main への統合
-5. source `res` 自動判定と fully/partial の適応化
-6. active voxel compact mapping と `d=10--25 mm` 比較
-7. 同一のcamera/Eye座標サンプルを使い、回転と `Z_e/f` だけを変えてgroup化を再評価
-8. MST wallあり条件でpost-processing group化を行い、fully/partial境界と許容閾値を決定
-9. subvoxel PSF基準の光学chunkで `I_chunk ~= Q_chunk R_chunk`,
+1. mainの0.6.0から新規branchを切り、source `res` 自動判定とfully/partialの適応化を実装する
+2. `d=75 mm` MST数値検証で固定resと自動resの画像誤差、時間、選択res分布を比較する
+3. inside境界仕様を確定する
+4. active voxel compact mappingと `d=10--25 mm` 比較を行う
+5. 同一のcamera/Eye座標サンプルを使い、回転と `Z_e/f` だけを変えてgroup化を再評価する
+6. MST wallあり条件でpost-processing group化を行い、fully/partial境界と許容閾値を決定する
+7. 保存量と実行時間に明確な利点がある場合だけDraft PR #9を再開する
+8. subvoxel PSF基準の光学chunkで `I_chunk ~= Q_chunk R_chunk`,
    `A_chunk = R_chunk S_chunk` を直接構築
-10. factorized operator、transpose、cache、従来のsparse `P`との互換層を実装
-11. fine `P`と構築時間・peak memory・保存容量・forward/transpose時間を比較
-12. 圧縮が不利な近距離chunkを非圧縮blockとして混在させるoperator表現を追加
-13. compact mappingとgroup化だけでは不足する場合に adaptive voxel mergingを検討
-14. PD array、任意 Eye 形状、Eye 内部位置ごとの局所visibilityの必要性を定量化
+9. factorized operator、transpose、cache、従来のsparse `P`との互換層を実装
+10. fine `P`と構築時間・peak memory・保存容量・forward/transpose時間を比較
+11. 圧縮が不利な近距離chunkを非圧縮blockとして混在させるoperator表現を追加
+12. compact mappingとgroup化だけでは不足する場合に adaptive voxel mergingを検討
+13. PD array、任意 Eye 形状、Eye内部位置ごとの局所visibilityの必要性を定量化
