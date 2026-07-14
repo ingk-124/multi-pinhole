@@ -91,7 +91,8 @@ class Compression:
 def build_toy_world(axial_distance: float = 100.0,
                     voxel_shape: tuple[int, int, int] = (10, 10, 6),
                     pixel_shape: tuple[int, int] = (24, 24),
-                    with_aperture: bool = False) -> World:
+                    with_aperture: bool = False,
+                    detector_resolution: int = 1) -> World:
     """Build a camera-aligned source box with an optional circular aperture."""
     source_center_z = FOCAL_LENGTH + axial_distance
     depth_half_width = min(0.35 * axial_distance, 40.0)
@@ -107,7 +108,7 @@ def build_toy_world(axial_distance: float = 100.0,
     )
     screen = Screen(
         screen_shape="rectangle", screen_size=SCREEN_SIZE,
-        pixel_shape=pixel_shape, subpixel_resolution=1,
+        pixel_shape=pixel_shape, subpixel_resolution=detector_resolution,
     )
     apertures = []
     if with_aperture:
@@ -226,9 +227,10 @@ def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
     S = S_all[active].tocsr()
 
     camera = world.cameras[0]
-    I = camera.calc_image_vec(
+    I_subpixel = camera.calc_image_vec(
         0, points=active_points, verbose=0, check_visibility=False,
     ).tocsr()
+    I = (camera.screen.transform_matrix @ I_subpixel).tocsr()
     P_manual = (I @ S).tocsr()
     world.set_projection_matrix(
         res=resolution, partial_res=resolution, verbose=0,
@@ -269,10 +271,11 @@ def project_by_optical_work_chunks(problem: ToyProblem,
         chunk = np.asarray(chunk, dtype=np.int64)
         if chunk.size == 0:
             continue
-        I_chunk = camera.calc_image_vec(
+        I_subpixel_chunk = camera.calc_image_vec(
             0, points=problem.active_points[chunk], verbose=0,
             check_visibility=False,
         ).tocsr()
+        I_chunk = camera.screen.transform_matrix @ I_subpixel_chunk
         result += I_chunk @ problem.S[chunk]
     return result.tocsr()
 
@@ -888,6 +891,7 @@ def run_production_sweep(
         max_group_fractions=(0.6, 0.8, 1.0, None),
         voxel_shape=(6, 6, 4),
         pixel_shape=(16, 16),
+        detector_resolution=1,
         timing_repeats=5,
         max_working_memory=256 * 2 ** 20,
 ):
@@ -911,6 +915,7 @@ def run_production_sweep(
                     voxel_shape=voxel_shape,
                     pixel_shape=pixel_shape,
                     with_aperture=False,
+                    detector_resolution=detector_resolution,
                 )
                 # Keep visibility initialization and first-call library setup
                 # out of the direct-vs-hybrid construction comparison.
@@ -1010,6 +1015,7 @@ def run_production_sweep(
                                     "axial_distance": axial_distance,
                                     "z_over_f": axial_distance / FOCAL_LENGTH,
                                     "resolution": resolution,
+                                    "detector_resolution": detector_resolution,
                                     "bin_width_pixels": bin_width,
                                     "metric": metric,
                                     "algorithm": algorithm,
@@ -1114,7 +1120,10 @@ def run_production_sweep(
             if not selected:
                 continue
             fraction_label = "always" if fraction is None else f"<{fraction:g}"
-            label = f"res={resolution}, Ng/Ns {fraction_label}"
+            label = (
+                f"source res={resolution}, detector res={detector_resolution}, "
+                f"Ng/Ns {fraction_label}"
+            )
             z = [row["z_over_f"] for row in selected]
             axes[0, 0].plot(z, [row["storage_compression"] for row in selected],
                             marker="o", label=label)

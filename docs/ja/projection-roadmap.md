@@ -345,6 +345,17 @@ detector res 5で通常sparseとhybridを直接比較すると、行列Frobenius
 保存されている。一方、保存量は通常Pの`8,802,860 bytes`に対してhybridが`9,270,320 bytes`で、
 この閾値・scope採用基準ではまだ約5.3%不利である。次はexact Bytesによるscope採否判定が必要。
 
+pixel空間group化後のToy production sweepも再実行した。wallなし、144 voxel、16x16 pixel、source
+res 1/2、`Z/f=5/15/50`、閾値0.1についてdetector res 1と5を比較した。全sweep時間は`6.65/7.08 s`、
+対応するhybrid構築時間のres 5/res 1中央値は`1.16`で、subpixel行数25倍に対応する増加はない。
+source res 2、`max_group_fraction=0.8`では、detector res 1/5の保存量とgroup数はそれぞれ
+`Z/f=5`: `73508/73852 bytes`, `54/56 groups`、`Z/f=15`: `85208/83908 bytes`,
+`462/452 groups`、`Z/f=50`: `36716/36312 bytes`, `153/148 groups`だった。完全一致しないのは
+detector subpixel面積積分そのものがpixel PSFをわずかに変えるためで、圧縮行次元の増加ではない。
+Gaussian相対L2誤差はres 5で`3.69e-4/1.46e-3/2.13e-3`、総光量相対誤差は最大`6.72e-16`。
+このToyでも精度と光量保存は維持されたが、source res 2では全距離でhybrid Bytesが通常Pより多く、
+exact Bytes採否の必要性を再確認した。
+
 cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
 整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
 奥行き分解能が同時に変化するためである。回転依存を分離する次の評価では、同一の

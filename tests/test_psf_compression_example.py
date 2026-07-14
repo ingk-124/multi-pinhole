@@ -108,13 +108,15 @@ def test_production_hybrid_sweep_records_bytes_timings_and_errors(tmp_path):
         axial_distances=(100.0,), resolutions=(1,), bin_widths=(1.0,),
         tolerances=(0.1,), metrics=("relative_l2",),
         algorithms=("recursive",), max_group_fractions=(0.8,),
-        voxel_shape=(4, 4, 3), pixel_shape=(8, 8), timing_repeats=2,
+        voxel_shape=(4, 4, 3), pixel_shape=(8, 8),
+        detector_resolution=2, timing_repeats=2,
     )
 
     assert result["csv_path"].is_file()
     assert result["figure_path"].is_file()
     assert result["rows"]
     row = next(item for item in result["rows"] if item["profile"] == "gaussian")
+    assert row["detector_resolution"] == 2
     assert row["scope_count"] > 0
     assert row["active_sample_count"] > 0
     assert row["direct_bytes"] > 0
