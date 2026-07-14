@@ -753,6 +753,50 @@ def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
     )
 
 
+def test_hybrid_optical_path_batches_partial_visibility_per_work_chunk(monkeypatch):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+    screen = Screen(
+        screen_shape="square", screen_size=20.0,
+        pixel_shape=(8, 8), subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen,
+        camera_position=(0.0, 0.0, -20.0),
+    )
+    voxel = Voxel.uniform_voxel(
+        ranges=((-4.0, 4.0), (-4.0, 4.0), (-1.0, 1.0)),
+        shape=(4, 4, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    calls = []
+
+    def all_visible(points, **kwargs):
+        calls.append(points.shape[0])
+        return np.ones((1, points.shape[0]), dtype=bool)
+
+    monkeypatch.setattr(world, "find_visible_points", all_visible)
+    monkeypatch.setattr(
+        world, "_inside_points",
+        lambda points: np.ones(points.shape[0], dtype=bool),
+    )
+    operator = world._calc_voxel_image_for_eye_optical(
+        camera_idx=0, eye_idx=0,
+        full_voxels=np.empty(0, dtype=np.int64),
+        partial_voxels=np.arange(voxel.N),
+        full_subvoxel_res=(1, 1, 1), partial_subvoxel_res=(1, 1, 1),
+        max_nnz=100_000_000, max_working_memory=100_000_000,
+        optical_bin_width_pixels=0.5, verbose=0,
+        projection_representation="hybrid", psf_tolerance=0.0,
+    )
+
+    assert isinstance(operator, HybridProjectionOperator)
+    assert operator.shape == (screen.N_subpixel, voxel.N)
+    # The narrow optical grid creates several scopes, but they share one work
+    # chunk and therefore one wall/point-visibility call.
+    assert len(operator.compression_stats) > 1
+    assert calls == [voxel.N]
+
+
 def test_projection_matrix_is_stable_when_subvoxel_resolution_changes():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)

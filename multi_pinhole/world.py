@@ -980,17 +980,20 @@ class World:
             scope_number = 0
 
             def _expand_scope(packed_visible_indices):
-                """Expand one scope while preserving global voxel columns.
+                """Expand one scope without running point visibility yet.
 
                 ``packed_visible_indices`` index the concatenated
                 ``visible_voxels = [full_voxels, partial_voxels]`` array.  The
-                returned S rows follow the returned point order, while S
-                columns retain the original global voxel numbering.
+                full/partial point arrays and their S rows stay paired, while
+                S columns retain the original global voxel numbering. Partial
+                points are visibility-tested in one work-chunk batch below.
                 """
                 owners = visible_voxels[packed_visible_indices]
                 is_full = packed_visible_indices < full_voxels.size
-                point_parts = []
-                interpolator_parts = []
+                full_points = np.empty((0, 3), dtype=float)
+                partial_points = np.empty((0, 3), dtype=float)
+                full_S = sparse.csr_matrix((0, n_vox))
+                partial_S = sparse.csr_matrix((0, n_vox))
 
                 full_owners = owners[is_full]
                 if full_owners.size:
@@ -1000,8 +1003,6 @@ class World:
                     full_S = self.voxel.sub_voxel_interpolator_from_centers(
                         full_owners, res=full_resolution, points=full_points,
                     )
-                    point_parts.append(full_points)
-                    interpolator_parts.append(full_S)
 
                 partial_owners = owners[~is_full]
                 if partial_owners.size:
@@ -1012,26 +1013,13 @@ class World:
                         partial_owners, res=partial_resolution,
                         points=partial_points,
                     )
-                    visible_mask = self.find_visible_points(
-                        partial_points, camera_idx=camera_idx,
-                        eye_idx=eye_idx, verbose=0,
-                    ).reshape(-1)
-                    visible_mask &= self._inside_points(partial_points)
-                    if np.any(visible_mask):
-                        point_parts.append(partial_points[visible_mask])
-                        interpolator_parts.append(partial_S[visible_mask])
-
-                if not point_parts:
-                    return None
-                return (
-                    np.concatenate(point_parts, axis=0),
-                    sparse.vstack(interpolator_parts, format="csr"),
-                )
+                return full_points, full_S, partial_points, partial_S
 
             for work_start, work_stop in zip(work_offsets[:-1], work_offsets[1:]):
                 scope_points = []
                 scope_interpolators = []
                 expanded_scope_offsets = [0]
+                expanded_scopes = []
 
                 # work offsets always coincide with scope boundaries.  Keep a
                 # monotonic scope cursor so packed positions are never confused
@@ -1043,15 +1031,52 @@ class World:
                     if scope_start < work_start or scope_stop > work_stop:
                         raise RuntimeError("optical work chunk split a compression scope")
                     packed_visible_indices = binning.order[scope_start:scope_stop]
-                    expanded = _expand_scope(packed_visible_indices)
-                    if expanded is not None:
-                        points_part, S_part = expanded
-                        scope_points.append(points_part)
-                        scope_interpolators.append(S_part)
-                        expanded_scope_offsets.append(
-                            expanded_scope_offsets[-1] + points_part.shape[0]
-                        )
+                    expanded_scopes.append(_expand_scope(packed_visible_indices))
                     scope_number += 1
+
+                # Visibility of partial subvoxels is expensive for an STL
+                # wall. Evaluate all partial points from this work chunk in one
+                # call, then split the boolean result back by scope-local row
+                # counts. This preserves scope boundaries without thousands of
+                # tiny visibility calls.
+                partial_lengths = [scope[2].shape[0] for scope in expanded_scopes]
+                if sum(partial_lengths):
+                    partial_points_work = np.concatenate(
+                        [scope[2] for scope in expanded_scopes if scope[2].size],
+                        axis=0,
+                    )
+                    partial_visible_work = self.find_visible_points(
+                        partial_points_work, camera_idx=camera_idx,
+                        eye_idx=eye_idx, verbose=0,
+                    ).reshape(-1)
+                    partial_visible_work &= self._inside_points(partial_points_work)
+                else:
+                    partial_visible_work = np.empty(0, dtype=bool)
+
+                partial_start = 0
+                for (full_points, full_S, partial_points, partial_S), partial_length \
+                        in zip(expanded_scopes, partial_lengths):
+                    point_parts = []
+                    interpolator_parts = []
+                    if full_points.size:
+                        point_parts.append(full_points)
+                        interpolator_parts.append(full_S)
+                    if partial_length:
+                        partial_stop = partial_start + partial_length
+                        visible_mask = partial_visible_work[partial_start:partial_stop]
+                        partial_start = partial_stop
+                        if np.any(visible_mask):
+                            point_parts.append(partial_points[visible_mask])
+                            interpolator_parts.append(partial_S[visible_mask])
+                    if not point_parts:
+                        continue
+                    points_part = np.concatenate(point_parts, axis=0)
+                    S_part = sparse.vstack(interpolator_parts, format="csr")
+                    scope_points.append(points_part)
+                    scope_interpolators.append(S_part)
+                    expanded_scope_offsets.append(
+                        expanded_scope_offsets[-1] + points_part.shape[0]
+                    )
 
                 if not scope_points:
                     continue
