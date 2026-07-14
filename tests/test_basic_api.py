@@ -354,8 +354,11 @@ def test_world_estimate_source_resolution_is_batched_and_nonmutating():
     )
 
     np.testing.assert_array_equal(batched.resolution, single_batch.resolution)
-    np.testing.assert_allclose(batched.projected_span_cells,
-                               single_batch.projected_span_cells)
+    np.testing.assert_allclose(batched.ratio, single_batch.ratio)
+    np.testing.assert_allclose(batched.projected_diameter,
+                               single_batch.projected_diameter)
+    np.testing.assert_array_equal(batched.point_source,
+                                  single_batch.point_source)
     np.testing.assert_array_equal(batched.capped, single_batch.capped)
     assert batched.resolution.shape == (selected.size, 3)
     assert world.projection["main"] == [None]
@@ -403,7 +406,7 @@ def test_adaptive_source_resolution_matches_fixed_endpoint_resolutions():
     fixed_one = world.P_matrix[0].copy()
     world.set_projection_matrix(
         res=2, verbose=0, parallel=1, force=True,
-        adaptive_source_resolution=True, max_projected_step=1e6,
+        adaptive_source_resolution=True, point_source_threshold=1e6,
     )
     adaptive_one = world.P_matrix[0].copy()
     np.testing.assert_allclose(adaptive_one.toarray(), fixed_one.toarray(),
@@ -413,7 +416,7 @@ def test_adaptive_source_resolution_matches_fixed_endpoint_resolutions():
     fixed_two = world.P_matrix[0].copy()
     world.set_projection_matrix(
         res=2, verbose=0, parallel=1, force=True,
-        adaptive_source_resolution=True, max_projected_step=1e-12,
+        adaptive_source_resolution=True, point_source_threshold=1e-12,
     )
     adaptive_two = world.P_matrix[0].copy()
     np.testing.assert_allclose(adaptive_two.toarray(), fixed_two.toarray(),
@@ -1161,6 +1164,6 @@ def test_small_voxel_depth_sweep_is_fully_visible_and_draws_outputs(tmp_path):
     row = result["rows"][0]
     assert row["resolution"].shape == (25, 3)
     assert np.all((row["resolution"] >= 1) & (row["resolution"] <= 2))
-    assert 0.0 < row["sample_ratio"] <= (2 / 3) ** 3
+    assert 0.0 < row["sample_ratio"] <= (2 / 3) ** 3 + 1e-15
     assert np.isfinite(row["matrix_l2"])
     assert all(np.isfinite(value) for value in row["profile_errors"].values())

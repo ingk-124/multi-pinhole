@@ -42,11 +42,11 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
         "fixed 4": dict(res=4, partial_res=4),
         "adaptive p5": dict(
             res=5, partial_res=5, adaptive_source_resolution=True,
-            max_projected_step=0.25,
+            point_source_threshold=1.0 / 8.0,
         ),
         "adaptive p3": dict(
             res=5, partial_res=3, adaptive_source_resolution=True,
-            max_projected_step=0.25,
+            point_source_threshold=1.0 / 8.0,
         ),
         "fixed 5": dict(res=5, partial_res=5),
     }
@@ -96,7 +96,7 @@ def run(output_dir=None, spacing=75.0, detector_res=1, parallel=4):
         partial = np.flatnonzero(state == 1)
         estimates[camera] = world.estimate_source_resolution(
             camera, 0, full, max_resolution=5,
-            max_projected_step=0.25, detector_grid="psf",
+            point_source_threshold=1.0 / 8.0, detector_grid="psf",
         )
         visible_counts[camera] = (full.size, partial.size)
 

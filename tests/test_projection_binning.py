@@ -6,6 +6,7 @@ from multi_pinhole import Camera, Eye, Screen
 from multi_pinhole.projection import (
     make_optical_binning,
     projected_axis_spans,
+    select_circumsphere_resolution,
     select_source_resolution,
 )
 
@@ -196,3 +197,50 @@ def test_select_source_resolution_uses_ceiling_for_nonfinite_geometry():
 
     np.testing.assert_array_equal(estimate.resolution, [[1, 3, 1]])
     np.testing.assert_array_equal(estimate.capped, [[False, True, False]])
+
+
+def test_circumsphere_resolution_uses_one_eighth_threshold_and_ideal_res():
+    points = np.array([[0.0, 0.0, 400.0], [0.0, 0.0, 100.0]])
+    edges = np.ones((2, 3))
+
+    estimate = select_circumsphere_resolution(
+        points, edges, focal_length=20.0, reference_size=1.0,
+        fallback_resolution=8,
+    )
+
+    np.testing.assert_allclose(
+        estimate.ratio, 20.0 * np.sqrt(3.0) / points[:, 2],
+    )
+    np.testing.assert_array_equal(estimate.point_source, [True, False])
+    np.testing.assert_array_equal(estimate.resolution, [[1, 1, 1], [3, 3, 3]])
+    np.testing.assert_array_equal(estimate.ideal_resolution,
+                                  [[1, 1, 1], [3, 3, 3]])
+
+
+def test_circumsphere_resolution_includes_off_axis_factor_and_cubic_subcells():
+    points = np.array([[0.0, 0.0, 100.0], [100.0, 0.0, 100.0]])
+    edges = np.array([[10.0, 10.0, 2.0], [10.0, 10.0, 2.0]])
+
+    estimate = select_circumsphere_resolution(
+        points, edges, focal_length=20.0, reference_size=1.0,
+        fallback_resolution=32,
+    )
+
+    np.testing.assert_allclose(estimate.ratio[1] / estimate.ratio[0], np.sqrt(2.0))
+    np.testing.assert_array_equal(estimate.resolution[0], [28, 28, 6])
+    subcell_edges = edges[0] / estimate.resolution[0]
+    assert np.ptp(subcell_edges) < 0.05
+
+
+def test_circumsphere_resolution_falls_back_for_invalid_or_capped_geometry():
+    points = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 100.0]])
+    edges = np.array([[2.0, 2.0, 2.0], [10.0, 10.0, 10.0]])
+
+    estimate = select_circumsphere_resolution(
+        points, edges, focal_length=20.0, reference_size=1.0,
+        fallback_resolution=(2, 3, 4),
+    )
+
+    np.testing.assert_array_equal(estimate.valid, [False, True])
+    np.testing.assert_array_equal(estimate.resolution, [[2, 3, 4], [2, 3, 4]])
+    assert np.all(estimate.capped)

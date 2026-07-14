@@ -10,7 +10,7 @@ import numpy as np
 from examples.evaluate_adaptive_projection import build_case, profiles, _relative_l2
 
 
-def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
+def run(output_dir=None, thresholds=(0.5, 0.25, 0.125, 0.0625), reference_res=4):
     output_dir = (Path(output_dir) if output_dir is not None else
                   Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_sweep")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -29,15 +29,16 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
     full_voxels = np.flatnonzero(world.visible_voxels[0][0] == 2)
 
     rows = []
-    for step in steps:
+    for threshold in thresholds:
         estimate = world.estimate_source_resolution(
             0, 0, full_voxels, max_resolution=reference_res,
-            max_projected_step=step,
+            point_source_threshold=threshold,
         )
         start = time.perf_counter()
         world.set_projection_matrix(
             res=reference_res, verbose=0, parallel=1, force=True,
-            adaptive_source_resolution=True, max_projected_step=step,
+            adaptive_source_resolution=True,
+            point_source_threshold=threshold,
             max_working_memory=256 * 2 ** 20,
         )
         elapsed = time.perf_counter() - start
@@ -47,7 +48,7 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
             for name, profile in source_profiles.items()
         }
         rows.append({
-            "step": float(step),
+            "threshold": float(threshold),
             "samples": int(np.prod(estimate.resolution, axis=1).sum()),
             "elapsed": elapsed,
             "capped_fraction": float(estimate.capped.mean()),
@@ -61,18 +62,18 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
         errors = [row["image_errors"][profile_name] for row in rows]
         axes[0].plot(sample_fraction, errors, marker="o", label=profile_name)
     for x, row in zip(sample_fraction, rows):
-        axes[0].annotate(f"{row['step']:g}", (x, row["image_errors"]["constant"]),
+        axes[0].annotate(f"{row['threshold']:g}", (x, row["image_errors"]["constant"]),
                          xytext=(3, 3), textcoords="offset points", fontsize=8)
     axes[0].set_yscale("log")
     axes[0].set_xlabel(f"source samples / fixed {reference_res}")
     axes[0].set_ylabel("image relative L2")
-    axes[0].set_title("Accuracy–sample tradeoff\nlabels: max step [PSF scale]")
+    axes[0].set_title("Accuracy–sample tradeoff\nlabels: point-source threshold")
     axes[0].legend()
 
     axes[1].plot([row["elapsed"] for row in rows],
                  [max(row["image_errors"].values()) for row in rows], marker="o")
     for row in rows:
-        axes[1].annotate(f"{row['step']:g}",
+        axes[1].annotate(f"{row['threshold']:g}",
                          (row["elapsed"], max(row["image_errors"].values())),
                          xytext=(3, 3), textcoords="offset points", fontsize=8)
     axes[1].set_yscale("log")
@@ -80,9 +81,9 @@ def run(output_dir=None, steps=(2.0, 1.0, 0.5, 0.25, 0.125), reference_res=4):
     axes[1].set_ylabel("worst profile relative L2")
     axes[1].set_title("Accuracy–time tradeoff")
 
-    axes[2].bar([str(row["step"]) for row in rows],
+    axes[2].bar([str(row["threshold"]) for row in rows],
                 [row["capped_fraction"] for row in rows])
-    axes[2].set_xlabel("max projected step [PSF scale]")
+    axes[2].set_xlabel("point-source threshold [PSF scale]")
     axes[2].set_ylabel("fraction of capped source axes")
     axes[2].set_title(f"Axes requesting more than res={reference_res}")
 

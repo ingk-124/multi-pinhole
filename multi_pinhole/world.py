@@ -30,10 +30,9 @@ from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
 from .projection import (
-    SourceResolutionEstimate,
+    PointSourceResolutionEstimate,
     make_optical_binning,
-    projected_axis_spans,
-    select_source_resolution,
+    select_circumsphere_resolution,
 )
 from .voxel import Voxel
 from .utils import stl_utils
@@ -1039,15 +1038,15 @@ class World:
     def estimate_source_resolution(
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
             voxel_indices=None, max_resolution=4,
-            max_projected_step: float = 0.25,
+            point_source_threshold: float = 1.0 / 8.0,
             detector_grid: str = "psf",
-            batch_size: int = 100_000) -> SourceResolutionEstimate:
-        """Estimate geometry-only axis-wise source quadrature resolution.
+            batch_size: int = 100_000) -> PointSourceResolutionEstimate:
+        """Select res=1 using a conservative projected circumsphere test.
 
         This diagnostic does not alter the voxel grid or a cached projection.
-        It projects each selected voxel's three world-axis chords through one
-        Eye and requests the smallest resolution whose projected subcell step
-        fits within ``max_projected_step`` reference-scale units.
+        It compares a worst-direction projected voxel circumsphere with the
+        selected detector/PSF scale. The same threshold gives an ideal
+        near-cubic axis-wise resolution, clipped by ``max_resolution``.
 
         Parameters
         ----------
@@ -1058,10 +1057,10 @@ class World:
         voxel_indices : array-like of int, optional
             Voxels to evaluate. ``None`` evaluates the complete grid.
         max_resolution : int or (int, int, int), optional
-            Axis-wise resolution ceiling.
-        max_projected_step : float, optional
-            Maximum source-subcell displacement in units selected by
-            ``detector_grid``. Defaults to 0.25.
+            Axis-wise ceiling for the ideal resolution.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in reference-scale units
+            for selecting res=1. Defaults to 1/8.
         detector_grid : {"psf", "subpixel", "pixel"}, optional
             Scale used to normalize projected source displacement. ``"psf"``
             uses the larger of detector subpixel pitch and the local projected
@@ -1073,7 +1072,7 @@ class World:
 
         Returns
         -------
-        SourceResolutionEstimate
+        PointSourceResolutionEstimate
             Diagnostics in the same order as ``voxel_indices``.
         """
         if camera_idx not in self.cameras:
@@ -1093,49 +1092,76 @@ class World:
             voxel_indices = self.voxel._type_check_n_voxel(voxel_indices)
 
         resolution_parts = []
-        span_parts = []
-        uncapped_parts = []
+        ratio_parts = []
+        diameter_parts = []
+        reference_parts = []
+        point_source_parts = []
+        ideal_parts = []
         capped_parts = []
+        valid_parts = []
         for start in range(0, voxel_indices.size, batch_size):
             selected = voxel_indices[start:start + batch_size]
             centers = self.voxel.get_gravity_center(selected)
-            spans = projected_axis_spans(
-                camera, eye_idx, centers,
-                self.voxel.get_edge_lengths(selected),
-            )
+            points_camera = camera.world2camera(centers)
+            eye = camera.eyes[eye_idx]
+            points_in_eye = eye.camera2eye(points_camera)
             if detector_grid == "pixel":
-                detector_pitch = camera.screen.pixel_size
+                reference_size = float(np.min(camera.screen.pixel_size))
             elif detector_grid == "subpixel":
-                detector_pitch = camera.screen.subpixel_size
+                reference_size = float(np.min(camera.screen.subpixel_size))
             else:
-                center_rays = camera.eyes[eye_idx].calc_rays(
-                    camera.world2camera(centers),
+                axial_distance = points_in_eye[:, 2]
+                zoom_rate = np.full(axial_distance.shape, np.nan)
+                in_front = axial_distance > 0.0
+                zoom_rate[in_front] = (
+                    1.0 + eye.focal_length / axial_distance[in_front]
                 )
-                spot_size = (camera.eyes[eye_idx].eye_size[None, :] *
-                             center_rays.zoom_rate[:, None])
-                detector_pitch = np.maximum(
-                    camera.screen.subpixel_size[None, :], spot_size,
+                spot_size_uv = (
+                    eye.eye_size[::-1][None, :] *
+                    np.abs(zoom_rate[:, None])
                 )
-            estimate = select_source_resolution(
-                spans, detector_pitch=detector_pitch,
-                max_resolution=max_resolution,
-                max_projected_step=max_projected_step,
+                # Invalid/behind-Eye samples fail the geometry test below; use
+                # detector pitch here so the diagnostic scale stays finite.
+                spot_size_uv = np.where(
+                    np.isfinite(spot_size_uv), spot_size_uv, 0.0,
+                )
+                reference_size = np.min(np.maximum(
+                    camera.screen.subpixel_size[None, :], spot_size_uv,
+                ), axis=1)
+            estimate = select_circumsphere_resolution(
+                points_in_eye, self.voxel.get_edge_lengths(selected),
+                focal_length=eye.focal_length,
+                reference_size=reference_size,
+                fallback_resolution=max_resolution,
+                point_source_threshold=point_source_threshold,
             )
             resolution_parts.append(estimate.resolution)
-            span_parts.append(estimate.projected_span_cells)
-            uncapped_parts.append(estimate.uncapped_resolution)
+            ratio_parts.append(estimate.ratio)
+            diameter_parts.append(estimate.projected_diameter)
+            reference_parts.append(estimate.reference_size)
+            point_source_parts.append(estimate.point_source)
+            ideal_parts.append(estimate.ideal_resolution)
             capped_parts.append(estimate.capped)
+            valid_parts.append(estimate.valid)
 
         empty_shape = (0, 3)
-        return SourceResolutionEstimate(
+        return PointSourceResolutionEstimate(
             resolution=(np.concatenate(resolution_parts) if resolution_parts else
                         np.empty(empty_shape, dtype=np.int64)),
-            projected_span_cells=(np.concatenate(span_parts) if span_parts else
-                                  np.empty(empty_shape, dtype=float)),
-            uncapped_resolution=(np.concatenate(uncapped_parts) if uncapped_parts else
-                                 np.empty(empty_shape, dtype=float)),
+            ratio=(np.concatenate(ratio_parts) if ratio_parts else
+                   np.empty(0, dtype=float)),
+            projected_diameter=(np.concatenate(diameter_parts) if diameter_parts else
+                                np.empty(0, dtype=float)),
+            reference_size=(np.concatenate(reference_parts) if reference_parts else
+                            np.empty(0, dtype=float)),
+            point_source=(np.concatenate(point_source_parts) if point_source_parts else
+                          np.empty(0, dtype=bool)),
+            ideal_resolution=(np.concatenate(ideal_parts) if ideal_parts else
+                              np.empty(empty_shape, dtype=float)),
             capped=(np.concatenate(capped_parts) if capped_parts else
                     np.empty(empty_shape, dtype=bool)),
+            valid=(np.concatenate(valid_parts) if valid_parts else
+                   np.empty(0, dtype=bool)),
         )
 
     def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
@@ -1145,7 +1171,7 @@ class World:
                                   chunk_strategy: str = "voxel",
                                   optical_bin_width_pixels=1.0,
                                   adaptive_source_resolution: bool = False,
-                                  max_projected_step: float = 0.25):
+                                  point_source_threshold: float = 1.0 / 8.0):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -1181,12 +1207,13 @@ class World:
             Optical bin width in detector-pixel pitches for the experimental
             optical strategy.
         adaptive_source_resolution : bool, optional
-            Select axis-wise resolution independently for fully-visible
-            voxels, using ``res`` as the ceiling. Partially-visible voxels
-            retain fixed ``partial_res`` because visibility is discontinuous.
-        max_projected_step : float, optional
-            Maximum projected source-subcell displacement in local finite-Eye
-            PSF units when adaptive resolution is enabled. Defaults to 0.25.
+            Select a circumsphere-based ideal resolution independently for
+            fully-visible voxels, using ``res`` as the ceiling. Partially-
+            visible voxels retain fixed ``partial_res`` because visibility is
+            discontinuous.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in local finite-Eye PSF
+            units for selecting res=1. Defaults to 1/8.
 
         Notes
         -----
@@ -1497,7 +1524,7 @@ class World:
                 estimate = self.estimate_source_resolution(
                     camera_idx, eye_idx, full_voxels,
                     max_resolution=full_subvoxel_res,
-                    max_projected_step=max_projected_step,
+                    point_source_threshold=point_source_threshold,
                     detector_grid="psf",
                 )
                 group_resolutions, inverse = np.unique(
@@ -1509,7 +1536,9 @@ class World:
                 ]
                 my_print(
                     f"Adaptive full-voxel resolution selected "
-                    f"{len(full_groups)} buckets; capped axes={estimate.capped.sum()}",
+                    f"{len(full_groups)} buckets; point-source voxels="
+                    f"{estimate.point_source.sum()}/{estimate.point_source.size}; "
+                    f"capped axes={estimate.capped.sum()}",
                     show=verbose > 0,
                 )
             else:
@@ -1666,7 +1695,7 @@ class World:
                               chunk_strategy: str = "voxel",
                               optical_bin_width_pixels=1.0,
                               adaptive_source_resolution: bool = False,
-                              max_projected_step: float = 0.25):
+                              point_source_threshold: float = 1.0 / 8.0):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1697,13 +1726,13 @@ class World:
             Optical-bin width in detector-pixel pitches when
             ``chunk_strategy="optical"``. Defaults to one pixel.
         adaptive_source_resolution : bool, optional
-            When true, ``res`` is an axis-wise ceiling for geometry-adaptive
-            fully-visible source quadrature. Partial voxels retain fixed
-            ``partial_res``. Defaults to false.
-        max_projected_step : float, optional
-            Maximum projected source-subcell displacement in detector
-            local PSF units for adaptive resolution. The heuristic default is
-            0.25; it is not a numerical-error tolerance.
+            When true, derive a near-cubic ideal resolution for each fully-
+            visible voxel and use ``res`` as its axis-wise ceiling. Partial
+            voxels retain fixed ``partial_res``. Defaults to false.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in local finite-Eye PSF
+            units for selecting res=1. Defaults to 1/8; it is not a numerical
+            error tolerance.
 
         Notes
         -----
@@ -1732,7 +1761,7 @@ class World:
                                                    chunk_strategy=chunk_strategy,
                                                    optical_bin_width_pixels=optical_bin_width_pixels,
                                                    adaptive_source_resolution=adaptive_source_resolution,
-                                                   max_projected_step=max_projected_step)
+                                                   point_source_threshold=point_source_threshold)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "

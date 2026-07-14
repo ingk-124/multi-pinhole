@@ -224,14 +224,14 @@ trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
 
 For fully-visible voxels, `adaptive_source_resolution=True` may be used to
-interpret `res` as an axis-wise ceiling rather than a fixed resolution. Each
-world-axis chord of a voxel is projected onto the screen and normalized by the
-larger of the detector subpixel pitch and the local finite-Eye PSF footprint.
-Voxels are bucketed by the resulting `(r_x, r_y, r_z)` and projected in those
-buckets. `max_projected_step` (default `0.25`) is a geometry heuristic in PSF
-units, not a bound on image error. Partially-visible voxels keep the explicit
-fixed `partial_res`, because their binary wall/inside visibility is
-discontinuous and is not controlled by the smooth projected-size criterion.
+interpret `res` as an axis-wise ceiling rather than a fixed resolution. The
+voxel circumsphere is projected with the local worst-direction perspective
+magnification, including the off-axis `1/cos(theta)` factor, and normalized by
+the local finite-Eye PSF/detector scale. `point_source_threshold` defaults to
+`1/8`. It selects res 1 when the complete voxel is negligible and determines a
+near-cubic ideal axis-wise resolution otherwise. Voxels are bucketed by the
+clipped `(r_x, r_y, r_z)`. This is a geometry heuristic, not a bound on image
+error. Partially-visible voxels keep the explicit fixed `partial_res`.
 
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye

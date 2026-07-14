@@ -54,7 +54,7 @@ def _relative_l2(actual, reference):
 def run(output_dir=None, voxel_sizes=(2.0, 5.0, 10.0, 25.0),
         depth_ratios=(5.0, 10.0, 20.0, 50.0, 100.0),
         adaptive_max_res=8, reference_res=12,
-        max_projected_step=0.25):
+        point_source_threshold=1.0 / 8.0):
     output_dir = (Path(output_dir) if output_dir is not None else
                   Path(tempfile.gettempdir()) / "multi_pinhole_small_voxel_sweep")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -71,13 +71,13 @@ def run(output_dir=None, voxel_sizes=(2.0, 5.0, 10.0, 25.0),
                 )
             estimate = world.estimate_source_resolution(
                 0, 0, max_resolution=adaptive_max_res,
-                max_projected_step=max_projected_step,
+                point_source_threshold=point_source_threshold,
                 detector_grid="psf",
             )
             world.set_projection_matrix(
                 res=adaptive_max_res, verbose=0, parallel=1, force=True,
                 adaptive_source_resolution=True,
-                max_projected_step=max_projected_step,
+                point_source_threshold=point_source_threshold,
             )
             adaptive = world.P_matrix[0].copy()
             world.set_projection_matrix(
@@ -105,6 +105,7 @@ def run(output_dir=None, voxel_sizes=(2.0, 5.0, 10.0, 25.0),
                     (world.voxel.N * reference_res ** 3)
                 ),
                 "capped_fraction": float(estimate.capped.mean()),
+                "point_source_fraction": float(estimate.point_source.mean()),
                 "matrix_l2": float(
                     sparse.linalg.norm(adaptive - reference) /
                     sparse.linalg.norm(reference)
@@ -164,7 +165,7 @@ def run(output_dir=None, voxel_sizes=(2.0, 5.0, 10.0, 25.0),
         fig.colorbar(image, ax=axis)
     fig.suptitle(
         "Fully-visible small-voxel sweep; "
-        f"adaptive max={adaptive_max_res}, step={max_projected_step:g} PSF scale",
+        f"adaptive max={adaptive_max_res}, threshold={point_source_threshold:g}",
     )
     fig.tight_layout()
     heatmap_path = output_dir / "small_voxel_depth_sweep.png"

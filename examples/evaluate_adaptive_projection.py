@@ -46,7 +46,7 @@ def _relative_l2(actual, reference):
     return np.linalg.norm(actual - reference) / denominator if denominator else 0.0
 
 
-def run(output_dir=None, reference_res=4, max_projected_step=0.25):
+def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     output_dir = (Path(output_dir) if output_dir is not None else
                   Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_projection")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -55,7 +55,7 @@ def run(output_dir=None, reference_res=4, max_projected_step=0.25):
         "fixed 1": dict(res=1, adaptive_source_resolution=False),
         "fixed 2": dict(res=2, adaptive_source_resolution=False),
         "adaptive": dict(res=reference_res, adaptive_source_resolution=True,
-                         max_projected_step=max_projected_step),
+                         point_source_threshold=point_source_threshold),
         f"fixed {reference_res}": dict(res=reference_res,
                                        adaptive_source_resolution=False),
     }
@@ -104,7 +104,7 @@ def run(output_dir=None, reference_res=4, max_projected_step=0.25):
     full_voxels = np.flatnonzero(world.visible_voxels[0][0] == 2)
     estimate = world.estimate_source_resolution(
         0, 0, full_voxels, max_resolution=reference_res,
-        max_projected_step=max_projected_step,
+        point_source_threshold=point_source_threshold,
     )
     sample_counts = {
         "fixed 1": world.voxel.N,
@@ -168,7 +168,7 @@ def run(output_dir=None, reference_res=4, max_projected_step=0.25):
     axes[1, 2].legend()
 
     fig.suptitle(
-        f"Wall-free adaptive source quadrature; max step={max_projected_step:g} PSF scale",
+        f"Wall-free adaptive source quadrature; threshold={point_source_threshold:g}",
     )
     fig.tight_layout()
     output_path = output_dir / "adaptive_projection_comparison.png"

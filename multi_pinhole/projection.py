@@ -86,6 +86,130 @@ class SourceResolutionEstimate:
     capped: np.ndarray
 
 
+@dataclass(frozen=True)
+class PointSourceResolutionEstimate:
+    """Conservative circumsphere-based source quadrature recommendation."""
+
+    resolution: np.ndarray
+    ratio: np.ndarray
+    projected_diameter: np.ndarray
+    reference_size: np.ndarray
+    point_source: np.ndarray
+    ideal_resolution: np.ndarray
+    capped: np.ndarray
+    valid: np.ndarray
+
+
+def select_circumsphere_resolution(
+        points_in_eye: np.ndarray, edge_lengths: np.ndarray,
+        focal_length: float, reference_size,
+        fallback_resolution=4,
+        point_source_threshold: float = 1.0 / 8.0,
+        ) -> PointSourceResolutionEstimate:
+    """Select ideal axis-wise res from a projected voxel circumsphere.
+
+    The local perspective Jacobian has maximum magnification
+    ``abs(f) / (Z*cos(theta))``. Multiplying it by the voxel circumsphere
+    diameter gives a rotation-independent, worst-direction projected size.
+    The same scale determines a near-cubic ideal axis-wise resolution. The
+    caller's ``fallback_resolution`` is used as an axis-wise ceiling. Voxels
+    that are behind the Eye or whose circumsphere reaches the Eye plane are
+    conservatively assigned that ceiling.
+    """
+    points_in_eye = np.asarray(points_in_eye, dtype=float)
+    edge_lengths = np.asarray(edge_lengths, dtype=float)
+    if points_in_eye.ndim != 2 or points_in_eye.shape[1] != 3:
+        raise ValueError("points_in_eye must have shape (n, 3)")
+    if edge_lengths.shape != points_in_eye.shape:
+        raise ValueError("edge_lengths must have the same shape as points_in_eye")
+    if not np.all(np.isfinite(edge_lengths)) or np.any(edge_lengths <= 0.0):
+        raise ValueError("edge_lengths must contain only positive finite values")
+    if not np.isfinite(focal_length) or focal_length == 0.0:
+        raise ValueError("focal_length must be finite and nonzero")
+    if (not np.isfinite(point_source_threshold) or
+            point_source_threshold <= 0.0):
+        raise ValueError("point_source_threshold must be positive and finite")
+
+    try:
+        fallback = np.asarray(np.broadcast_to(fallback_resolution, 3), dtype=float)
+    except ValueError as exc:
+        raise ValueError(
+            "fallback_resolution must be an integer or length-3 sequence",
+        ) from exc
+    if (not np.all(np.isfinite(fallback)) or np.any(fallback < 1) or
+            np.any(fallback != np.floor(fallback))):
+        raise ValueError("fallback_resolution must contain positive integers")
+    fallback = fallback.astype(np.int64)
+
+    reference_size = np.asarray(reference_size, dtype=float)
+    if reference_size.ndim == 0:
+        reference_size = np.full(points_in_eye.shape[0], reference_size)
+    elif reference_size.shape != (points_in_eye.shape[0],):
+        raise ValueError("reference_size must be scalar or shape (n,)")
+    if not np.all(np.isfinite(reference_size)) or np.any(reference_size <= 0.0):
+        raise ValueError("reference_size must contain only positive finite values")
+
+    diameter = np.linalg.norm(edge_lengths, axis=1)
+    radius = 0.5 * diameter
+    distance = np.linalg.norm(points_in_eye, axis=1)
+    axial_distance = points_in_eye[:, 2]
+    valid = (
+        np.all(np.isfinite(points_in_eye), axis=1) &
+        (distance > 0.0) &
+        (axial_distance > radius)
+    )
+
+    projected_diameter = np.full(points_in_eye.shape[0], np.inf)
+    # Z*cos(theta) = Z**2 / distance. This form avoids a separate angle and
+    # makes the off-axis 1/cos(theta) safety factor explicit algebraically.
+    projected_diameter[valid] = (
+        abs(float(focal_length)) * diameter[valid] * distance[valid] /
+        axial_distance[valid] ** 2
+    )
+    ratio = projected_diameter / reference_size
+    point_source = valid & (ratio <= point_source_threshold)
+    magnification = np.full(points_in_eye.shape[0], np.inf)
+    magnification[valid] = (
+        abs(float(focal_length)) * distance[valid] /
+        axial_distance[valid] ** 2
+    )
+    # For a cube, a subcell edge h has circumsphere diameter sqrt(3)*h.
+    # Choosing h from the allowed projected diameter therefore reproduces
+    # ceil(ratio/threshold) on cubic voxels while keeping anisotropic cells
+    # close to cubic after subdivision.
+    target_edge = np.zeros(points_in_eye.shape[0], dtype=float)
+    target_edge[valid] = (
+        point_source_threshold * reference_size[valid] /
+        (np.sqrt(3.0) * magnification[valid])
+    )
+    ideal_float = np.full((points_in_eye.shape[0], 3), np.inf)
+    refinable = valid & ~point_source
+    ideal_float[point_source] = 1.0
+    ideal_float[refinable] = np.maximum(
+        1.0,
+        np.ceil(np.nextafter(
+            edge_lengths[refinable] / target_edge[refinable, None],
+            -np.inf,
+        )),
+    )
+    capped = (~np.isfinite(ideal_float)) | (ideal_float > fallback[None, :])
+    resolution = np.where(
+        np.isfinite(ideal_float),
+        np.minimum(ideal_float, fallback[None, :]),
+        fallback[None, :],
+    ).astype(np.int64)
+    return PointSourceResolutionEstimate(
+        resolution=resolution,
+        ratio=ratio,
+        projected_diameter=projected_diameter,
+        reference_size=reference_size,
+        point_source=point_source,
+        ideal_resolution=ideal_float,
+        capped=capped,
+        valid=valid,
+    )
+
+
 def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
                              max_resolution=4,
                              max_projected_step: float = 1.0
