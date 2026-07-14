@@ -1,9 +1,10 @@
 """Tests for optical projection bin and work-chunk bookkeeping."""
 
 import numpy as np
+from scipy import sparse
 
 from multi_pinhole import Camera, Eye, Screen
-from multi_pinhole.projection import make_optical_binning
+from multi_pinhole.projection import factorize_psf_columns, make_optical_binning
 
 
 def _camera():
@@ -80,3 +81,32 @@ def test_invalid_optical_binning_parameters_are_rejected():
             pass
         else:
             raise AssertionError(f"invalid bin width accepted: {width!r}")
+
+
+def test_zero_tolerance_bypasses_all_psf_factorization_work():
+    class MustNotBeInspected:
+        pass
+
+    assert factorize_psf_columns(
+        MustNotBeInspected(), scope_offsets=None, tolerance=0.0,
+    ) is None
+
+
+def test_psf_factorization_preserves_sensitivity_and_scope_boundaries():
+    # Columns 0 and 2 are identical but deliberately belong to different
+    # optical scopes, so they must not share one representative.
+    I = sparse.csr_matrix(np.array([
+        [0.8, 0.78, 0.8, 0.1],
+        [0.2, 0.22, 0.2, 0.9],
+    ]))
+    factorization = factorize_psf_columns(
+        I, scope_offsets=np.array([0, 2, 4]), tolerance=0.1,
+    )
+
+    assert factorization is not None
+    assert factorization.group_index[0] != factorization.group_index[2]
+    assert factorization.group_max_relative_l2.max(initial=0.0) <= 0.1 + 1e-12
+    np.testing.assert_allclose(
+        np.asarray((factorization.Q @ factorization.R).sum(axis=0)),
+        np.asarray(I.sum(axis=0)), rtol=0.0, atol=1e-14,
+    )

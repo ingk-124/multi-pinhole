@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy import sparse
 
 
 def _pair(value, name: str) -> np.ndarray:
@@ -83,6 +84,140 @@ class OpticalBinning:
         offsets = self.work_offsets(max_samples)
         return [self.order[start:stop]
                 for start, stop in zip(offsets[:-1], offsets[1:])]
+
+
+@dataclass(frozen=True)
+class PSFFactorization:
+    """Sensitivity-preserving factorization ``I ~= Q R``."""
+
+    Q: sparse.csr_matrix
+    R: sparse.csr_matrix
+    group_index: np.ndarray
+    group_max_l1: np.ndarray
+    group_max_relative_l2: np.ndarray
+    sensitivity: np.ndarray
+
+
+def _psf_distances(columns: np.ndarray, representative: np.ndarray):
+    difference = columns - representative[:, None]
+    l1 = np.abs(difference).sum(axis=0)
+    norm = np.linalg.norm(columns, axis=0)
+    relative_l2 = np.linalg.norm(difference, axis=0) / np.maximum(norm, 1e-30)
+    return l1, relative_l2
+
+
+def _psf_metric(columns: np.ndarray, representative: np.ndarray, metric: str):
+    l1, relative_l2 = _psf_distances(columns, representative)
+    if metric == "relative_l2":
+        return relative_l2
+    if metric == "l1":
+        return l1
+    raise ValueError("metric must be 'relative_l2' or 'l1'")
+
+
+def _recursive_psf_groups(columns: np.ndarray, sensitivity: np.ndarray,
+                          tolerance: float, metric: str) -> list[np.ndarray]:
+    groups: list[np.ndarray] = []
+
+    def split(indices):
+        indices = np.asarray(indices, dtype=np.int64)
+        block = columns[:, indices]
+        weights = sensitivity[indices]
+        representative = (block * weights[None, :]).sum(axis=1) / weights.sum()
+        errors = _psf_metric(block, representative, metric)
+        if indices.size == 1 or errors.max(initial=0.0) <= tolerance:
+            groups.append(indices)
+            return
+
+        first = block[:, int(np.argmax(errors))]
+        second = block[:, int(np.argmax(_psf_metric(block, first, metric)))]
+        first_distance = _psf_metric(block, first, metric)
+        second_distance = _psf_metric(block, second, metric)
+        left = first_distance <= second_distance
+        if np.all(left) or not np.any(left):
+            order = np.argsort(errors, kind="stable")
+            left = np.zeros(indices.size, dtype=bool)
+            left[order[:indices.size // 2]] = True
+        split(indices[left])
+        split(indices[~left])
+
+    split(np.arange(columns.shape[1], dtype=np.int64))
+    return groups
+
+
+def factorize_psf_columns(I, scope_offsets, tolerance: float,
+                          metric: str = "relative_l2") -> PSFFactorization | None:
+    """Factorize PSF columns independently within consecutive scopes.
+
+    A return value of ``None`` is the explicit direct-block signal.  In
+    particular, ``tolerance == 0`` returns before converting, normalizing, or
+    densifying ``I``; callers should compute the exact ``I @ S`` block.
+    """
+    if not np.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("tolerance must be finite and non-negative")
+    if tolerance == 0.0:
+        return None
+    if metric not in {"relative_l2", "l1"}:
+        raise ValueError("metric must be 'relative_l2' or 'l1'")
+
+    I_csc = sparse.csc_matrix(I)
+    offsets = np.asarray(scope_offsets, dtype=np.int64)
+    if offsets.ndim != 1 or offsets.size < 1 or offsets[0] != 0 or \
+            offsets[-1] != I_csc.shape[1] or np.any(np.diff(offsets) <= 0):
+        raise ValueError("scope_offsets must strictly partition all I columns")
+
+    sensitivity = np.asarray(I_csc.sum(axis=0)).ravel()
+    positive = sensitivity > 0.0
+    group_index = np.full(I_csc.shape[1], -1, dtype=np.int64)
+    group_members: list[np.ndarray] = []
+    q_columns: list[sparse.csc_matrix] = []
+    max_l1: list[float] = []
+    max_relative_l2: list[float] = []
+
+    for start, stop in zip(offsets[:-1], offsets[1:]):
+        members = np.arange(start, stop, dtype=np.int64)
+        members = members[positive[members]]
+        if members.size == 0:
+            continue
+        block = I_csc[:, members].toarray()
+        normalized = block / sensitivity[members][None, :]
+        for local_group in _recursive_psf_groups(
+                normalized, sensitivity[members], tolerance, metric):
+            global_members = members[local_group]
+            total_sensitivity = sensitivity[global_members].sum()
+            representative = np.asarray(
+                I_csc[:, global_members].sum(axis=1)
+            ).ravel() / total_sensitivity
+            l1, relative_l2 = _psf_distances(
+                normalized[:, local_group], representative,
+            )
+            group_number = len(group_members)
+            group_index[global_members] = group_number
+            group_members.append(global_members)
+            q_columns.append(sparse.csc_matrix(representative[:, None]))
+            max_l1.append(float(l1.max(initial=0.0)))
+            max_relative_l2.append(float(relative_l2.max(initial=0.0)))
+
+    if q_columns:
+        Q = sparse.hstack(q_columns, format="csr")
+        columns = np.concatenate(group_members)
+        rows = np.repeat(
+            np.arange(len(group_members)), [members.size for members in group_members],
+        )
+        R = sparse.csr_matrix(
+            (sensitivity[columns], (rows, columns)),
+            shape=(len(group_members), I_csc.shape[1]),
+        )
+    else:
+        Q = sparse.csr_matrix((I_csc.shape[0], 0))
+        R = sparse.csr_matrix((0, I_csc.shape[1]))
+
+    return PSFFactorization(
+        Q=Q, R=R, group_index=group_index,
+        group_max_l1=np.asarray(max_l1),
+        group_max_relative_l2=np.asarray(max_relative_l2),
+        sensitivity=sensitivity,
+    )
 
 
 def make_optical_binning(camera, eye_index: int, points: np.ndarray,

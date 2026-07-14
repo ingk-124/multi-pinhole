@@ -6,6 +6,8 @@ import sys
 
 import numpy as np
 
+from multi_pinhole.projection import factorize_psf_columns
+
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "evaluate_subvoxel_psf_compression.py"
 SPEC = util.spec_from_file_location("evaluate_subvoxel_psf_compression", EXAMPLE)
@@ -78,3 +80,23 @@ def test_recursive_and_leader_psf_groups_keep_bounds_and_signed_sum():
         reference_sum = np.asarray(problem.P_existing.sum(axis=0)).ravel()
         approximate_sum = np.asarray(compression.P_approx.sum(axis=0)).ravel()
         np.testing.assert_allclose(approximate_sum, reference_sum, rtol=2e-6, atol=1e-12)
+
+
+def test_library_psf_factorization_builds_q_a_on_toy_problem():
+    problem = _small_problem(resolution=2)
+    order = np.concatenate(problem.optical_chunks)
+    scope_offsets = np.concatenate((
+        [0], np.cumsum([chunk.size for chunk in problem.optical_chunks]),
+    ))
+    factorization = factorize_psf_columns(
+        problem.I[:, order], scope_offsets, tolerance=0.1,
+    )
+    assert factorization is not None
+
+    A = factorization.R @ problem.S[order]
+    approximation = factorization.Q @ A
+    reference_sum = np.asarray(problem.P_existing.sum(axis=0)).ravel()
+    approximate_sum = np.asarray(approximation.sum(axis=0)).ravel()
+
+    assert factorization.group_max_relative_l2.max(initial=0.0) <= 0.1 + 1e-12
+    np.testing.assert_allclose(approximate_sum, reference_sum, rtol=2e-6, atol=1e-12)
