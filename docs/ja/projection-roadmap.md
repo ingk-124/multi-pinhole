@@ -368,6 +368,30 @@ MST `d=75 mm`でも`0/1251 scope`で、構築`14.60 s`、保存`8,817,752 bytes`
 したがって現在の閾値0.1では、Toy/MSTとも20%以上保存量を減らすQAは存在しない。次の課題は、
 採用されないgroupingを実行前に棄却するcheap prefilter、または許容誤差を変えた圧縮可能領域の探索。
 
+### 高res・遠距離・高shapeでの成立領域
+
+QAが効く本質的な変数はsource res単独ではなく、角度空間でのsample間隔
+`Delta xi ~= Delta X/Z`, `Delta eta ~= Delta Y/Z`である。同じ物理範囲ならvoxel shape、source res、
+`Z/f`を大きくするとsampleが密になる。一方、shapeを大きくすると通常Pの列数も増えるため、resだけを
+上げる場合よりQAに有利になり得る。
+
+まずshape `(6,6,4)`、detector res 5、source res `2/4/6`、`Z/f=15/50/100`、tolerance
+`0/0.003/0.01/0.03/0.1`を測定した。native sparse Pに対する`tolerance=0` direct-hybridの構築時間比
+`time(P)/time(hybrid)`は`0.797--1.020`で、res 4/6では概ね3%以内だった。groupingを完全に
+バイパスすればhybrid経路固有の有意な時間増加はない。強制QAは最良の`Z/f=100, res=2,
+tolerance=0.1`でも`P bytes / QA bytes = 0.777`で、通常Pより大きかった。tolerance 0.01では0.285。
+
+次に物理範囲を固定してshapeを`(12,12,8)`へ増やし、最も有利な`Z/f=100`でsource res 2/4を
+測定した。tolerance 0.01では強制QAが通常Pの約4.1倍/16.3倍、0.03では約2.8倍/4.1倍で不利。
+tolerance 0.1で初めてres 2は`76100 -> 66072 bytes`（13.2%削減）、res 4は
+`80516 -> 80452 bytes`（0.08%削減）となった。Gaussian相対L2誤差は`5.89e-4/3.84e-4`、総光量
+相対誤差は約`2e-15`。gate 1.0では4/4 scopeが採用され、構築時間はres 2で`0.525/0.610 s`
+（native/QA）、res 4で`4.275/4.232 s`だった。
+
+したがって「shapeが大きく角度sampleが密ならQAが効く」は確認できたが、現状の成立点は局所PSF
+tolerance 0.1付近である。tolerance 0.01を精度基準にする限り、QA保存は現実的でない。0.1を使う
+場合はforward画像誤差だけでなく、inverse problemの悪条件方向への影響を別途評価して採否を決める。
+
 cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
 整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
 奥行き分解能が同時に変化するためである。回転依存を分離する次の評価では、同一の

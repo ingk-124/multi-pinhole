@@ -1175,10 +1175,97 @@ def run_production_sweep(
     figure_path = output_dir / "07_production_hybrid_sweep.png"
     fig.savefig(figure_path, dpi=180)
     plt.close(fig)
+
+    tolerance_figure_path = None
+    if len(tolerances) > 1:
+        fig, axes = plt.subplots(2, 2, figsize=(11, 8.2))
+        forced_rows = [
+            row for row in gaussian_rows
+            if row["max_factorized_byte_fraction"] is None
+            and row["bin_width_pixels"] == bin_widths[0]
+            and row["metric"] == metrics[0]
+            and row["algorithm"] == algorithms[0]
+        ]
+        gate_fraction = next(
+            (fraction for fraction in max_factorized_byte_fractions
+             if fraction is not None and fraction > 0.0),
+            None,
+        )
+        for axial_distance in axial_distances:
+            for resolution in resolutions:
+                selected = sorted(
+                    (row for row in forced_rows
+                     if row["axial_distance"] == axial_distance
+                     and row["resolution"] == resolution),
+                    key=lambda row: row["tolerance"],
+                )
+                if not selected:
+                    continue
+                label = f"source res={resolution}, Z/f={axial_distance / FOCAL_LENGTH:g}"
+                x = [row["tolerance"] for row in selected]
+                axes[0, 0].plot(
+                    x, [row["storage_compression"] for row in selected],
+                    marker="o", label=label,
+                )
+                axes[0, 1].plot(
+                    x, [row["build_speed_ratio"] for row in selected],
+                    marker="o", label=label,
+                )
+                axes[1, 0].plot(
+                    x, [max(row["relative_l2"], 1e-16) for row in selected],
+                    marker="o", label=label,
+                )
+                if gate_fraction is not None:
+                    gated = sorted(
+                        (row for row in gaussian_rows
+                         if row["axial_distance"] == axial_distance
+                         and row["resolution"] == resolution
+                         and row["max_factorized_byte_fraction"] == gate_fraction
+                         and row["bin_width_pixels"] == bin_widths[0]
+                         and row["metric"] == metrics[0]
+                         and row["algorithm"] == algorithms[0]),
+                        key=lambda row: row["tolerance"],
+                    )
+                    axes[1, 1].plot(
+                        [row["tolerance"] for row in gated],
+                        [row["factorized_scope_count"] / max(row["scope_count"], 1)
+                         for row in gated],
+                        marker="o", label=label,
+                    )
+        axes[0, 0].axhline(1.0, color="0.4", lw=1)
+        axes[0, 0].set(
+            xlabel="PSF tolerance", ylabel="CSR P bytes / forced QA bytes",
+            title="forced-factor storage",
+        )
+        axes[0, 1].axhline(1.0, color="0.4", lw=1)
+        axes[0, 1].set(
+            xlabel="PSF tolerance", ylabel="native P build / hybrid build",
+            title="construction speed (tolerance=0 is direct hybrid)",
+        )
+        axes[1, 0].set(
+            xlabel="PSF tolerance", ylabel="Gaussian image relative L2",
+            title="forced-factor approximation error",
+        )
+        axes[1, 0].set_yscale("log")
+        axes[1, 1].set(
+            xlabel="PSF tolerance", ylabel="retained factorized scopes / scopes",
+            title=f"final Bytes gate <= {gate_fraction:g}" if gate_fraction is not None
+            else "final Bytes gate",
+        )
+        for axis in axes.ravel():
+            axis.grid(alpha=0.25)
+            handles, labels = axis.get_legend_handles_labels()
+            if handles:
+                axis.legend(fontsize=6)
+        fig.tight_layout()
+        tolerance_figure_path = output_dir / "08_tolerance_resolution_sweep.png"
+        fig.savefig(tolerance_figure_path, dpi=180)
+        plt.close(fig)
     return {
         "rows": rows,
         "csv_path": csv_path,
         "figure_path": figure_path,
+        "tolerance_figure_path": tolerance_figure_path,
         "elapsed_seconds": time.perf_counter() - benchmark_start,
     }
 
