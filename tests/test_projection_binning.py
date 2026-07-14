@@ -4,7 +4,11 @@ import numpy as np
 from scipy import sparse
 
 from multi_pinhole import Camera, Eye, Screen
-from multi_pinhole.projection import factorize_psf_columns, make_optical_binning
+from multi_pinhole.projection import (
+    build_psf_group_matrix,
+    factorize_psf_columns,
+    make_optical_binning,
+)
 
 
 def _camera():
@@ -104,9 +108,71 @@ def test_psf_factorization_preserves_sensitivity_and_scope_boundaries():
     )
 
     assert factorization is not None
+    assert factorization.group_index.dtype == np.int32
     assert factorization.group_index[0] != factorization.group_index[2]
     assert factorization.group_max_relative_l2.max(initial=0.0) <= 0.1 + 1e-12
+    # Identity S exposes the logical R through A without ever constructing R.
+    A = build_psf_group_matrix(factorization, sparse.eye(I.shape[1], format="csr"))
     np.testing.assert_allclose(
-        np.asarray((factorization.Q @ factorization.R).sum(axis=0)),
+        np.asarray((factorization.Q @ A).sum(axis=0)),
         np.asarray(I.sum(axis=0)), rtol=0.0, atol=1e-14,
     )
+
+
+def test_factorization_uses_global_pixel_rows_after_local_dense_grouping():
+    # The PSFs occupy non-consecutive global detector rows.  Local dense row
+    # numbers must never be mistaken for the original detector indices in Q.
+    I = sparse.csc_matrix((
+        np.array([0.8, 0.2, 0.78, 0.22]),
+        np.array([10, 90, 10, 90]),
+        np.array([0, 2, 4]),
+    ), shape=(100, 2))
+    factorization = factorize_psf_columns(
+        I, scope_offsets=np.array([0, 2]), tolerance=0.1,
+    )
+
+    assert factorization is not None
+    assert factorization.n_groups == 1
+    np.testing.assert_array_equal(factorization.Q.nonzero()[0], [10, 90])
+    A = build_psf_group_matrix(factorization, sparse.eye(2, format="csr"))
+    np.testing.assert_allclose((factorization.Q @ A).toarray().sum(axis=0), [1.0, 1.0])
+
+
+def test_factorization_algorithm_and_dense_memory_split_keep_error_bound():
+    I = sparse.csr_matrix(np.array([
+        [0.8, 0.78, 0.2, 0.22],
+        [0.2, 0.22, 0.8, 0.78],
+    ]))
+    for algorithm in ("recursive", "leader"):
+        factorization = factorize_psf_columns(
+            I, scope_offsets=np.array([0, 4]), tolerance=0.1,
+            algorithm=algorithm, max_scope_dense_bytes=64,
+        )
+        assert factorization is not None
+        assert factorization.group_max_relative_l2.max(initial=0.0) <= 0.1 + 1e-12
+
+
+def test_group_matrix_uses_global_voxel_columns_and_ignores_zero_psfs():
+    I = sparse.csr_matrix(np.array([
+        [1.0, 0.0, 0.9],
+        [0.0, 0.0, 0.1],
+    ]))
+    S = sparse.csr_matrix((
+        np.array([0.25, 0.75, 1.0, 0.4, 0.6]),
+        np.array([2, 7, 5, 2, 7]),
+        np.array([0, 2, 3, 5]),
+    ), shape=(3, 9))
+    factorization = factorize_psf_columns(
+        I, scope_offsets=np.array([0, 3]), tolerance=0.2,
+    )
+    assert factorization is not None
+    assert factorization.group_index[1] == -1
+
+    A = build_psf_group_matrix(factorization, S)
+    approximation = factorization.Q @ A
+    reference = I @ S
+    np.testing.assert_allclose(
+        np.asarray(approximation.sum(axis=0)),
+        np.asarray(reference.sum(axis=0)), rtol=0.0, atol=1e-14,
+    )
+    np.testing.assert_array_equal(np.unique(A.nonzero()[1]), [2, 7])

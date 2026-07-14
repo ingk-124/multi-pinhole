@@ -88,14 +88,29 @@ class OpticalBinning:
 
 @dataclass(frozen=True)
 class PSFFactorization:
-    """Sensitivity-preserving factorization ``I ~= Q R``."""
+    """Sensitivity-preserving grouping data for ``I ~= Q R``.
+
+    ``R`` is intentionally not materialized.  Its column ``sample`` has one
+    logical nonzero at ``(group_index[sample], sample)`` with value
+    ``sensitivity[sample]``.  Keeping those two one-dimensional arrays avoids
+    CSR bookkeeping for a matrix that is only a weighted group assignment.
+    """
 
     Q: sparse.csr_matrix
-    R: sparse.csr_matrix
     group_index: np.ndarray
     group_max_l1: np.ndarray
     group_max_relative_l2: np.ndarray
     sensitivity: np.ndarray
+
+    @property
+    def n_groups(self) -> int:
+        """Number of representative PSF columns."""
+        return int(self.Q.shape[1])
+
+    @property
+    def n_active_samples(self) -> int:
+        """Number of source samples with nonzero detector sensitivity."""
+        return int(np.count_nonzero(self.group_index >= 0))
 
 
 def _psf_distances(columns: np.ndarray, representative: np.ndarray):
@@ -145,13 +160,63 @@ def _recursive_psf_groups(columns: np.ndarray, sensitivity: np.ndarray,
     return groups
 
 
+def _leader_psf_groups(columns: np.ndarray, sensitivity: np.ndarray,
+                       tolerance: float, metric: str) -> list[np.ndarray]:
+    """Single-pass leader grouping with exact checks after mean updates."""
+    groups: list[list[int]] = []
+    representatives: list[np.ndarray] = []
+    for column_number in range(columns.shape[1]):
+        if not groups:
+            groups.append([column_number])
+            representatives.append(columns[:, column_number].copy())
+            continue
+
+        candidate = columns[:, column_number:column_number + 1]
+        candidate_distance = np.asarray([
+            _psf_metric(candidate, representative, metric)[0]
+            for representative in representatives
+        ])
+        accepted = False
+        for group_number in np.argsort(candidate_distance, kind="stable"):
+            proposed = np.asarray(
+                groups[group_number] + [column_number], dtype=np.int64,
+            )
+            weights = sensitivity[proposed]
+            representative = (
+                columns[:, proposed] * weights[None, :]
+            ).sum(axis=1) / weights.sum()
+            # Rechecking every existing member prevents the moving mean from
+            # drifting outside the requested tolerance.
+            if _psf_metric(
+                    columns[:, proposed], representative, metric,
+            ).max(initial=0.0) <= tolerance:
+                groups[group_number].append(column_number)
+                representatives[group_number] = representative
+                accepted = True
+                break
+        if not accepted:
+            groups.append([column_number])
+            representatives.append(columns[:, column_number].copy())
+    return [np.asarray(group, dtype=np.int64) for group in groups]
+
+
 def factorize_psf_columns(I, scope_offsets, tolerance: float,
-                          metric: str = "relative_l2") -> PSFFactorization | None:
+                          metric: str = "relative_l2",
+                          algorithm: str = "recursive",
+                          max_scope_dense_bytes: int | None = None,
+                          ) -> PSFFactorization | None:
     """Factorize PSF columns independently within consecutive scopes.
 
     A return value of ``None`` is the explicit direct-block signal.  In
     particular, ``tolerance == 0`` returns before converting, normalizing, or
     densifying ``I``; callers should compute the exact ``I @ S`` block.
+
+    Only detector rows that contain a nonzero in the current scope are made
+    dense for distance calculations.  Their indices remain *global detector
+    row indices*; group and sample indices always refer to columns of the
+    original ``I``.  If ``max_scope_dense_bytes`` is given, an oversized scope
+    is split before allocation.  This may miss compression across the split,
+    but cannot increase the approximation error.
     """
     if not np.isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("tolerance must be finite and non-negative")
@@ -159,6 +224,10 @@ def factorize_psf_columns(I, scope_offsets, tolerance: float,
         return None
     if metric not in {"relative_l2", "l1"}:
         raise ValueError("metric must be 'relative_l2' or 'l1'")
+    if algorithm not in {"recursive", "leader"}:
+        raise ValueError("algorithm must be 'recursive' or 'leader'")
+    if max_scope_dense_bytes is not None and max_scope_dense_bytes < 1:
+        raise ValueError("max_scope_dense_bytes must be positive or None")
 
     I_csc = sparse.csc_matrix(I)
     offsets = np.asarray(scope_offsets, dtype=np.int64)
@@ -168,28 +237,54 @@ def factorize_psf_columns(I, scope_offsets, tolerance: float,
 
     sensitivity = np.asarray(I_csc.sum(axis=0)).ravel()
     positive = sensitivity > 0.0
-    group_index = np.full(I_csc.shape[1], -1, dtype=np.int64)
+    group_index = np.full(I_csc.shape[1], -1, dtype=np.int32)
     group_members: list[np.ndarray] = []
     q_columns: list[sparse.csc_matrix] = []
     max_l1: list[float] = []
     max_relative_l2: list[float] = []
 
-    for start, stop in zip(offsets[:-1], offsets[1:]):
-        members = np.arange(start, stop, dtype=np.int64)
-        members = members[positive[members]]
+    def _factorize_scope(members: np.ndarray):
+        """Append groups for one scope, splitting only for dense memory."""
         if members.size == 0:
-            continue
-        block = I_csc[:, members].toarray()
+            return
+
+        I_scope = I_csc[:, members]
+        # ``I_scope.indices`` are global detector-row numbers in CSC format.
+        # Rows absent from this union are exactly zero for every scope column,
+        # so dropping them leaves both L1 and L2 distances unchanged.
+        active_pixel_rows = np.unique(I_scope.indices)
+        dense_itemsize = max(I_csc.dtype.itemsize, sensitivity.dtype.itemsize)
+        # Normalized columns, a difference buffer, and metric temporaries can
+        # coexist.  Four dense arrays is a conservative working-set estimate.
+        estimated_dense_bytes = (
+            4 * active_pixel_rows.size * members.size * dense_itemsize
+        )
+        if max_scope_dense_bytes is not None and \
+                estimated_dense_bytes > max_scope_dense_bytes and members.size > 1:
+            middle = members.size // 2
+            _factorize_scope(members[:middle])
+            _factorize_scope(members[middle:])
+            return
+
+        # This is a local detector-row coordinate system used only while
+        # comparing PSFs.  Q below is reconstructed from I_csc and therefore
+        # remains indexed in the original global detector coordinates.
+        block = I_scope[active_pixel_rows, :].toarray()
         normalized = block / sensitivity[members][None, :]
-        for local_group in _recursive_psf_groups(
+        group_function = (
+            _recursive_psf_groups if algorithm == "recursive"
+            else _leader_psf_groups
+        )
+        for local_group in group_function(
                 normalized, sensitivity[members], tolerance, metric):
             global_members = members[local_group]
             total_sensitivity = sensitivity[global_members].sum()
             representative = np.asarray(
                 I_csc[:, global_members].sum(axis=1)
             ).ravel() / total_sensitivity
+            local_representative = representative[active_pixel_rows]
             l1, relative_l2 = _psf_distances(
-                normalized[:, local_group], representative,
+                normalized[:, local_group], local_representative,
             )
             group_number = len(group_members)
             group_index[global_members] = group_number
@@ -198,26 +293,54 @@ def factorize_psf_columns(I, scope_offsets, tolerance: float,
             max_l1.append(float(l1.max(initial=0.0)))
             max_relative_l2.append(float(relative_l2.max(initial=0.0)))
 
+    for start, stop in zip(offsets[:-1], offsets[1:]):
+        members = np.arange(start, stop, dtype=np.int64)
+        _factorize_scope(members[positive[members]])
+
     if q_columns:
         Q = sparse.hstack(q_columns, format="csr")
-        columns = np.concatenate(group_members)
-        rows = np.repeat(
-            np.arange(len(group_members)), [members.size for members in group_members],
-        )
-        R = sparse.csr_matrix(
-            (sensitivity[columns], (rows, columns)),
-            shape=(len(group_members), I_csc.shape[1]),
-        )
     else:
         Q = sparse.csr_matrix((I_csc.shape[0], 0))
-        R = sparse.csr_matrix((0, I_csc.shape[1]))
 
     return PSFFactorization(
-        Q=Q, R=R, group_index=group_index,
+        Q=Q, group_index=group_index,
         group_max_l1=np.asarray(max_l1),
         group_max_relative_l2=np.asarray(max_relative_l2),
         sensitivity=sensitivity,
     )
+
+
+def build_psf_group_matrix(
+        factorization: PSFFactorization, S,
+) -> sparse.csr_matrix:
+    """Build ``A = R S`` without materializing the weighted one-hot ``R``.
+
+    ``S`` rows and ``factorization.group_index`` entries use the same global
+    sample-column order as the ``I`` passed to :func:`factorize_psf_columns`.
+    ``S`` columns are global voxel indices and are copied unchanged into A.
+    """
+    S_csr = sparse.csr_matrix(S)
+    n_samples = factorization.group_index.size
+    if S_csr.shape[0] != n_samples:
+        raise ValueError("S rows must match the number of factorized I columns")
+
+    row_nnz = np.diff(S_csr.indptr)
+    # Each nonzero S[i, voxel] is accumulated into A[group_index[i], voxel]
+    # with the logical R value sensitivity[i].  These repeated arrays are
+    # indexed per S nonzero, not per detector pixel.
+    group_per_nonzero = np.repeat(factorization.group_index, row_nnz)
+    sensitivity_per_nonzero = np.repeat(factorization.sensitivity, row_nnz)
+    assigned = group_per_nonzero >= 0
+    A = sparse.coo_matrix(
+        (
+            S_csr.data[assigned] * sensitivity_per_nonzero[assigned],
+            (group_per_nonzero[assigned], S_csr.indices[assigned]),
+        ),
+        shape=(factorization.n_groups, S_csr.shape[1]),
+    ).tocsr()
+    A.sum_duplicates()
+    A.eliminate_zeros()
+    return A
 
 
 def make_optical_binning(camera, eye_index: int, points: np.ndarray,

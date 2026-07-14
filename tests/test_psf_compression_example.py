@@ -6,7 +6,7 @@ import sys
 
 import numpy as np
 
-from multi_pinhole.projection import factorize_psf_columns
+from multi_pinhole.projection import build_psf_group_matrix, factorize_psf_columns
 
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "evaluate_subvoxel_psf_compression.py"
@@ -93,7 +93,7 @@ def test_library_psf_factorization_builds_q_a_on_toy_problem():
     )
     assert factorization is not None
 
-    A = factorization.R @ problem.S[order]
+    A = build_psf_group_matrix(factorization, problem.S[order])
     approximation = factorization.Q @ A
     reference_sum = np.asarray(problem.P_existing.sum(axis=0)).ravel()
     approximate_sum = np.asarray(approximation.sum(axis=0)).ravel()
