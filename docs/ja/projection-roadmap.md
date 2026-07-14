@@ -14,7 +14,8 @@
 - `I ~= Q R`, `A = R S` によるPSF group化の実装と評価コードは
   [Draft PR #9](https://github.com/ingk-124/multi-pinhole/pull/9) に退避した。0.6.0には含めず、
   native sparse `P`を標準表現とする。
-- source `res`自動判定、active voxel compact mapping、Eye内部位置ごとの局所visibilityは未実装である。
+- fully visible voxelのsource `res`適応判定は実装済みである。active voxel compact mappingと
+  Eye内部位置ごとの局所visibilityは未実装である。
 - `d=75 mm` MST benchmarkは短時間性能の確認には使用済みだが、全profile・detector res・境界を
   含む数値検証は未完了である。
 
@@ -93,6 +94,28 @@ shape、nnz、行列総和の一致を確認した。
 partial voxelをres=5 referenceに対するcolumn相対L1誤差から後付けで最適選択するoracle評価では、
 1% toleranceで全2,310 camera-voxel列がres=5を必要とした。3%でもsample削減は約4%、5%で
 約22.5%だった。したがってpartial用の複雑な自動判定は実装せず、`partial_res`を明示する。
+
+#### 2026-07 wallなし小voxel・奥行きsweep
+
+aperture、wall、inside境界を除き、全25 voxelがfully visibleとなる `5 x 1 x 5` Toyで、
+voxel辺長 `d = 2, 5, 10, 25 mm`、Eyeからの中心距離 `Z/f = 5, 10, 20, 50, 100`
+を比較した。`f = 20 mm`、有限Eye径 `1 mm`、adaptive上限8、判定閾値0.25 PSF scale、
+固定res 12をreferenceとした。
+
+- `d=2 mm`では横方向中央値が `Z/f=5`で2、10以上で1になった。
+- `d=5 mm`では横方向中央値が `Z/f=5,10,20以上`でそれぞれ4、2、1になった。
+- `d=10 mm`では横方向中央値が `Z/f=5,10,20,50以上`で7、4、2、1になった。
+- depth方向は多くの条件で1であり、投影されたvoxel幅が概ね `d/Z`で小さくなるという
+  判定意図と一致した。
+- `d=25 mm`, `Z/f=5,10`では上限8に張り付くvoxelが多く、fixed res 12との差も残った。
+  近距離・大voxelでは上限値を十分に取る必要がある。追加のfixed res 12対16比較は
+  `Z/f=5,10,20`でそれぞれ約0.46%、0.13%、0.05%となり、res 12 reference側は概ね収束している。
+- constant、linear、square、Gaussianを投影すると、小voxel・遠距離では概ね誤差が下がった。
+  ただしsquareのような不連続profileではpixel境界を横切る位相により誤差が奥行きに対して
+  単調にならない。現在の幾何判定は必要sampling数の指標であり、profile画像の誤差保証ではない。
+
+再現コードは `examples/evaluate_small_voxel_depth_sweep.py` とし、adaptive sample数、採用軸別res、
+projection matrix誤差、profile別画像誤差を同時に可視化する。
 
 ## Fine voxel grid を現実的に扱う方法
 

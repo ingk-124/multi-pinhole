@@ -1139,3 +1139,28 @@ def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path
     assert len(constant_rows) == 2
     assert constant_rows[0]["sampling_ratio"] == 2 * constant_rows[1]["sampling_ratio"]
     assert all(np.isfinite(row["relative_l2"]) for row in result["rows"])
+
+
+def test_small_voxel_depth_sweep_is_fully_visible_and_draws_outputs(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_small_voxel_depth_sweep.py")
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_small_voxel_depth_sweep", example_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run(
+        tmp_path, voxel_sizes=(2.0,), depth_ratios=(20.0,),
+        adaptive_max_res=2, reference_res=3,
+    )
+
+    assert result["heatmap_path"].is_file()
+    assert result["profile_path"].is_file()
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert row["resolution"].shape == (25, 3)
+    assert np.all((row["resolution"] >= 1) & (row["resolution"] <= 2))
+    assert 0.0 < row["sample_ratio"] <= (2 / 3) ** 3
+    assert np.isfinite(row["matrix_l2"])
+    assert all(np.isfinite(value) for value in row["profile_errors"].values())
