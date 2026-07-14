@@ -8,6 +8,7 @@ ordinary sparse and future factorized projection builders.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from scipy import sparse
@@ -357,10 +358,11 @@ class HybridProjectionOperator:
     treats a projection as a matrix.
     """
 
-    def __init__(self, direct, Q, A):
+    def __init__(self, direct, Q, A, compression_stats=()):
         self.direct = sparse.csr_matrix(direct)
         self.Q = sparse.csr_matrix(Q)
         self.A = sparse.csr_matrix(A)
+        self.compression_stats = tuple(compression_stats)
         if self.Q.shape[1] != self.A.shape[0]:
             raise ValueError("Q columns must match A rows")
         if self.direct.shape != (self.Q.shape[0], self.A.shape[1]):
@@ -424,6 +426,7 @@ class HybridProjectionOperator:
             raise ValueError("left transform columns must match detector rows")
         return HybridProjectionOperator(
             matrix @ self.direct, matrix @ self.Q, self.A,
+            compression_stats=self.compression_stats,
         )
 
 
@@ -475,6 +478,17 @@ class ProjectionCompressionStats:
     used_factorization: bool
     max_l1: float
     max_relative_l2: float
+    n_active_pixel_rows: int
+    direct_nbytes: int
+    q_nbytes: int
+    a_nbytes: int
+    grouping_seconds: float
+    assembly_seconds: float
+
+    @property
+    def stored_nbytes(self) -> int:
+        """CSR payload bytes selected for this scope."""
+        return self.direct_nbytes + self.q_nbytes + self.a_nbytes
 
 
 def build_projection_block(
@@ -491,6 +505,7 @@ def build_projection_block(
     """
     I_sparse = sparse.csr_matrix(I)
     S_sparse = sparse.csr_matrix(S)
+    build_start = time.perf_counter()
     if I_sparse.shape[1] != S_sparse.shape[0]:
         raise ValueError("I columns must match S rows")
     if max_group_fraction is not None and not 0.0 <= max_group_fraction <= 1.0:
@@ -498,34 +513,58 @@ def build_projection_block(
 
     n_detector, n_samples = I_sparse.shape
     n_voxels = S_sparse.shape[1]
+    n_active_pixel_rows = int(np.count_nonzero(I_sparse.getnnz(axis=1)))
     if n_samples == 0:
         operator = HybridProjectionOperator.empty(
             (n_detector, n_voxels), dtype=I_sparse.dtype,
         )
-        return operator, ProjectionCompressionStats(
+        stats = ProjectionCompressionStats(
             n_samples=0, n_active_samples=0, n_groups=0,
             group_fraction=0.0, used_factorization=False,
             max_l1=0.0, max_relative_l2=0.0,
+            n_active_pixel_rows=0,
+            direct_nbytes=_sparse_nbytes(operator.direct),
+            q_nbytes=_sparse_nbytes(operator.Q),
+            a_nbytes=_sparse_nbytes(operator.A),
+            grouping_seconds=0.0,
+            assembly_seconds=time.perf_counter() - build_start,
         )
+        operator.compression_stats = (stats,)
+        return operator, stats
     # Both switches are explicit direct-mode requests.  Test them before any
     # normalization or grouping work, just as tolerance == 0 is handled by
     # factorize_psf_columns itself.
     if tolerance == 0.0 or max_group_fraction == 0.0:
+        assembly_start = time.perf_counter()
         operator = HybridProjectionOperator(
             I_sparse @ S_sparse,
             sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
             sparse.csr_matrix((0, n_voxels), dtype=I_sparse.dtype),
         )
-        return operator, ProjectionCompressionStats(
-            n_samples=n_samples, n_active_samples=n_samples, n_groups=0,
+        assembly_seconds = time.perf_counter() - assembly_start
+        n_active = int(np.count_nonzero(
+            np.asarray(I_sparse.sum(axis=0)).ravel() > 0.0
+        ))
+        stats = ProjectionCompressionStats(
+            n_samples=n_samples, n_active_samples=n_active, n_groups=0,
             group_fraction=1.0, used_factorization=False,
             max_l1=0.0, max_relative_l2=0.0,
+            n_active_pixel_rows=n_active_pixel_rows,
+            direct_nbytes=_sparse_nbytes(operator.direct),
+            q_nbytes=_sparse_nbytes(operator.Q),
+            a_nbytes=_sparse_nbytes(operator.A),
+            grouping_seconds=0.0,
+            assembly_seconds=assembly_seconds,
         )
+        operator.compression_stats = (stats,)
+        return operator, stats
+    grouping_start = time.perf_counter()
     factorization = factorize_psf_columns(
         I_sparse, np.array([0, n_samples]), tolerance=tolerance,
         metric=metric, algorithm=algorithm,
         max_scope_dense_bytes=max_scope_dense_bytes,
     )
+    grouping_seconds = time.perf_counter() - grouping_start
 
     n_active = factorization.n_active_samples
     group_fraction = factorization.n_groups / max(n_active, 1)
@@ -533,6 +572,7 @@ def build_projection_block(
         n_active > 0
         and (max_group_fraction is None or group_fraction < max_group_fraction)
     )
+    assembly_start = time.perf_counter()
     if use_factorization:
         A = build_psf_group_matrix(factorization, S_sparse)
         operator = HybridProjectionOperator(
@@ -545,7 +585,8 @@ def build_projection_block(
             sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
             sparse.csr_matrix((0, n_voxels), dtype=I_sparse.dtype),
         )
-    return operator, ProjectionCompressionStats(
+    assembly_seconds = time.perf_counter() - assembly_start
+    stats = ProjectionCompressionStats(
         n_samples=n_samples,
         n_active_samples=n_active,
         n_groups=factorization.n_groups,
@@ -555,7 +596,15 @@ def build_projection_block(
         max_relative_l2=float(
             factorization.group_max_relative_l2.max(initial=0.0)
         ),
+        n_active_pixel_rows=n_active_pixel_rows,
+        direct_nbytes=_sparse_nbytes(operator.direct),
+        q_nbytes=_sparse_nbytes(operator.Q),
+        a_nbytes=_sparse_nbytes(operator.A),
+        grouping_seconds=grouping_seconds,
+        assembly_seconds=assembly_seconds,
     )
+    operator.compression_stats = (stats,)
+    return operator, stats
 
 
 def combine_projection_operators(operators) -> HybridProjectionOperator:
@@ -578,7 +627,14 @@ def combine_projection_operators(operators) -> HybridProjectionOperator:
     else:
         Q = sparse.csr_matrix((shape[0], 0), dtype=operators[0].dtype)
         A = sparse.csr_matrix((0, shape[1]), dtype=operators[0].dtype)
-    return HybridProjectionOperator(direct, Q, A)
+    compression_stats = tuple(
+        stats
+        for operator in operators
+        for stats in operator.compression_stats
+    )
+    return HybridProjectionOperator(
+        direct, Q, A, compression_stats=compression_stats,
+    )
 
 
 def make_optical_binning(camera, eye_index: int, points: np.ndarray,

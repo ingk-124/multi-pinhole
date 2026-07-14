@@ -196,6 +196,16 @@ def test_hybrid_operator_project_backproject_and_transpose_match_materialization
     assert stats.used_factorization
     assert stats.n_active_samples == 2
     assert stats.n_groups == 1
+    assert stats.n_active_pixel_rows == 2
+    assert stats.direct_nbytes > 0
+    assert stats.q_nbytes > 0
+    assert stats.a_nbytes > 0
+    assert stats.stored_nbytes == (
+        stats.direct_nbytes + stats.q_nbytes + stats.a_nbytes
+    )
+    assert stats.grouping_seconds >= 0.0
+    assert stats.assembly_seconds >= 0.0
+    assert operator.compression_stats == (stats,)
 
     materialized = operator.to_sparse()
     emission = np.array([1.5, -0.25])
@@ -238,6 +248,8 @@ def test_projection_operators_combine_and_left_multiply_without_expanding_qa():
     transformed = combined.left_multiply(transform)
 
     assert transformed.shape == (1, 2)
+    assert len(combined.compression_stats) == 2
+    assert transformed.compression_stats == combined.compression_stats
     np.testing.assert_allclose(
         transformed.to_sparse().toarray(),
         (transform @ combined.to_sparse()).toarray(),

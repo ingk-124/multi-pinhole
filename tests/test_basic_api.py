@@ -737,6 +737,10 @@ def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
     factorized_operator = world.P_matrix[0]
     assert isinstance(factorized_operator, HybridProjectionOperator)
     assert factorized_operator.Q.shape[1] > 0
+    assert factorized_operator.compression_stats
+    assert sum(
+        stats.n_samples for stats in factorized_operator.compression_stats
+    ) > 0
     approximation = factorized_operator.to_sparse()
     np.testing.assert_allclose(
         np.asarray(approximation.sum(axis=0)),
