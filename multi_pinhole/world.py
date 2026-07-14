@@ -1061,6 +1061,7 @@ class World:
                     eye_idx, points=points_work, verbose=0,
                     check_visibility=False,
                 )
+                work_scope_operators = []
 
                 # I and S use the same expanded subvoxel row/column order.
                 # Each slice below is one independent optical scope even when
@@ -1076,8 +1077,17 @@ class World:
                         max_group_fraction=max_group_fraction,
                         max_scope_dense_bytes=max(1, max_working_memory // 4),
                     )
-                    operators.append(operator)
+                    work_scope_operators.append(operator)
                     compression_stats.append(stats)
+
+                # Consolidate now so each completed work chunk retains only
+                # one global detector-row pointer array. Keeping one CSR Q and
+                # direct matrix per tiny optical scope would make indptr
+                # overhead scale with the number of scopes.
+                if work_scope_operators:
+                    operators.append(
+                        combine_projection_operators(work_scope_operators)
+                    )
 
             if not operators:
                 return HybridProjectionOperator.empty(
