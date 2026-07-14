@@ -98,17 +98,16 @@ def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
     displacement is no larger than ``max_projected_step`` detector cells in
     either detector direction.
 
-    ``detector_pitch`` may be the physical pixel pitch or subpixel pitch.  The
-    latter is the conservative default intended for the future World-level
-    adaptive mode because it ties source quadrature to the detector quadrature
-    already used by ``calc_image_vec``.
+    ``detector_pitch`` may be a common physical pixel/subpixel pitch or a
+    per-cell optical scale such as the local finite-Eye PSF footprint.
 
     Parameters
     ----------
     projected_spans : ndarray, shape (n, 3, 2)
         Output of :func:`projected_axis_spans` in physical screen units.
-    detector_pitch : float or (float, float)
-        Reference detector-cell pitch in screen ``(u, v)`` coordinates.
+    detector_pitch : float, (float, float), or ndarray shape (n, 2)
+        Reference scale in screen ``(u, v)`` coordinates. A per-cell array
+        supports depth-dependent finite-Eye PSF footprints.
     max_resolution : int or (int, int, int), optional
         Per-source-axis resolution ceiling. Defaults to four.
     max_projected_step : float, optional
@@ -128,7 +127,17 @@ def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
         raise ValueError("projected_spans must have shape (n, 3, 2)")
     if np.any(projected_spans < 0.0):
         raise ValueError("projected_spans must be nonnegative")
-    detector_pitch = _pair(detector_pitch, "detector_pitch")
+    detector_pitch = np.asarray(detector_pitch, dtype=float)
+    if detector_pitch.ndim == 0:
+        detector_pitch = np.full((projected_spans.shape[0], 2), detector_pitch)
+    elif detector_pitch.shape == (2,):
+        detector_pitch = np.broadcast_to(
+            detector_pitch, (projected_spans.shape[0], 2),
+        )
+    elif detector_pitch.shape != (projected_spans.shape[0], 2):
+        raise ValueError("detector_pitch must be scalar, length 2, or shape (n, 2)")
+    if not np.all(np.isfinite(detector_pitch)) or np.any(detector_pitch <= 0.0):
+        raise ValueError("detector_pitch must contain only positive finite values")
     if not np.isfinite(max_projected_step) or max_projected_step <= 0.0:
         raise ValueError("max_projected_step must be positive and finite")
 
@@ -141,7 +150,7 @@ def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
         raise ValueError("max_resolution must contain positive integers")
     maximum = maximum.astype(np.int64)
 
-    span_cells = np.max(projected_spans / detector_pitch[None, None, :], axis=2)
+    span_cells = np.max(projected_spans / detector_pitch[:, None, :], axis=2)
     requested_float = span_cells / max_projected_step
     # Move exact floating-point integers infinitesimally downward so a value
     # such as 1.0000000000000002 from projection arithmetic does not

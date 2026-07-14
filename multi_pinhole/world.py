@@ -1040,7 +1040,7 @@ class World:
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
             voxel_indices=None, max_resolution=4,
             max_projected_step: float = 1.0,
-            detector_grid: str = "subpixel",
+            detector_grid: str = "psf",
             batch_size: int = 100_000) -> SourceResolutionEstimate:
         """Estimate geometry-only axis-wise source quadrature resolution.
 
@@ -1061,9 +1061,11 @@ class World:
             Axis-wise resolution ceiling.
         max_projected_step : float, optional
             Maximum source-subcell displacement in reference detector cells.
-        detector_grid : {"subpixel", "pixel"}, optional
-            Detector pitch used as the reference. ``"subpixel"`` is the
-            conservative default and follows detector quadrature resolution.
+        detector_grid : {"psf", "subpixel", "pixel"}, optional
+            Scale used to normalize projected source displacement. ``"psf"``
+            uses the larger of detector subpixel pitch and the local projected
+            Eye footprint, so a finite pinhole PSF can dominate the required
+            source quadrature. The other modes use detector pitch alone.
         batch_size : int, optional
             Maximum voxel count whose six chord endpoints are materialized at
             once. This bounds diagnostic memory for large grids.
@@ -1078,12 +1080,8 @@ class World:
         camera = self.cameras[camera_idx]
         if not 0 <= eye_idx < len(camera.eyes):
             raise IndexError("eye_idx is out of range")
-        if detector_grid == "subpixel":
-            detector_pitch = camera.screen.subpixel_size
-        elif detector_grid == "pixel":
-            detector_pitch = camera.screen.pixel_size
-        else:
-            raise ValueError("detector_grid must be 'subpixel' or 'pixel'")
+        if detector_grid not in {"psf", "subpixel", "pixel"}:
+            raise ValueError("detector_grid must be 'psf', 'subpixel', or 'pixel'")
         if isinstance(batch_size, (bool, np.bool_)) or int(batch_size) != batch_size or batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
         batch_size = int(batch_size)
@@ -1099,11 +1097,24 @@ class World:
         capped_parts = []
         for start in range(0, voxel_indices.size, batch_size):
             selected = voxel_indices[start:start + batch_size]
+            centers = self.voxel.get_gravity_center(selected)
             spans = projected_axis_spans(
-                camera, eye_idx,
-                self.voxel.get_gravity_center(selected),
+                camera, eye_idx, centers,
                 self.voxel.get_edge_lengths(selected),
             )
+            if detector_grid == "pixel":
+                detector_pitch = camera.screen.pixel_size
+            elif detector_grid == "subpixel":
+                detector_pitch = camera.screen.subpixel_size
+            else:
+                center_rays = camera.eyes[eye_idx].calc_rays(
+                    camera.world2camera(centers),
+                )
+                spot_size = (camera.eyes[eye_idx].eye_size[None, :] *
+                             center_rays.zoom_rate[:, None])
+                detector_pitch = np.maximum(
+                    camera.screen.subpixel_size[None, :], spot_size,
+                )
             estimate = select_source_resolution(
                 spans, detector_pitch=detector_pitch,
                 max_resolution=max_resolution,
@@ -1311,7 +1322,13 @@ class World:
             if nnz_per_voxel == 0:
                 nnz_per_voxel = screen.N_subpixel * 0.01
             nnz_batch = max(1, int(np.ceil(max_nnz / nnz_per_voxel) / n_jobs))
-            batch = min(memory_batch, nnz_batch, total_voxels)
+            # A scene that fits in one memory-sized chunk would otherwise use
+            # only one worker even when n_jobs > 1. Keep up to two waves of
+            # chunks available for load balancing without increasing the
+            # existing in-flight memory bound.
+            parallel_batch = (total_voxels if n_jobs == 1 else
+                              max(1, int(np.ceil(total_voxels / (2 * n_jobs)))))
+            batch = min(memory_batch, nnz_batch, parallel_batch, total_voxels)
             my_print(
                 f"Estimated transient memory={bytes_per_voxel / 2 ** 20:.3f} MiB/voxel, "
                 f"chunk budget={bytes_per_chunk / 2 ** 20:.1f} MiB",
@@ -1480,7 +1497,7 @@ class World:
                     camera_idx, eye_idx, full_voxels,
                     max_resolution=full_subvoxel_res,
                     max_projected_step=max_projected_step,
-                    detector_grid="subpixel",
+                    detector_grid="psf",
                 )
                 group_resolutions, inverse = np.unique(
                     estimate.resolution, axis=0, return_inverse=True,

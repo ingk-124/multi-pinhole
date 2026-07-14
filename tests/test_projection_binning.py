@@ -161,6 +161,21 @@ def test_select_source_resolution_tracks_detector_subpixel_pitch():
     np.testing.assert_array_equal(subpixel_estimate.resolution, [[3, 3, 1]])
 
 
+def test_select_source_resolution_accepts_per_cell_psf_scales():
+    spans = np.array([
+        [[0.6, 0.0], [0.0, 0.6], [0.0, 0.0]],
+        [[0.6, 0.0], [0.0, 0.6], [0.0, 0.0]],
+    ])
+    scales = np.array([[0.25, 0.25], [1.0, 1.0]])
+
+    estimate = select_source_resolution(
+        spans, detector_pitch=scales, max_resolution=8,
+    )
+
+    np.testing.assert_array_equal(estimate.resolution,
+                                  [[3, 3, 1], [1, 1, 1]])
+
+
 def test_select_source_resolution_honors_stricter_step_fraction():
     spans = np.array([[[0.6, 0.0], [0.0, 0.6], [0.0, 0.0]]])
 

@@ -39,10 +39,14 @@ def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
     centers = voxel.get_gravity_center(indices)
     edge_lengths = voxel.get_edge_lengths(indices)
     spans = projected_axis_spans(camera, 0, centers, edge_lengths)
+    points_camera = camera.world2camera(centers)
+    rays = camera.eyes[0].calc_rays(points_camera)
+    psf_scale = np.maximum(
+        camera.screen.subpixel_size[None, :],
+        camera.eyes[0].eye_size[None, :] * rays.zoom_rate[:, None],
+    )
     estimate = select_source_resolution(
-        spans,
-        detector_pitch=camera.screen.subpixel_size,
-        max_resolution=max_resolution,
+        spans, detector_pitch=psf_scale, max_resolution=max_resolution,
         max_projected_step=max_projected_step,
     )
 
@@ -68,7 +72,7 @@ def run(output_dir=None, max_resolution=8, max_projected_step=1.0):
         fig.colorbar(scatter, ax=axis)
     fig.suptitle(
         "Geometry-only adaptive source resolution\n"
-        f"reference pitch={camera.screen.subpixel_size[0]:g} mm, "
+        "reference scale=max(subpixel pitch, local PSF), "
         f"max step={max_projected_step:g} subpixel, max res={max_resolution}",
     )
     fig.tight_layout()

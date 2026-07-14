@@ -375,8 +375,11 @@ def test_world_estimate_source_resolution_can_use_pixel_pitch():
                                              max_resolution=8)
     subpixel = world.estimate_source_resolution(0, 0, detector_grid="subpixel",
                                                 max_resolution=8)
+    psf = world.estimate_source_resolution(0, 0, detector_grid="psf",
+                                           max_resolution=8)
 
     assert np.all(subpixel.resolution >= pixel.resolution)
+    assert np.all(subpixel.resolution >= psf.resolution)
     with pytest.raises(ValueError, match="detector_grid"):
         world.estimate_source_resolution(0, 0, detector_grid="unknown")
 
