@@ -29,7 +29,12 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
-from .projection import make_optical_binning
+from .projection import (
+    HybridProjectionOperator,
+    build_projection_block,
+    combine_projection_operators,
+    make_optical_binning,
+)
 from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
@@ -887,12 +892,18 @@ class World:
             full_voxels: np.ndarray, partial_voxels: np.ndarray,
             full_subvoxel_res, partial_subvoxel_res,
             max_nnz: int, max_working_memory: int,
-            optical_bin_width_pixels, verbose: int):
-        """Build ordinary sparse P using visible-voxel optical bins.
+            optical_bin_width_pixels, verbose: int,
+            projection_representation: str = "sparse",
+            psf_tolerance: float = 0.0,
+            psf_metric: str = "relative_l2",
+            psf_grouping: str = "recursive",
+            max_group_fraction: float | None = 0.8):
+        """Build sparse or hybrid projection using visible-voxel optical bins.
 
         This experimental path bins visible voxel centers, packs complete bins
         into work chunks, and only then expands those voxels into sub-voxel
-        samples.  It deliberately performs no PSF compression yet.
+        samples.  Hybrid mode groups PSFs independently inside each optical
+        scope and stores either a direct block or ``Q @ A`` for that scope.
         """
         camera = self.cameras[camera_idx]
         screen = camera.screen
@@ -960,6 +971,135 @@ class World:
             f"(max_samples={max_samples})",
             show=verbose > 0,
         )
+
+        if projection_representation == "hybrid":
+            work_offsets = binning.work_offsets(max_samples=max_samples)
+            scope_offsets = binning.scope_offsets
+            operators = []
+            compression_stats = []
+            scope_number = 0
+
+            def _expand_scope(packed_visible_indices):
+                """Expand one scope while preserving global voxel columns.
+
+                ``packed_visible_indices`` index the concatenated
+                ``visible_voxels = [full_voxels, partial_voxels]`` array.  The
+                returned S rows follow the returned point order, while S
+                columns retain the original global voxel numbering.
+                """
+                owners = visible_voxels[packed_visible_indices]
+                is_full = packed_visible_indices < full_voxels.size
+                point_parts = []
+                interpolator_parts = []
+
+                full_owners = owners[is_full]
+                if full_owners.size:
+                    full_points = self.voxel.get_sub_voxel_centers(
+                        full_owners, res=full_resolution,
+                    )
+                    full_S = self.voxel.sub_voxel_interpolator_from_centers(
+                        full_owners, res=full_resolution, points=full_points,
+                    )
+                    point_parts.append(full_points)
+                    interpolator_parts.append(full_S)
+
+                partial_owners = owners[~is_full]
+                if partial_owners.size:
+                    partial_points = self.voxel.get_sub_voxel_centers(
+                        partial_owners, res=partial_resolution,
+                    )
+                    partial_S = self.voxel.sub_voxel_interpolator_from_centers(
+                        partial_owners, res=partial_resolution,
+                        points=partial_points,
+                    )
+                    visible_mask = self.find_visible_points(
+                        partial_points, camera_idx=camera_idx,
+                        eye_idx=eye_idx, verbose=0,
+                    ).reshape(-1)
+                    visible_mask &= self._inside_points(partial_points)
+                    if np.any(visible_mask):
+                        point_parts.append(partial_points[visible_mask])
+                        interpolator_parts.append(partial_S[visible_mask])
+
+                if not point_parts:
+                    return None
+                return (
+                    np.concatenate(point_parts, axis=0),
+                    sparse.vstack(interpolator_parts, format="csr"),
+                )
+
+            for work_start, work_stop in zip(work_offsets[:-1], work_offsets[1:]):
+                scope_points = []
+                scope_interpolators = []
+                expanded_scope_offsets = [0]
+
+                # work offsets always coincide with scope boundaries.  Keep a
+                # monotonic scope cursor so packed positions are never confused
+                # with values stored in binning.order.
+                while scope_number < binning.n_scopes and \
+                        scope_offsets[scope_number] < work_stop:
+                    scope_start = int(scope_offsets[scope_number])
+                    scope_stop = int(scope_offsets[scope_number + 1])
+                    if scope_start < work_start or scope_stop > work_stop:
+                        raise RuntimeError("optical work chunk split a compression scope")
+                    packed_visible_indices = binning.order[scope_start:scope_stop]
+                    expanded = _expand_scope(packed_visible_indices)
+                    if expanded is not None:
+                        points_part, S_part = expanded
+                        scope_points.append(points_part)
+                        scope_interpolators.append(S_part)
+                        expanded_scope_offsets.append(
+                            expanded_scope_offsets[-1] + points_part.shape[0]
+                        )
+                    scope_number += 1
+
+                if not scope_points:
+                    continue
+                points_work = np.concatenate(scope_points, axis=0)
+                S_work = sparse.vstack(scope_interpolators, format="csr")
+                I_work = camera.calc_image_vec(
+                    eye_idx, points=points_work, verbose=0,
+                    check_visibility=False,
+                )
+
+                # I and S use the same expanded subvoxel row/column order.
+                # Each slice below is one independent optical scope even when
+                # several scopes shared the same expensive PSF calculation.
+                for sample_start, sample_stop in zip(
+                        expanded_scope_offsets[:-1], expanded_scope_offsets[1:]):
+                    operator, stats = build_projection_block(
+                        I_work[:, sample_start:sample_stop],
+                        S_work[sample_start:sample_stop],
+                        tolerance=psf_tolerance,
+                        metric=psf_metric,
+                        algorithm=psf_grouping,
+                        max_group_fraction=max_group_fraction,
+                        max_scope_dense_bytes=max(1, max_working_memory // 4),
+                    )
+                    operators.append(operator)
+                    compression_stats.append(stats)
+
+            if not operators:
+                return HybridProjectionOperator.empty(
+                    (screen.N_subpixel, n_vox),
+                )
+            result = combine_projection_operators(operators)
+            n_active = sum(stats.n_active_samples for stats in compression_stats)
+            n_groups = sum(
+                stats.n_groups for stats in compression_stats
+                if stats.used_factorization
+            )
+            n_factorized_scopes = sum(
+                stats.used_factorization for stats in compression_stats
+            )
+            my_print(
+                f"Hybrid projection: {n_factorized_scopes}/"
+                f"{len(compression_stats)} scopes factorized, "
+                f"active_samples={n_active}, stored_groups={n_groups}, "
+                f"storage={result.storage_nbytes / 2 ** 20:.2f} MiB",
+                show=verbose > 0,
+            )
+            return result
 
         projection_start = time.perf_counter()
         result = sparse.csr_matrix((screen.N_subpixel, n_vox))
@@ -1033,7 +1173,12 @@ class World:
                                   partial_res: int | tuple[int, int, int] = None,
                                   max_working_memory: int = 1_000_000_000,
                                   chunk_strategy: str = "voxel",
-                                  optical_bin_width_pixels=1.0):
+                                  optical_bin_width_pixels=1.0,
+                                  projection_representation: str = "sparse",
+                                  psf_tolerance: float = 0.0,
+                                  psf_metric: str = "relative_l2",
+                                  psf_grouping: str = "recursive",
+                                  max_group_fraction: float | None = 0.8):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -1068,6 +1213,9 @@ class World:
         optical_bin_width_pixels : float or (float, float), optional
             Optical bin width in detector-pixel pitches for the experimental
             optical strategy.
+        projection_representation : {"sparse", "hybrid"}, optional
+            ``"hybrid"`` stores direct scopes together with factorized
+            ``Q @ A`` scopes. Hybrid representation requires optical chunks.
 
         Notes
         -----
@@ -1080,6 +1228,20 @@ class World:
             raise ValueError("max_working_memory must be positive")
         if chunk_strategy not in {"voxel", "optical"}:
             raise ValueError("chunk_strategy must be 'voxel' or 'optical'")
+        if projection_representation not in {"sparse", "hybrid"}:
+            raise ValueError("projection_representation must be 'sparse' or 'hybrid'")
+        if projection_representation == "hybrid" and chunk_strategy != "optical":
+            raise ValueError("hybrid projection requires chunk_strategy='optical'")
+        if projection_representation == "hybrid":
+            if not np.isfinite(psf_tolerance) or psf_tolerance < 0.0:
+                raise ValueError("psf_tolerance must be finite and non-negative")
+            if psf_metric not in {"relative_l2", "l1"}:
+                raise ValueError("psf_metric must be 'relative_l2' or 'l1'")
+            if psf_grouping not in {"recursive", "leader"}:
+                raise ValueError("psf_grouping must be 'recursive' or 'leader'")
+            if max_group_fraction is not None and \
+                    not 0.0 <= max_group_fraction <= 1.0:
+                raise ValueError("max_group_fraction must be in [0, 1] or None")
         verbose = self.verbose if verbose is None else verbose
         timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
@@ -1102,7 +1264,14 @@ class World:
         # No visible voxels
         if partial_voxels.size + full_voxels.size == 0:
             my_print("No visible voxels. Setting projection matrix to zero matrix.", show=verbose > 0)
-            self._projection[camera_idx][eye_idx] = sparse.csr_matrix((screen.N_subpixel, N_vox))
+            if projection_representation == "hybrid":
+                self._projection[camera_idx][eye_idx] = HybridProjectionOperator.empty(
+                    (screen.N_subpixel, N_vox),
+                )
+            else:
+                self._projection[camera_idx][eye_idx] = sparse.csr_matrix(
+                    (screen.N_subpixel, N_vox),
+                )
             return
 
         if chunk_strategy == "optical":
@@ -1115,6 +1284,11 @@ class World:
                 max_nnz=max_nnz, max_working_memory=max_working_memory,
                 optical_bin_width_pixels=optical_bin_width_pixels,
                 verbose=verbose,
+                projection_representation=projection_representation,
+                psf_tolerance=psf_tolerance,
+                psf_metric=psf_metric,
+                psf_grouping=psf_grouping,
+                max_group_fraction=max_group_fraction,
             )
             my_print(
                 f"Optical projection matrix for camera {camera_idx!r}, "
@@ -1487,7 +1661,12 @@ class World:
                               force: bool = False,
                               max_working_memory: int = 1_000_000_000,
                               chunk_strategy: str = "voxel",
-                              optical_bin_width_pixels=1.0):
+                              optical_bin_width_pixels=1.0,
+                              projection_representation: str = "sparse",
+                              psf_tolerance: float = 0.0,
+                              psf_metric: str = "relative_l2",
+                              psf_grouping: str = "recursive",
+                              max_group_fraction: float | None = 0.8):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1517,6 +1696,20 @@ class World:
         optical_bin_width_pixels : float or (float, float), optional
             Optical-bin width in detector-pixel pitches when
             ``chunk_strategy="optical"``. Defaults to one pixel.
+        projection_representation : {"sparse", "hybrid"}, optional
+            Result representation. ``"hybrid"`` requires optical chunks and
+            stores a mixture of direct CSR blocks and ``Q @ A`` blocks.
+        psf_tolerance : float, optional
+            Maximum normalized-PSF grouping distance. Zero explicitly
+            bypasses grouping and stores direct blocks.
+        psf_metric : {"relative_l2", "l1"}, optional
+            Distance used to accept a PSF group.
+        psf_grouping : {"recursive", "leader"}, optional
+            PSF grouping algorithm.
+        max_group_fraction : float or None, optional
+            Use ``Q @ A`` only when ``N_group / N_active_sample`` is below
+            this value. Defaults to ``0.8``. ``None`` always retains a
+            nonempty factorization.
 
         Notes
         -----
@@ -1532,7 +1725,13 @@ class World:
                          show=verbose > 0)
                 # The experimental optical ordering is intentionally rebuilt;
                 # cache keys do not encode projection strategy yet.
-                if force or chunk_strategy == "optical" or (self._projection[_c][_e] is None) or \
+                cached_projection = self._projection[_c][_e]
+                representation_matches = (
+                    isinstance(cached_projection, HybridProjectionOperator)
+                    == (projection_representation == "hybrid")
+                )
+                if force or chunk_strategy == "optical" or not representation_matches or \
+                        (cached_projection is None) or \
                         (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_subpixel, self.voxel.N)):
                     my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
@@ -1541,7 +1740,12 @@ class World:
                                                    partial_res=partial_res,
                                                    max_working_memory=max_working_memory,
                                                    chunk_strategy=chunk_strategy,
-                                                   optical_bin_width_pixels=optical_bin_width_pixels)
+                                                   optical_bin_width_pixels=optical_bin_width_pixels,
+                                                   projection_representation=projection_representation,
+                                                   psf_tolerance=psf_tolerance,
+                                                   psf_metric=psf_metric,
+                                                   psf_grouping=psf_grouping,
+                                                   max_group_fraction=max_group_fraction)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "
@@ -1549,9 +1753,20 @@ class World:
             if flag or (self._P_matrix[_c] is None) or \
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                 # at least one eye is recalculated
-                # combine all projection matrices
-                _proj = sum(self._projection[_c], sparse.csr_matrix((self.cameras[_c].screen.N_subpixel, self.voxel.N)))
-                self._P_matrix[_c] = self.cameras[_c].screen.transform_matrix * _proj
+                if projection_representation == "hybrid":
+                    # Eye operators share the same subpixel/global-voxel
+                    # coordinates. Concatenate their factor rows, then apply
+                    # subpixel-to-pixel binning only on detector rows.
+                    eye_operator = combine_projection_operators(
+                        self._projection[_c],
+                    )
+                    self._P_matrix[_c] = eye_operator.left_multiply(
+                        self.cameras[_c].screen.transform_matrix,
+                    )
+                else:
+                    # combine all projection matrices
+                    _proj = sum(self._projection[_c], sparse.csr_matrix((self.cameras[_c].screen.N_subpixel, self.voxel.N)))
+                    self._P_matrix[_c] = self.cameras[_c].screen.transform_matrix * _proj
                 my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
                 my_print(f"Projection matrix for camera {_c!r} is already calculated.",

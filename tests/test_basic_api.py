@@ -10,6 +10,7 @@ from scipy import sparse
 from scipy.spatial.transform import Rotation
 
 from multi_pinhole import Aperture, Camera, Eye, Rays, Screen, Voxel, World
+from multi_pinhole.projection import HybridProjectionOperator
 
 
 def make_camera():
@@ -688,6 +689,64 @@ def test_small_projection_matrix_case_completes_and_preserves_sparse_columns():
     assert world.projection[0][0].shape == (screen.N_subpixel, voxel.N_voxel)
     assert world.P_matrix[0].shape == (screen.N_pixel, voxel.N_voxel)
     assert world.projection[0][0].tocsc()[:, 0].nnz > 0
+
+
+def test_world_optical_hybrid_projection_preserves_indexing_and_flux():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+    screen = Screen(
+        screen_shape="square", screen_size=20.0,
+        pixel_shape=(8, 8), subpixel_resolution=1,
+    )
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen,
+        camera_position=(0.0, 0.0, -20.0),
+    )
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-2.0, 2.0), (-1.0, 1.0)),
+        shape=(3, 3, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        chunk_strategy="optical", projection_representation="sparse",
+    )
+    reference = world.P_matrix[0].tocsr()
+
+    # tolerance=0 must use the new optical/indexing path but bypass every PSF
+    # grouping operation, giving the ordinary sparse result exactly.
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        chunk_strategy="optical", projection_representation="hybrid",
+        psf_tolerance=0.0,
+    )
+    direct_operator = world.P_matrix[0]
+    assert isinstance(direct_operator, HybridProjectionOperator)
+    np.testing.assert_allclose(
+        direct_operator.to_sparse().toarray(), reference.toarray(),
+        rtol=1e-13, atol=1e-14,
+    )
+
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        chunk_strategy="optical", projection_representation="hybrid",
+        psf_tolerance=0.1, max_group_fraction=None,
+    )
+    factorized_operator = world.P_matrix[0]
+    assert isinstance(factorized_operator, HybridProjectionOperator)
+    assert factorized_operator.Q.shape[1] > 0
+    approximation = factorized_operator.to_sparse()
+    np.testing.assert_allclose(
+        np.asarray(approximation.sum(axis=0)),
+        np.asarray(reference.sum(axis=0)), rtol=2e-6, atol=1e-14,
+    )
+    emission = np.linspace(-0.5, 1.0, voxel.N)
+    np.testing.assert_allclose(
+        factorized_operator.project(emission), approximation @ emission,
+        rtol=1e-13, atol=1e-14,
+    )
 
 
 def test_projection_matrix_is_stable_when_subvoxel_resolution_changes():

@@ -507,12 +507,10 @@ def build_projection_block(
             group_fraction=0.0, used_factorization=False,
             max_l1=0.0, max_relative_l2=0.0,
         )
-    factorization = factorize_psf_columns(
-        I_sparse, np.array([0, n_samples]), tolerance=tolerance,
-        metric=metric, algorithm=algorithm,
-        max_scope_dense_bytes=max_scope_dense_bytes,
-    )
-    if factorization is None:
+    # Both switches are explicit direct-mode requests.  Test them before any
+    # normalization or grouping work, just as tolerance == 0 is handled by
+    # factorize_psf_columns itself.
+    if tolerance == 0.0 or max_group_fraction == 0.0:
         operator = HybridProjectionOperator(
             I_sparse @ S_sparse,
             sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
@@ -523,6 +521,11 @@ def build_projection_block(
             group_fraction=1.0, used_factorization=False,
             max_l1=0.0, max_relative_l2=0.0,
         )
+    factorization = factorize_psf_columns(
+        I_sparse, np.array([0, n_samples]), tolerance=tolerance,
+        metric=metric, algorithm=algorithm,
+        max_scope_dense_bytes=max_scope_dense_bytes,
+    )
 
     n_active = factorization.n_active_samples
     group_fraction = factorization.n_groups / max(n_active, 1)
