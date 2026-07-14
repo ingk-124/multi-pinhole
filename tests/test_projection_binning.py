@@ -6,6 +6,8 @@ from scipy import sparse
 from multi_pinhole import Camera, Eye, Screen
 from multi_pinhole.projection import (
     build_psf_group_matrix,
+    build_projection_block,
+    combine_projection_operators,
     factorize_psf_columns,
     make_optical_binning,
 )
@@ -176,3 +178,67 @@ def test_group_matrix_uses_global_voxel_columns_and_ignores_zero_psfs():
         np.asarray(reference.sum(axis=0)), rtol=0.0, atol=1e-14,
     )
     np.testing.assert_array_equal(np.unique(A.nonzero()[1]), [2, 7])
+
+
+def test_hybrid_operator_project_backproject_and_transpose_match_materialization():
+    I = sparse.csr_matrix(np.array([
+        [0.8, 0.78, 0.0],
+        [0.2, 0.22, 0.0],
+    ]))
+    S = sparse.csr_matrix(np.array([
+        [0.5, 0.5],
+        [0.2, 0.8],
+        [1.0, 0.0],
+    ]))
+    operator, stats = build_projection_block(
+        I, S, tolerance=0.1, max_group_fraction=0.8,
+    )
+    assert stats.used_factorization
+    assert stats.n_active_samples == 2
+    assert stats.n_groups == 1
+
+    materialized = operator.to_sparse()
+    emission = np.array([1.5, -0.25])
+    detector = np.array([0.7, -0.3])
+    np.testing.assert_allclose(operator.project(emission), materialized @ emission)
+    np.testing.assert_allclose(operator @ emission, materialized @ emission)
+    np.testing.assert_allclose(operator.backproject(detector), materialized.T @ detector)
+    np.testing.assert_allclose(operator.T @ detector, materialized.T @ detector)
+    assert operator.T.T is operator
+
+
+def test_group_fraction_selects_direct_without_building_both_storage_forms():
+    I = sparse.eye(3, format="csr")
+    S = sparse.csr_matrix(np.array([
+        [1.0, 0.0],
+        [0.5, 0.5],
+        [0.0, 1.0],
+    ]))
+    operator, stats = build_projection_block(
+        I, S, tolerance=0.01, max_group_fraction=0.8,
+    )
+    assert not stats.used_factorization
+    assert stats.group_fraction == 1.0
+    assert operator.Q.shape[1] == operator.A.shape[0] == 0
+    np.testing.assert_allclose(operator.to_sparse().toarray(), (I @ S).toarray())
+
+
+def test_projection_operators_combine_and_left_multiply_without_expanding_qa():
+    I = sparse.csr_matrix(np.array([
+        [0.8, 0.79],
+        [0.2, 0.21],
+    ]))
+    S = sparse.eye(2, format="csr")
+    factorized, _ = build_projection_block(
+        I, S, tolerance=0.1, max_group_fraction=None,
+    )
+    direct, _ = build_projection_block(I, S, tolerance=0.0)
+    combined = combine_projection_operators([factorized, direct])
+    transform = sparse.csr_matrix([[0.25, 0.75]])
+    transformed = combined.left_multiply(transform)
+
+    assert transformed.shape == (1, 2)
+    np.testing.assert_allclose(
+        transformed.to_sparse().toarray(),
+        (transform @ combined.to_sparse()).toarray(),
+    )

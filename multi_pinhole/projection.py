@@ -343,6 +343,241 @@ def build_psf_group_matrix(
     return A
 
 
+def _sparse_nbytes(matrix: sparse.spmatrix) -> int:
+    """Return actual CSR payload bytes, including indices and row pointers."""
+    matrix = sparse.csr_matrix(matrix)
+    return int(matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes)
+
+
+class HybridProjectionOperator:
+    """Projection represented as an exact direct block plus ``Q @ A``.
+
+    The named :meth:`project` and :meth:`backproject` methods are the primary
+    API.  ``@`` and ``.T @`` are convenience aliases for code that already
+    treats a projection as a matrix.
+    """
+
+    def __init__(self, direct, Q, A):
+        self.direct = sparse.csr_matrix(direct)
+        self.Q = sparse.csr_matrix(Q)
+        self.A = sparse.csr_matrix(A)
+        if self.Q.shape[1] != self.A.shape[0]:
+            raise ValueError("Q columns must match A rows")
+        if self.direct.shape != (self.Q.shape[0], self.A.shape[1]):
+            raise ValueError("direct, Q, and A have incompatible shapes")
+
+    @classmethod
+    def empty(cls, shape, dtype=float):
+        """Construct an all-zero operator with no factorized groups."""
+        n_rows, n_columns = shape
+        return cls(
+            sparse.csr_matrix(shape, dtype=dtype),
+            sparse.csr_matrix((n_rows, 0), dtype=dtype),
+            sparse.csr_matrix((0, n_columns), dtype=dtype),
+        )
+
+    @property
+    def shape(self):
+        return self.direct.shape
+
+    @property
+    def dtype(self):
+        return np.result_type(self.direct.dtype, self.Q.dtype, self.A.dtype)
+
+    @property
+    def storage_nbytes(self) -> int:
+        """Actual bytes occupied by the three CSR payloads."""
+        return sum(_sparse_nbytes(matrix) for matrix in (self.direct, self.Q, self.A))
+
+    def project(self, emission):
+        """Apply ``(direct + Q A)`` to voxel emission values."""
+        return self.direct @ emission + self.Q @ (self.A @ emission)
+
+    def backproject(self, detector_values):
+        """Apply the transpose to detector-space values."""
+        return (self.direct.T @ detector_values
+                + self.A.T @ (self.Q.T @ detector_values))
+
+    def dot(self, emission):
+        """Alias for :meth:`project` for sparse-matrix familiarity."""
+        return self.project(emission)
+
+    def __matmul__(self, emission):
+        return self.project(emission)
+
+    @property
+    def T(self):
+        return _TransposedProjectionOperator(self)
+
+    def transpose(self):
+        """Return a lightweight transposed operator view."""
+        return self.T
+
+    def to_sparse(self) -> sparse.csr_matrix:
+        """Materialize the approximation only when legacy CSR is required."""
+        return (self.direct + self.Q @ self.A).tocsr()
+
+    def left_multiply(self, matrix):
+        """Apply a detector-side sparse transform without expanding ``Q A``."""
+        matrix = sparse.csr_matrix(matrix)
+        if matrix.shape[1] != self.shape[0]:
+            raise ValueError("left transform columns must match detector rows")
+        return HybridProjectionOperator(
+            matrix @ self.direct, matrix @ self.Q, self.A,
+        )
+
+
+class _TransposedProjectionOperator:
+    """Lightweight transpose view returned by ``HybridProjectionOperator.T``."""
+
+    def __init__(self, parent: HybridProjectionOperator):
+        self._parent = parent
+
+    @property
+    def shape(self):
+        return self._parent.shape[::-1]
+
+    @property
+    def dtype(self):
+        return self._parent.dtype
+
+    def project(self, detector_values):
+        return self._parent.backproject(detector_values)
+
+    def backproject(self, emission):
+        return self._parent.project(emission)
+
+    def dot(self, detector_values):
+        return self.project(detector_values)
+
+    def __matmul__(self, detector_values):
+        return self.project(detector_values)
+
+    @property
+    def T(self):
+        return self._parent
+
+    def transpose(self):
+        return self._parent
+
+    def to_sparse(self) -> sparse.csr_matrix:
+        return self._parent.to_sparse().T.tocsr()
+
+
+@dataclass(frozen=True)
+class ProjectionCompressionStats:
+    """Compression decision for one independent optical scope."""
+
+    n_samples: int
+    n_active_samples: int
+    n_groups: int
+    group_fraction: float
+    used_factorization: bool
+    max_l1: float
+    max_relative_l2: float
+
+
+def build_projection_block(
+        I, S, *, tolerance: float, metric: str = "relative_l2",
+        algorithm: str = "recursive", max_group_fraction: float | None = 0.8,
+        max_scope_dense_bytes: int | None = None,
+) -> tuple[HybridProjectionOperator, ProjectionCompressionStats]:
+    """Build one direct or factorized scope without computing both forms.
+
+    The decision uses ``N_group / N_active_sample``.  If the ratio is at or
+    above ``max_group_fraction``, ``I @ S`` is calculated and the temporary
+    factorization is discarded.  Otherwise A is accumulated directly from the
+    weighted group assignment.  ``tolerance == 0`` bypasses all grouping.
+    """
+    I_sparse = sparse.csr_matrix(I)
+    S_sparse = sparse.csr_matrix(S)
+    if I_sparse.shape[1] != S_sparse.shape[0]:
+        raise ValueError("I columns must match S rows")
+    if max_group_fraction is not None and not 0.0 <= max_group_fraction <= 1.0:
+        raise ValueError("max_group_fraction must be in [0, 1] or None")
+
+    n_detector, n_samples = I_sparse.shape
+    n_voxels = S_sparse.shape[1]
+    if n_samples == 0:
+        operator = HybridProjectionOperator.empty(
+            (n_detector, n_voxels), dtype=I_sparse.dtype,
+        )
+        return operator, ProjectionCompressionStats(
+            n_samples=0, n_active_samples=0, n_groups=0,
+            group_fraction=0.0, used_factorization=False,
+            max_l1=0.0, max_relative_l2=0.0,
+        )
+    factorization = factorize_psf_columns(
+        I_sparse, np.array([0, n_samples]), tolerance=tolerance,
+        metric=metric, algorithm=algorithm,
+        max_scope_dense_bytes=max_scope_dense_bytes,
+    )
+    if factorization is None:
+        operator = HybridProjectionOperator(
+            I_sparse @ S_sparse,
+            sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
+            sparse.csr_matrix((0, n_voxels), dtype=I_sparse.dtype),
+        )
+        return operator, ProjectionCompressionStats(
+            n_samples=n_samples, n_active_samples=n_samples, n_groups=0,
+            group_fraction=1.0, used_factorization=False,
+            max_l1=0.0, max_relative_l2=0.0,
+        )
+
+    n_active = factorization.n_active_samples
+    group_fraction = factorization.n_groups / max(n_active, 1)
+    use_factorization = (
+        n_active > 0
+        and (max_group_fraction is None or group_fraction < max_group_fraction)
+    )
+    if use_factorization:
+        A = build_psf_group_matrix(factorization, S_sparse)
+        operator = HybridProjectionOperator(
+            sparse.csr_matrix((n_detector, n_voxels), dtype=I_sparse.dtype),
+            factorization.Q, A,
+        )
+    else:
+        operator = HybridProjectionOperator(
+            I_sparse @ S_sparse,
+            sparse.csr_matrix((n_detector, 0), dtype=I_sparse.dtype),
+            sparse.csr_matrix((0, n_voxels), dtype=I_sparse.dtype),
+        )
+    return operator, ProjectionCompressionStats(
+        n_samples=n_samples,
+        n_active_samples=n_active,
+        n_groups=factorization.n_groups,
+        group_fraction=group_fraction,
+        used_factorization=use_factorization,
+        max_l1=float(factorization.group_max_l1.max(initial=0.0)),
+        max_relative_l2=float(
+            factorization.group_max_relative_l2.max(initial=0.0)
+        ),
+    )
+
+
+def combine_projection_operators(operators) -> HybridProjectionOperator:
+    """Sum equal-shaped operators while retaining all factorized blocks."""
+    operators = list(operators)
+    if not operators:
+        raise ValueError("at least one projection operator is required")
+    shape = operators[0].shape
+    if any(operator.shape != shape for operator in operators):
+        raise ValueError("all projection operators must have the same shape")
+    direct = sum(
+        (operator.direct for operator in operators),
+        sparse.csr_matrix(shape, dtype=operators[0].dtype),
+    )
+    q_blocks = [operator.Q for operator in operators if operator.Q.shape[1]]
+    a_blocks = [operator.A for operator in operators if operator.A.shape[0]]
+    if q_blocks:
+        Q = sparse.hstack(q_blocks, format="csr")
+        A = sparse.vstack(a_blocks, format="csr")
+    else:
+        Q = sparse.csr_matrix((shape[0], 0), dtype=operators[0].dtype)
+        A = sparse.csr_matrix((0, shape[1]), dtype=operators[0].dtype)
+    return HybridProjectionOperator(direct, Q, A)
+
+
 def make_optical_binning(camera, eye_index: int, points: np.ndarray,
                          bin_width_pixels=1.0,
                          max_scope_samples: int | None = None,
