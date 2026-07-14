@@ -100,3 +100,27 @@ def test_library_psf_factorization_builds_q_a_on_toy_problem():
 
     assert factorization.group_max_relative_l2.max(initial=0.0) <= 0.1 + 1e-12
     np.testing.assert_allclose(approximate_sum, reference_sum, rtol=2e-6, atol=1e-12)
+
+
+def test_production_hybrid_sweep_records_bytes_timings_and_errors(tmp_path):
+    result = MODULE.run_production_sweep(
+        tmp_path,
+        axial_distances=(100.0,), resolutions=(1,), bin_widths=(1.0,),
+        tolerances=(0.1,), metrics=("relative_l2",),
+        algorithms=("recursive",), max_group_fractions=(0.8,),
+        voxel_shape=(4, 4, 3), pixel_shape=(8, 8), timing_repeats=2,
+    )
+
+    assert result["csv_path"].is_file()
+    assert result["figure_path"].is_file()
+    assert result["rows"]
+    row = next(item for item in result["rows"] if item["profile"] == "gaussian")
+    assert row["scope_count"] > 0
+    assert row["active_sample_count"] > 0
+    assert row["direct_bytes"] > 0
+    assert row["hybrid_bytes"] > 0
+    assert row["storage_compression"] > 0.0
+    assert row["direct_build_seconds"] > 0.0
+    assert row["hybrid_build_seconds"] > 0.0
+    assert row["max_column_sum_relative"] < 2e-6
+    assert np.isfinite(row["relative_l2"])

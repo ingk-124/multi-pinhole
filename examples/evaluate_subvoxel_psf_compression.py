@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import tracemalloc
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
 os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
@@ -863,6 +864,297 @@ def run_sweep(output_dir: Path, axial_distances=(100.0, 300.0, 1000.0),
     }
 
 
+def _median_elapsed(operation, repeats: int) -> float:
+    """Return a warm median for a small matrix-vector operation."""
+    if repeats < 1:
+        raise ValueError("repeats must be positive")
+    operation()
+    elapsed = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        operation()
+        elapsed.append(time.perf_counter() - start)
+    return float(np.median(elapsed))
+
+
+def run_production_sweep(
+        output_dir: Path,
+        axial_distances=(100.0, 300.0, 1000.0),
+        resolutions=(1, 2),
+        bin_widths=(1.0,),
+        tolerances=(0.1,),
+        metrics=("relative_l2",),
+        algorithms=("recursive",),
+        max_group_fractions=(0.6, 0.8, 1.0, None),
+        voxel_shape=(6, 6, 4),
+        pixel_shape=(16, 16),
+        timing_repeats=5,
+        max_working_memory=256 * 2 ** 20,
+):
+    """Benchmark the production World sparse and hybrid projection paths.
+
+    Exact ``P`` is built once per geometry/resolution/bin combination for
+    validation.  Production hybrid construction never uses that matrix for its
+    direct/factorized decision; it is retained here only to measure errors and
+    the actual CSR byte ratio.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    benchmark_start = time.perf_counter()
+
+    for axial_distance in axial_distances:
+        for resolution in resolutions:
+            for bin_width in bin_widths:
+                world = build_toy_world(
+                    axial_distance=axial_distance,
+                    voxel_shape=voxel_shape,
+                    pixel_shape=pixel_shape,
+                    with_aperture=False,
+                )
+                # Keep visibility initialization and first-call library setup
+                # out of the direct-vs-hybrid construction comparison.
+                world.find_visible_voxels(force=True, verbose=0)
+                world.set_projection_matrix(
+                    res=resolution, partial_res=resolution,
+                    verbose=0, parallel=1, force=True,
+                    max_working_memory=max_working_memory,
+                    chunk_strategy="optical",
+                    optical_bin_width_pixels=bin_width,
+                    projection_representation="sparse",
+                )
+                tracemalloc.start()
+                direct_start = time.perf_counter()
+                world.set_projection_matrix(
+                    res=resolution, partial_res=resolution,
+                    verbose=0, parallel=1, force=True,
+                    max_working_memory=max_working_memory,
+                    chunk_strategy="optical",
+                    optical_bin_width_pixels=bin_width,
+                    projection_representation="sparse",
+                )
+                direct_build_seconds = time.perf_counter() - direct_start
+                _, direct_peak_bytes = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                reference = world.P_matrix[0].tocsr()
+                direct_bytes = _sparse_nbytes(reference)
+                profiles = emission_profiles(world.voxel.gravity_center)
+                timing_emission = profiles["gaussian"]
+                timing_detector = np.linspace(-1.0, 1.0, reference.shape[0])
+                direct_project_seconds = _median_elapsed(
+                    lambda: reference @ timing_emission, timing_repeats,
+                )
+                direct_backproject_seconds = _median_elapsed(
+                    lambda: reference.T @ timing_detector, timing_repeats,
+                )
+
+                for metric in metrics:
+                    for algorithm in algorithms:
+                        for tolerance in tolerances:
+                            for max_group_fraction in max_group_fractions:
+                                tracemalloc.start()
+                                hybrid_start = time.perf_counter()
+                                world.set_projection_matrix(
+                                    res=resolution, partial_res=resolution,
+                                    verbose=0, parallel=1, force=True,
+                                    max_working_memory=max_working_memory,
+                                    chunk_strategy="optical",
+                                    optical_bin_width_pixels=bin_width,
+                                    projection_representation="hybrid",
+                                    psf_tolerance=tolerance,
+                                    psf_metric=metric,
+                                    psf_grouping=algorithm,
+                                    max_group_fraction=max_group_fraction,
+                                )
+                                hybrid_build_seconds = time.perf_counter() - hybrid_start
+                                _, hybrid_peak_bytes = tracemalloc.get_traced_memory()
+                                tracemalloc.stop()
+                                operator = world.P_matrix[0]
+                                stats = operator.compression_stats
+                                hybrid_bytes = operator.storage_nbytes
+                                hybrid_project_seconds = _median_elapsed(
+                                    lambda: operator.project(timing_emission),
+                                    timing_repeats,
+                                )
+                                hybrid_backproject_seconds = _median_elapsed(
+                                    lambda: operator.backproject(timing_detector),
+                                    timing_repeats,
+                                )
+
+                                # Explicit materialization belongs to this
+                                # benchmark only. It validates indexing and
+                                # approximation error after timing production.
+                                approximation = operator.to_sparse()
+                                difference = approximation - reference
+                                reference_norm = sparse.linalg.norm(reference)
+                                reference_sum = np.asarray(reference.sum(axis=0)).ravel()
+                                approximate_sum = np.asarray(
+                                    approximation.sum(axis=0)
+                                ).ravel()
+                                sum_scale = max(
+                                    float(np.max(np.abs(reference_sum), initial=0.0)),
+                                    1e-30,
+                                )
+                                matrix_relative_frobenius = float(
+                                    sparse.linalg.norm(difference)
+                                    / max(reference_norm, 1e-30)
+                                )
+                                max_column_sum_relative = float(
+                                    np.max(
+                                        np.abs(approximate_sum - reference_sum),
+                                        initial=0.0,
+                                    ) / sum_scale
+                                )
+
+                                common = {
+                                    "axial_distance": axial_distance,
+                                    "z_over_f": axial_distance / FOCAL_LENGTH,
+                                    "resolution": resolution,
+                                    "bin_width_pixels": bin_width,
+                                    "metric": metric,
+                                    "algorithm": algorithm,
+                                    "tolerance": tolerance,
+                                    "max_group_fraction": max_group_fraction,
+                                    "scope_count": len(stats),
+                                    "factorized_scope_count": sum(
+                                        item.used_factorization for item in stats
+                                    ),
+                                    "sample_count": sum(item.n_samples for item in stats),
+                                    "active_sample_count": sum(
+                                        item.n_active_samples for item in stats
+                                    ),
+                                    "stored_group_count": sum(
+                                        item.n_groups for item in stats
+                                        if item.used_factorization
+                                    ),
+                                    "median_active_pixel_rows": float(np.median([
+                                        item.n_active_pixel_rows for item in stats
+                                    ])) if stats else 0.0,
+                                    "max_active_pixel_rows": max(
+                                        (item.n_active_pixel_rows for item in stats),
+                                        default=0,
+                                    ),
+                                    "grouping_seconds": sum(
+                                        item.grouping_seconds for item in stats
+                                    ),
+                                    "assembly_seconds": sum(
+                                        item.assembly_seconds for item in stats
+                                    ),
+                                    "direct_build_seconds": direct_build_seconds,
+                                    "hybrid_build_seconds": hybrid_build_seconds,
+                                    "build_speed_ratio": (
+                                        direct_build_seconds
+                                        / max(hybrid_build_seconds, 1e-30)
+                                    ),
+                                    "direct_peak_python_bytes": direct_peak_bytes,
+                                    "hybrid_peak_python_bytes": hybrid_peak_bytes,
+                                    "direct_bytes": direct_bytes,
+                                    "hybrid_bytes": hybrid_bytes,
+                                    "storage_compression": (
+                                        direct_bytes / max(hybrid_bytes, 1)
+                                    ),
+                                    "direct_project_seconds": direct_project_seconds,
+                                    "hybrid_project_seconds": hybrid_project_seconds,
+                                    "project_speed_ratio": (
+                                        direct_project_seconds
+                                        / max(hybrid_project_seconds, 1e-30)
+                                    ),
+                                    "direct_backproject_seconds": direct_backproject_seconds,
+                                    "hybrid_backproject_seconds": hybrid_backproject_seconds,
+                                    "backproject_speed_ratio": (
+                                        direct_backproject_seconds
+                                        / max(hybrid_backproject_seconds, 1e-30)
+                                    ),
+                                    "matrix_relative_frobenius": matrix_relative_frobenius,
+                                    "max_column_sum_relative": max_column_sum_relative,
+                                }
+                                for profile_name, emission in profiles.items():
+                                    exact = np.asarray(reference @ emission).ravel()
+                                    approximate = np.asarray(
+                                        operator.project(emission)
+                                    ).ravel()
+                                    error = approximate - exact
+                                    rows.append({
+                                        **common,
+                                        "profile": profile_name,
+                                        "relative_l1": float(
+                                            np.linalg.norm(error, ord=1)
+                                            / max(np.linalg.norm(exact, ord=1), 1e-30)
+                                        ),
+                                        "relative_l2": float(
+                                            np.linalg.norm(error)
+                                            / max(np.linalg.norm(exact), 1e-30)
+                                        ),
+                                        "relative_flux": float(
+                                            abs(approximate.sum() - exact.sum())
+                                            / max(abs(exact.sum()), 1e-30)
+                                        ),
+                                    })
+
+    csv_path = output_dir / "production_hybrid_projection_sweep.csv"
+    with csv_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    gaussian_rows = [row for row in rows if row["profile"] == "gaussian"]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.2))
+    for resolution in resolutions:
+        for fraction in max_group_fractions:
+            selected = [
+                row for row in gaussian_rows
+                if row["resolution"] == resolution
+                and row["max_group_fraction"] == fraction
+                and row["bin_width_pixels"] == bin_widths[0]
+                and row["metric"] == metrics[0]
+                and row["algorithm"] == algorithms[0]
+                and row["tolerance"] == tolerances[0]
+            ]
+            selected.sort(key=lambda row: row["z_over_f"])
+            if not selected:
+                continue
+            fraction_label = "always" if fraction is None else f"<{fraction:g}"
+            label = f"res={resolution}, Ng/Ns {fraction_label}"
+            z = [row["z_over_f"] for row in selected]
+            axes[0, 0].plot(z, [row["storage_compression"] for row in selected],
+                            marker="o", label=label)
+            axes[0, 1].plot(z, [row["build_speed_ratio"] for row in selected],
+                            marker="o", label=label)
+            axes[1, 0].plot(z, [row["project_speed_ratio"] for row in selected],
+                            marker="o", label=label)
+            axes[1, 1].plot(
+                [row["storage_compression"] for row in selected],
+                [max(row["relative_l2"], 1e-16) for row in selected],
+                marker="o", label=label,
+            )
+    axes[0, 0].axhline(1.0, color="0.4", lw=1)
+    axes[0, 0].set(xlabel="Z/f", ylabel="CSR P bytes / hybrid bytes",
+                   title="stored-byte compression")
+    axes[0, 1].axhline(1.0, color="0.4", lw=1)
+    axes[0, 1].set(xlabel="Z/f", ylabel="sparse build / hybrid build",
+                   title="construction speed ratio")
+    axes[1, 0].axhline(1.0, color="0.4", lw=1)
+    axes[1, 0].set(xlabel="Z/f", ylabel="sparse project / hybrid project",
+                   title="forward speed ratio")
+    axes[1, 1].set(xlabel="stored-byte compression",
+                   ylabel="Gaussian image relative L2",
+                   title="accuracy versus storage")
+    axes[1, 1].set_yscale("log")
+    for axis in axes.ravel():
+        axis.grid(alpha=0.25)
+        axis.legend(fontsize=7)
+    fig.tight_layout()
+    figure_path = output_dir / "07_production_hybrid_sweep.png"
+    fig.savefig(figure_path, dpi=180)
+    plt.close(fig)
+    return {
+        "rows": rows,
+        "csv_path": csv_path,
+        "figure_path": figure_path,
+        "elapsed_seconds": time.perf_counter() - benchmark_start,
+    }
+
+
 def _parse_int_triplet(value):
     result = tuple(int(item) for item in value.split(","))
     if len(result) != 3:
@@ -891,6 +1183,7 @@ if __name__ == "__main__":
     parser.add_argument("--algorithm", choices=("recursive", "leader"), default="recursive")
     parser.add_argument("--no-aperture", action="store_true")
     parser.add_argument("--sweep", action="store_true")
+    parser.add_argument("--production-sweep", action="store_true")
     args = parser.parse_args()
 
     case = run_case(
@@ -908,6 +1201,11 @@ if __name__ == "__main__":
         print(f"{name}: {path}")
     if args.sweep:
         sweep = run_sweep(args.output_dir)
-        print("sweep elapsed_seconds:", sweep["elapsed_seconds"])
-        print("sweep csv:", sweep["csv_path"])
-        print("sweep figure:", sweep["figure_path"])
+        print(f"sweep CSV: {sweep['csv_path']}")
+        print(f"sweep figure: {sweep['figure_path']}")
+        print(f"sweep elapsed_seconds: {sweep['elapsed_seconds']}")
+    if args.production_sweep:
+        production_sweep = run_production_sweep(args.output_dir)
+        print(f"production sweep CSV: {production_sweep['csv_path']}")
+        print(f"production sweep figure: {production_sweep['figure_path']}")
+        print(f"production sweep elapsed_seconds: {production_sweep['elapsed_seconds']}")
