@@ -36,6 +36,12 @@ from .utils import type_check_and_list
 from .utils.my_stdio import *
 
 
+# Increment when a serialized projection representation or its numerical
+# meaning becomes incompatible with an older cached matrix. Legacy pickles do
+# not have this attribute and are invalidated when loaded.
+PROJECTION_CACHE_SCHEMA_VERSION = 1
+
+
 def type_list(obj, type_):
     """Normalize an input object into a list of a specific type.
 
@@ -222,6 +228,7 @@ class World:
         self._visible_voxels = {i: None for i in self._cameras.keys()}
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
+        self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
         self.verbose = verbose
 
         # set inside vertices if inside_func is provided
@@ -309,11 +316,7 @@ class World:
         filename : str or os.PathLike[str]
             Destination path where the serialized world should be written.
         """
-        # TODO: Store a projection-algorithm/cache schema version with the
-        # serialized World.  ``load_world`` must invalidate ``_projection``
-        # and ``_P_matrix`` when that version is absent or incompatible;
-        # matching matrix shapes alone cannot establish cache validity after
-        # interpolation or detector-rasterization changes.
+        self._ensure_projection_cache_schema()
         with open(filename, "wb") as f:
             dill.dump(self, f)
 
@@ -332,11 +335,11 @@ class World:
         World
             Restored world populated with the serialized state.
         """
-        # TODO: Migrate legacy Screen-derived caches after unpickling (for
-        # example ``_subpixel_u_axis``/``_subpixel_v_axis``) and apply the
-        # projection-cache version check documented in ``save_world`` above.
         with open(filename, "rb") as f:
             loaded_world = dill.load(f)
+        if not isinstance(loaded_world, World):
+            raise TypeError("serialized object is not a World")
+        loaded_world._ensure_projection_cache_schema()
         return loaded_world
 
     # MARK: Properties
@@ -395,6 +398,11 @@ class World:
         return self._projection
 
     @property
+    def projection_cache_schema_version(self) -> int:
+        """Version governing compatibility of serialized projection caches."""
+        return self._projection_cache_schema_version
+
+    @property
     def inside_vertices(self):
         """np.ndarray: Boolean mask indicating which voxel vertices lie inside the world."""
         if self._inside_vertices is None:
@@ -412,8 +420,19 @@ class World:
         """
         self._visible_vertices = {i: None for i in self._cameras.keys()}
         self._visible_voxels = {i: None for i in self._cameras.keys()}
+        self._invalidate_projection_cache()
+
+    def _invalidate_projection_cache(self) -> None:
+        """Clear projection data while retaining valid visibility data."""
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
+
+    def _ensure_projection_cache_schema(self) -> None:
+        """Invalidate absent or incompatible serialized projection caches."""
+        cached_version = getattr(self, "_projection_cache_schema_version", None)
+        if cached_version != PROJECTION_CACHE_SCHEMA_VERSION:
+            self._invalidate_projection_cache()
+            self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
 
     # MARK: Setters
     @inside_vertices.setter

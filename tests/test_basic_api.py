@@ -1,10 +1,12 @@
 import contextlib
+import dill
 import io
 import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy import sparse
 from scipy.spatial.transform import Rotation
 
 from multi_pinhole import Aperture, Camera, Eye, Rays, Screen, Voxel, World
@@ -240,6 +242,58 @@ def test_world_accepts_keyed_camera_dict_and_preserves_keys_after_removal():
     assert world.cameras["right"] is right
     assert list(world.projection) == ["right"]
     assert list(world.P_matrix) == ["right"]
+
+
+def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
+    voxel = Voxel(
+        x_axis=np.array([0.0, 1.0]), y_axis=np.array([0.0, 1.0]),
+        z_axis=np.array([0.0, 1.0]),
+    )
+    world = World(voxel=voxel, cameras={"main": make_camera()}, verbose=0)
+    projection = sparse.csr_matrix(([2.0], ([0], [0])), shape=(
+        world.cameras["main"].screen.N_subpixel, world.voxel.N,
+    ))
+    pixel_projection = sparse.csr_matrix(([3.0], ([0], [0])), shape=(
+        world.cameras["main"].screen.N_pixel, world.voxel.N,
+    ))
+    world._projection["main"][0] = projection
+    world._P_matrix["main"] = pixel_projection
+    path = tmp_path / "current-world.pkl"
+
+    world.save_world(path)
+    loaded = World.load_world(path)
+
+    assert loaded.projection_cache_schema_version == world.projection_cache_schema_version
+    np.testing.assert_allclose(loaded.projection["main"][0].toarray(), projection.toarray())
+    np.testing.assert_allclose(loaded.P_matrix["main"].toarray(), pixel_projection.toarray())
+
+
+@pytest.mark.parametrize("legacy_version", [None, 0, 10_000])
+def test_loading_incompatible_projection_cache_invalidates_only_projection(
+        tmp_path, legacy_version):
+    world = World(cameras={"main": make_camera()}, verbose=0)
+    visible = np.ones((1, world.voxel.N), dtype=np.int8)
+    world._visible_voxels["main"] = visible
+    world._projection["main"][0] = sparse.csr_matrix((
+        world.cameras["main"].screen.N_subpixel, world.voxel.N,
+    ))
+    world._P_matrix["main"] = sparse.csr_matrix((
+        world.cameras["main"].screen.N_pixel, world.voxel.N,
+    ))
+    if legacy_version is None:
+        del world._projection_cache_schema_version
+    else:
+        world._projection_cache_schema_version = legacy_version
+    path = tmp_path / f"legacy-world-{legacy_version}.pkl"
+    with open(path, "wb") as file:
+        dill.dump(world, file)
+
+    loaded = World.load_world(path)
+
+    np.testing.assert_array_equal(loaded.visible_voxels["main"], visible)
+    assert loaded.projection["main"] == [None]
+    assert loaded.P_matrix["main"] is None
+    assert loaded.projection_cache_schema_version == 1
 
 
 def test_world_list_camera_keys_are_not_renumbered_after_removal():

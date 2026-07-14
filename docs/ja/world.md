@@ -18,7 +18,7 @@
 
 ## シーンの内省と永続化
 
-`camera_info` と `voxel_info` は登録済みのセンサーおよびグリッドの概要を提供します。`save_world`/`load_world` は `dill`（`coordinate_transform` が内部で使うクロージャなども含めてシリアライズできる、`pickle` 互換のライブラリ）を用いてシーン全体をシリアライズし、長時間のシミュレーションを容易にチェックポイントできます。【F:multi_pinhole/world.py†L283-L311】カメラ、ボクセル、壁のプロパティセッターは可能な限りキャッシュ済みの可視性・投影データを再利用しますが、それが不可能な場合は `_invalidate_visibility_cache()` を呼び出し、`_visible_vertices`・`_visible_voxels`・`_projection`・`_P_matrix` を `None` のプレースホルダーへリセットして、次回のクエリで最初から再計算させます。【F:multi_pinhole/world.py†L376-L387】
+`camera_info` と `voxel_info` は登録済みのセンサーおよびグリッドの概要を提供します。`save_world`/`load_world` は `dill`（`coordinate_transform` が内部で使うクロージャなども含めてシリアライズできる、`pickle` 互換のライブラリ）を用いてシーン全体をシリアライズし、長時間のシミュレーションを容易にチェックポイントできます。projection cacheにはschema versionを保存し、versionがない旧pickleまたは非互換versionを読み込んだ場合は、再利用可能なvisibilityを残して `_projection` と `_P_matrix` だけを無効化します。【F:multi_pinhole/world.py†L283-L311】カメラ、ボクセル、壁のプロパティセッターは可能な限りキャッシュ済みの可視性・投影データを再利用しますが、それが不可能な場合は `_invalidate_visibility_cache()` を呼び出し、`_visible_vertices`・`_visible_voxels`・`_projection`・`_P_matrix` を `None` のプレースホルダーへリセットして、次回のクエリで最初から再計算させます。【F:multi_pinhole/world.py†L376-L387】
 
 ## 可視性の評価
 
