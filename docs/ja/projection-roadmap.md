@@ -201,8 +201,20 @@ fully visible voxel由来かpartial voxel由来かだけを理由に分ける必
 
 圧縮導入前に、optical bin順へ並べ替えたwork chunkごとに通常の`P_chunk = I_chunk S_chunk`を
 計算し、既存のvoxel-index chunk版と一致することを確認する。Toyではwork chunk上限を変えても
-絶対誤差`1e-14`以下で一致済みである。次に同じ経路を`World`内部へ実験optionとして移し、
-visibility、sampleの過不足、構築時間、peak memoryを比較してから`I ~= Q R`を追加する。
+絶対誤差`1e-14`以下で一致済みである。同じ経路を`World`の実験option
+`chunk_strategy="optical"`へ移し、full/partial voxel、bin幅`0.5/1/2 pixels`で既存経路との差が
+`1e-13`以下であることも確認した。defaultの`chunk_strategy="voxel"`は変更していない。
+
+現在のoptical経路は検証優先で、可視sampleの座標と積分weightを全て保持し、work chunk処理も
+serialである。`d~10`へ進む前に、座標配列を`(voxel index, local sample index, resolution tag)`の
+packed参照へ置き換えてchunkごとに座標を再生成し、bin index構築時のpeak memoryを測る。
+またprojection cache keyはまだchunk strategyを含まないため、optical optionは常に再計算する。
+これらを解決してから`I ~= Q R`をproduction経路へ追加する。
+
+wallなし3200 voxel、res 2（25600 samples）、24x24 pixelのwarm serial比較では、既存voxel
+chunkがmedian `0.0322 s`、未圧縮optical chunkが`0.0350 s`で約8.5%遅かった。nnzはともに
+46876、最大要素差は`1.4e-23`未満である。これは圧縮前の2-pass並べ替えコストの小規模基準値で、
+MST条件のpeak memory・時間評価を置き換えるものではない。
 
 処理単位はcamera・Eye・光学chunkとする。各chunkで `I_chunk` と、それに対応する `S_chunk` の
 rowを作り、正規化PSFをgroup化して `Q_chunk`, `R_chunk` を得る。続いて

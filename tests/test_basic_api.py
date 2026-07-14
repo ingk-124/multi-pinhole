@@ -693,6 +693,22 @@ def test_center_sub_voxel_interpolator_preserves_constants_and_is_sparse():
     assert np.all(matrix.data >= 0.0)
 
 
+def test_weighted_center_interpolator_supports_arbitrary_sample_order():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
+    voxel_indices = np.array([0, 13, 26])
+    points = voxel.get_sub_voxel_centers(n=voxel_indices, res=2)
+    complete = voxel.sub_voxel_interpolator_from_centers(
+        n=voxel_indices, res=2, points=points,
+    )
+    order = np.array([17, 0, 23, 8, 3, 14])
+    row_scale = np.asarray(complete.sum(axis=1)).ravel()[order]
+
+    arbitrary = voxel.weighted_interpolator_from_centers(points[order], row_scale)
+
+    np.testing.assert_allclose(arbitrary.toarray(), complete[order].toarray(),
+                               rtol=0.0, atol=1e-15)
+
+
 def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     voxel = Voxel.uniform_voxel(ranges=((0.0, 3.0),) * 3, shape=(3, 3, 3))
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
@@ -791,6 +807,52 @@ def test_projection_rejects_nonpositive_working_memory():
     with pytest.raises(ValueError, match="max_working_memory"):
         world.set_projection_matrix(res=1, verbose=0, parallel=1,
                                     max_working_memory=0)
+
+
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("bin_width", [0.5, 1.0, 2.0])
+def test_optical_chunk_strategy_matches_existing_sparse_projection(partial, bin_width):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=12.0,
+                    pixel_shape=(12, 12), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-2.0, 2.0), (30.0, 34.0)),
+        shape=(4, 4, 3),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    if partial:
+        world.set_inside_vertices(lambda x, y, z: x >= -0.25)
+    else:
+        world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(
+        res=2, partial_res=2, verbose=0, parallel=1, force=True,
+        max_working_memory=2_000_000, chunk_strategy="voxel",
+    )
+    expected = world.projection[0][0].copy()
+    world.set_projection_matrix(
+        res=2, partial_res=2, verbose=0, parallel=1,
+        max_working_memory=2_000_000, chunk_strategy="optical",
+        optical_bin_width_pixels=bin_width,
+    )
+    actual = world.projection[0][0]
+
+    difference = actual - expected
+    np.testing.assert_allclose(difference.data, 0.0, rtol=0.0, atol=1e-13)
+    np.testing.assert_allclose(np.asarray(actual.sum(axis=0)),
+                               np.asarray(expected.sum(axis=0)),
+                               rtol=1e-13, atol=1e-14)
+
+
+def test_projection_rejects_unknown_chunk_strategy():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="chunk_strategy"):
+        world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True,
+                                    chunk_strategy="unknown")
 
 
 def test_partial_voxel_inside_mask_scales_integrated_light():

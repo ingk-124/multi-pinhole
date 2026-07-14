@@ -29,6 +29,7 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
+from .projection import make_optical_binning
 from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
@@ -862,10 +863,155 @@ class World:
         self._visible_voxels = visible_voxels
         my_print("Finding visible voxels is done.", show=verbose > 0)
 
+    def _calc_voxel_image_for_eye_optical(
+            self, camera_idx: Hashable, eye_idx: int,
+            full_voxels: np.ndarray, partial_voxels: np.ndarray,
+            full_subvoxel_res, partial_subvoxel_res,
+            max_nnz: int, max_working_memory: int,
+            optical_bin_width_pixels, verbose: int):
+        """Build the ordinary sparse P after optical-bin sample reordering.
+
+        This is an experimental, deliberately uncompressed path.  It first
+        materializes visible sample coordinates and their integration weights,
+        then evaluates ``I_chunk @ S_chunk`` in optical work-chunk order.  Its
+        purpose is to validate indexing and visibility before PSF grouping is
+        introduced.
+        """
+        camera = self.cameras[camera_idx]
+        screen = camera.screen
+        n_vox = self.voxel.N
+        volumes = self.voxel.volume
+        metadata_budget = max(1, max_working_memory // 4)
+        point_blocks: list[np.ndarray] = []
+        scale_blocks: list[np.ndarray] = []
+
+        # TODO(projection-compression): Replace the materialized point array
+        # with packed (voxel index, local sample index, resolution tag) records
+        # before attempting d~10 grids.  This first implementation prioritizes
+        # exact comparison with the existing sparse-P builder.
+        def _collect(voxel_indices, resolution, check_point_visibility):
+            resolution = tuple(int(r) for r in np.broadcast_to(resolution, 3))
+            samples_per_voxel = int(np.prod(resolution))
+            bytes_per_voxel = samples_per_voxel * (3 * 8 + 8)
+            voxel_batch = max(1, metadata_budget // max(1, bytes_per_voxel))
+            for start in range(0, voxel_indices.size, voxel_batch):
+                owners = voxel_indices[start:start + voxel_batch]
+                points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
+                row_scale = np.repeat(
+                    volumes[owners] / samples_per_voxel, samples_per_voxel,
+                )
+                if check_point_visibility:
+                    mask = self.find_visible_points(
+                        points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
+                    ).reshape(-1)
+                    mask &= self._inside_points(points)
+                    points = points[mask]
+                    row_scale = row_scale[mask]
+                if points.size:
+                    point_blocks.append(points)
+                    scale_blocks.append(row_scale)
+
+        index_start = time.perf_counter()
+        _collect(full_voxels, full_subvoxel_res, check_point_visibility=False)
+        _collect(partial_voxels, partial_subvoxel_res, check_point_visibility=True)
+        if not point_blocks:
+            return sparse.csr_matrix((screen.N_subpixel, n_vox))
+        points = np.concatenate(point_blocks)
+        row_scale = np.concatenate(scale_blocks)
+        del point_blocks, scale_blocks
+
+        def _sparse_nbytes(matrix):
+            matrix = matrix.tocsr()
+            return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
+
+        sample_count = min(points.shape[0], 256)
+        sample_points = points[:sample_count]
+        sample_scale = row_scale[:sample_count]
+        sample_S = self.voxel.weighted_interpolator_from_centers(
+            sample_points, sample_scale,
+        )
+        sample_I = camera.calc_image_vec(
+            eye_idx, points=sample_points, verbose=0, check_visibility=False,
+        )
+        sample_result = sample_I @ sample_S
+        transient_bytes = (
+            sample_points.nbytes + sample_scale.nbytes
+            + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
+            + _sparse_nbytes(sample_result)
+        )
+        bytes_per_sample = max(1.0, transient_bytes / sample_count)
+        memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
+        nnz_per_sample = sample_I.nnz / sample_count
+        if nnz_per_sample == 0.0:
+            nnz_per_sample = screen.N_subpixel * 0.01
+        nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
+        max_samples = min(memory_samples, nnz_samples, points.shape[0])
+        del sample_I, sample_S, sample_result
+
+        binning = make_optical_binning(
+            camera, eye_idx, points,
+            bin_width_pixels=optical_bin_width_pixels,
+            max_scope_samples=max_samples,
+        )
+        work_chunks = binning.work_chunks(max_samples=max_samples)
+        index_elapsed = time.perf_counter() - index_start
+        my_print(
+            f"Processing {points.shape[0]} visible samples in "
+            f"{binning.n_scopes} optical scopes and {len(work_chunks)} work chunks "
+            f"(max_samples={max_samples})",
+            show=verbose > 0,
+        )
+
+        projection_start = time.perf_counter()
+        result = sparse.csr_matrix((screen.N_subpixel, n_vox))
+        data_buf, row_buf, col_buf = [], [], []
+        buffer_nbytes = 0
+        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
+
+        def _flush():
+            nonlocal result, data_buf, row_buf, col_buf, buffer_nbytes
+            if not data_buf:
+                return
+            block = sparse.coo_matrix(
+                (np.concatenate(data_buf),
+                 (np.concatenate(row_buf), np.concatenate(col_buf))),
+                shape=result.shape,
+            ).tocsr()
+            result += block
+            data_buf, row_buf, col_buf = [], [], []
+            buffer_nbytes = 0
+
+        for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
+                             disable=verbose <= 0):
+            chunk_points = points[chunk]
+            S_chunk = self.voxel.weighted_interpolator_from_centers(
+                chunk_points, row_scale[chunk],
+            )
+            I_chunk = camera.calc_image_vec(
+                eye_idx, points=chunk_points, verbose=0, check_visibility=False,
+            )
+            P_chunk = (I_chunk @ S_chunk).tocoo()
+            data_buf.append(P_chunk.data)
+            row_buf.append(P_chunk.row)
+            col_buf.append(P_chunk.col)
+            buffer_nbytes += P_chunk.data.nbytes + P_chunk.row.nbytes + P_chunk.col.nbytes
+            if buffer_nbytes >= result_buffer_limit:
+                _flush()
+        _flush()
+        projection_elapsed = time.perf_counter() - projection_start
+        my_print(
+            f"Optical sparse-P timing: index={index_elapsed:.3f}s, "
+            f"projection={projection_elapsed:.3f}s",
+            show=verbose > 1,
+        )
+        return result
+
     def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000,
                                   partial_res: int | tuple[int, int, int] = None,
-                                  max_working_memory: int = 1_000_000_000):
+                                  max_working_memory: int = 1_000_000_000,
+                                  chunk_strategy: str = "voxel",
+                                  optical_bin_width_pixels=1.0):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -892,6 +1038,13 @@ class World:
         max_working_memory : int, optional
             Approximate byte budget for transient data held by in-flight
             projection chunks. Defaults to one billion bytes.
+        chunk_strategy : {"voxel", "optical"}, optional
+            ``"voxel"`` uses the established contiguous-voxel chunks.
+            ``"optical"`` is an experimental, uncompressed validation path
+            that reorders visible sub-voxel samples by detector-pitch bins.
+        optical_bin_width_pixels : float or (float, float), optional
+            Optical bin width in detector-pixel pitches for the experimental
+            optical strategy.
 
         Notes
         -----
@@ -902,6 +1055,8 @@ class World:
         n_jobs = max(1, n_jobs)
         if max_working_memory <= 0:
             raise ValueError("max_working_memory must be positive")
+        if chunk_strategy not in {"voxel", "optical"}:
+            raise ValueError("chunk_strategy must be 'voxel' or 'optical'")
         verbose = self.verbose if verbose is None else verbose
         timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
@@ -925,6 +1080,25 @@ class World:
         if partial_voxels.size + full_voxels.size == 0:
             my_print("No visible voxels. Setting projection matrix to zero matrix.", show=verbose > 0)
             self._projection[camera_idx][eye_idx] = sparse.csr_matrix((screen.N_subpixel, N_vox))
+            return
+
+        if chunk_strategy == "optical":
+            optical_start = time.perf_counter()
+            self._projection[camera_idx][eye_idx] = self._calc_voxel_image_for_eye_optical(
+                camera_idx=camera_idx, eye_idx=eye_idx,
+                full_voxels=full_voxels, partial_voxels=partial_voxels,
+                full_subvoxel_res=full_subvoxel_res,
+                partial_subvoxel_res=partial_subvoxel_res,
+                max_nnz=max_nnz, max_working_memory=max_working_memory,
+                optical_bin_width_pixels=optical_bin_width_pixels,
+                verbose=verbose,
+            )
+            my_print(
+                f"Optical projection matrix for camera {camera_idx!r}, "
+                f"eye {eye_idx + 1}/{len(_camera.eyes)} calculated in "
+                f"{time.perf_counter() - optical_start:.3f}s after visibility",
+                show=verbose > 0,
+            )
             return
 
         def _full_vox_proc(sv_gc, S):
@@ -1288,7 +1462,9 @@ class World:
     def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
                               partial_res: int | tuple[int, int, int] = None,
                               force: bool = False,
-                              max_working_memory: int = 1_000_000_000):
+                              max_working_memory: int = 1_000_000_000,
+                              chunk_strategy: str = "voxel",
+                              optical_bin_width_pixels=1.0):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1311,6 +1487,13 @@ class World:
         max_working_memory : int, optional
             Approximate byte budget for transient in-flight chunk data.
             Defaults to one billion bytes.
+        chunk_strategy : {"voxel", "optical"}, optional
+            Projection work ordering.  The default preserves contiguous voxel
+            chunks.  ``"optical"`` enables the experimental, uncompressed
+            optical-bin validation path.
+        optical_bin_width_pixels : float or (float, float), optional
+            Optical-bin width in detector-pixel pitches when
+            ``chunk_strategy="optical"``. Defaults to one pixel.
 
         Notes
         -----
@@ -1324,14 +1507,18 @@ class World:
             for _e in range(len(self.cameras[_c].eyes)):
                 my_print(f"Processing camera {_c!r}, eye {_e + 1}/{len(self.cameras[_c].eyes)}",
                          show=verbose > 0)
-                if force or (self._projection[_c][_e] is None) or \
+                # The experimental optical ordering is intentionally rebuilt;
+                # cache keys do not encode projection strategy yet.
+                if force or chunk_strategy == "optical" or (self._projection[_c][_e] is None) or \
                         (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_subpixel, self.voxel.N)):
                     my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
                     self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
                                                    verbose=verbose, max_nnz=100_000_000,
                                                    partial_res=partial_res,
-                                                   max_working_memory=max_working_memory)
+                                                   max_working_memory=max_working_memory,
+                                                   chunk_strategy=chunk_strategy,
+                                                   optical_bin_width_pixels=optical_bin_width_pixels)
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "
