@@ -7,7 +7,9 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 - `multi_pinhole/utils/`: Package-internal utility functions for data processing and visualization.
 - `docs/`: Documentation files and user guides.
 - `docs/ja/projection-roadmap.md`: Projection-matrix validation and improvement backlog.
+- `docs/ja/projection-compression-future.md`: Deferred QA/PSF compression design notes.
 - `examples/`: Example and analysis scripts demonstrating how to use the package.
+- `benchmarks/`: Reproducible performance and numerical-accuracy experiments.
 
 ## Installation
 To install the package, clone the repository and run:
