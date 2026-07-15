@@ -36,6 +36,61 @@ def test_eye_screen_voxel_world_initialization():
     assert world.voxel is voxel
 
 
+def test_world_project_and_backproject_wrap_cached_sparse_matrices():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    camera = make_camera()
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+    eye_projection = sparse.csr_matrix(
+        np.arange(camera.screen.N_pixel * voxel.N, dtype=float).reshape(
+            camera.screen.N_pixel, voxel.N,
+        ) / 100.0,
+    )
+    world._projection["main"][0] = eye_projection
+    world._P_matrix["main"] = eye_projection.copy()
+
+    emission = np.linspace(0.5, 1.5, voxel.N)
+    image = np.linspace(-1.0, 1.0, camera.screen.N_pixel)
+
+    np.testing.assert_allclose(
+        world.project(emission, camera_idx="main"), eye_projection @ emission,
+    )
+    np.testing.assert_allclose(
+        world.project(emission, camera_idx="main", eye_idx=0),
+        eye_projection @ emission,
+    )
+    np.testing.assert_allclose(
+        world.backproject(image, camera_idx="main"), eye_projection.T @ image,
+    )
+    np.testing.assert_allclose(
+        np.dot(world.project(emission, "main"), image),
+        np.dot(emission, world.backproject(image, "main")),
+        rtol=1e-14, atol=1e-14,
+    )
+
+
+def test_world_project_and_backproject_validate_cache_selection_and_shapes():
+    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
+    camera = make_camera()
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+
+    with pytest.raises(RuntimeError, match="set_projection_matrix"):
+        world.project(np.ones(voxel.N), camera_idx="main")
+    with pytest.raises(KeyError, match="not registered"):
+        world.project(np.ones(voxel.N), camera_idx="missing")
+    with pytest.raises(ValueError, match="emission must have shape"):
+        world.project(np.ones((voxel.N, 1)), camera_idx="main")
+    with pytest.raises(TypeError, match="eye_idx"):
+        world.project(np.ones(voxel.N), camera_idx="main", eye_idx="0")
+    with pytest.raises(IndexError, match="eye_idx"):
+        world.project(np.ones(voxel.N), camera_idx="main", eye_idx=1)
+
+    world._P_matrix["main"] = sparse.csr_matrix(
+        (camera.screen.N_pixel, voxel.N), dtype=float,
+    )
+    with pytest.raises(ValueError, match="image must have shape"):
+        world.backproject(np.ones(camera.screen.N_pixel + 1), camera_idx="main")
+
+
 def test_uniform_voxel_from_centers_preserves_requested_gravity_center_ranges():
     cx = np.linspace(-2.0, 2.0, 5)
     cy = np.linspace(10.0, 14.0, 3)
