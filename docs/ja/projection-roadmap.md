@@ -60,6 +60,11 @@ allocation追跡なしのcold preflightは305.0 s、process peak RSSは約2.57 G
 厳密intersection本体は合計4.36 sだったため、残る律速は多数のbounded cone行列積である。
 このfull-grid結果は、以前の`(350,150,70)`制限gridの448 sとは直接比較しない。
 
+次に、Eye前方maskとaperture/wall間でactive pointを引き継ぎ、通常のwall線分とZ範囲が
+重ならないtriangleを除外した。`shape=(96,64,48)`ではvisibility hashとvoxel状態数を維持し、
+cold preflightは4.94 sから2.67 sへ短縮した。inside vertex 125,160に対し、aperture後にwallへ
+渡るpointはcameraごとに約54,600まで減った。距離boundとbatch再編は保留する。
+
 ## P1: partial-cell積分
 
 wall/apertureなしの1-cell Toyを使い、解析的な平面または球面inside条件でcellを切る。

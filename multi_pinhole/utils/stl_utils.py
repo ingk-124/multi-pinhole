@@ -746,6 +746,23 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     start = start.astype(dtype, copy=False)
     grid_points = grid_points.astype(dtype, copy=False)
     eps = np.dtype(dtype).type(1e-6)
+
+    # Ordinary wall visibility only considers finite Eye-to-point segments.
+    # A triangle whose z extent is wholly outside the union of those segments
+    # cannot intersect any ray.  Apertures deliberately extend rays behind the
+    # Eye, so their ``behind_start_included`` path must retain every triangle.
+    if behind_start_included is False:
+        segment_z_min = min(float(start[2]), float(np.min(grid_points[:, 2])))
+        segment_z_max = max(float(start[2]), float(np.max(grid_points[:, 2])))
+        triangle_z_min = np.min(triangles[:, :, 2], axis=1)
+        triangle_z_max = np.max(triangles[:, :, 2], axis=1)
+        z_overlap = ((triangle_z_max >= segment_z_min - eps)
+                     & (triangle_z_min <= segment_z_max + eps))
+        triangles = triangles[z_overlap]
+        M = triangles.shape[0]
+        if M == 0:
+            return np.ones(N, dtype=bool)
+
     planes, valid = delta_cone_prepare(triangles, start, eps=eps)
     valid_idx = np.flatnonzero(valid)
     visible = np.ones(N, dtype=bool)

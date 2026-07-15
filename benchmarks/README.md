@@ -83,6 +83,13 @@ cache-hit preflight took 0.48 s.  About 96.5% of voxels were invisible for each
 camera.  This full-grid result is not directly comparable to the earlier 448 s
 measurement on the smaller `(350,150,70)` restricted grid.
 
+The next exact culling step carries the active-point mask across the camera
+front-plane, apertures, and walls, and removes wall triangles whose z extent is
+outside the finite Eye-to-point segments.  On the intermediate MST
+`shape=(96,64,48)` case this preserved the visibility SHA-256 and voxel state
+counts while reducing cold preflight from 4.94 s to 2.67 s.  Each wall received
+about 54,600 points after the aperture instead of all 125,160 inside vertices.
+
 On the restricted MST `shape=(24,16,12)` case, the bounded implementation and
 the retained reference path produced the same visibility SHA-256 and voxel
 state counts.  In one local run, cold preflight changed from 7.14 s to 0.130 s,

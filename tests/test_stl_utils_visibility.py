@@ -82,3 +82,27 @@ def test_paired_intersections_match_scalar_at_triangle_boundaries(behind_start_i
     )
 
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_wall_visibility_discards_triangles_outside_segment_z_range(monkeypatch):
+    vertices = np.array([
+        [-2.0, -2.0, -3.0], [2.0, -2.0, -3.0], [0.0, 2.0, -3.0],
+        [-2.0, -2.0, 2.0], [2.0, -2.0, 2.0], [0.0, 2.0, 2.0],
+        [-2.0, -2.0, 9.0], [2.0, -2.0, 9.0], [0.0, 2.0, 9.0],
+    ])
+    model = stl_utils.make_stl(vertices, np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
+    points = np.array([[0.0, 0.0, 6.0], [3.0, 0.0, 6.0]], dtype=np.float32)
+    start = np.zeros(3, dtype=np.float32)
+    prepared_triangle_counts = []
+    original = stl_utils.delta_cone_prepare
+
+    def recorded(triangles, *args, **kwargs):
+        prepared_triangle_counts.append(len(triangles))
+        return original(triangles, *args, **kwargs)
+
+    monkeypatch.setattr(stl_utils, "delta_cone_prepare", recorded)
+    actual = stl_utils.check_visible(model, start, points)
+    expected = stl_utils._check_visible_reference(model, start, points)
+
+    np.testing.assert_array_equal(actual, expected)
+    assert prepared_triangle_counts[0] == 1

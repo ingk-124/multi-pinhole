@@ -10,6 +10,7 @@ from scipy import sparse
 from scipy.spatial.transform import Rotation
 
 from multi_pinhole import Aperture, Camera, Eye, Rays, Screen, Voxel, World
+from multi_pinhole.utils import stl_utils
 
 
 def make_camera():
@@ -932,24 +933,36 @@ def test_world_multiple_apertures_match_camera_blocking_rule(monkeypatch):
         z_axis=np.linspace(-1.0, 1.0, 2),
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
+    wall = stl_utils.make_stl(
+        np.array([[-2.0, -2.0, 15.0], [2.0, -2.0, 15.0], [0.0, 2.0, 15.0]]),
+        np.array([[0, 1, 2]]),
+    )
+    world.walls = [wall]
     points = np.array([
         [0.0, 0.0, 20.0],
         [1.0, 0.0, 20.0],
         [2.0, 0.0, 20.0],
+        [0.0, 0.0, 5.0],
     ])
-    visibility_by_aperture = [
-        np.array([True, False, True]),
-        np.array([True, True, False]),
-    ]
+    calls = []
 
     def fake_check_visible(*args, **kwargs):
-        return visibility_by_aperture.pop(0)
+        candidate_points = kwargs["grid_points"]
+        calls.append(candidate_points.copy())
+        if len(calls) == 1:
+            return np.array([True, False, True])
+        if len(calls) == 2:
+            return np.array([True, False])
+        return np.array([True])
 
     monkeypatch.setattr("multi_pinhole.world.stl_utils.check_visible", fake_check_visible)
 
     visible = world.find_visible_points(points, camera_idx=0, eye_idx=0, verbose=0)
 
-    np.testing.assert_array_equal(visible, np.array([[True, False, False]]))
+    np.testing.assert_array_equal(visible, np.array([[True, False, False, False]]))
+    np.testing.assert_array_equal(calls[0], points[:3])
+    np.testing.assert_array_equal(calls[1], points[[0, 2]])
+    np.testing.assert_array_equal(calls[2], points[[0]])
 
 
 def test_readme_minimal_sample_runs():
