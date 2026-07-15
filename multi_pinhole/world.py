@@ -772,30 +772,40 @@ class World:
             my_print(f"checking visible points for eye {_e + 1}/{len(_camera.eyes)}",
                      show=verbose > 0)
             my_print("-" * 15, show=verbose > 0)
-            # get conditions for each aperture and wall
+            # Apply each occluder only to points that remain visible.  This is
+            # equivalent to the previous boolean AND, but avoids repeating the
+            # expensive mesh test for points rejected by the front-plane test
+            # or an earlier aperture/wall.
             my_print(f"--- checking for apertures ---", show=verbose > 0)
-            aperture_visible = []
             for a, aperture in enumerate(_camera.apertures):
+                active = np.flatnonzero(visible[i])
+                if active.size == 0:
+                    break
                 if aperture.stl_model is None:
                     aperture.set_model()
-                aperture_visible.append(stl_utils.check_visible(mesh_obj=aperture.stl_model,
-                                                                start=_eye.position,
-                                                                grid_points=camera_points,
-                                                                verbose=verbose,
-                                                                behind_start_included=True))  # (N_points, )
+                aperture_visible = stl_utils.check_visible(
+                    mesh_obj=aperture.stl_model,
+                    start=_eye.position,
+                    grid_points=camera_points[active],
+                    verbose=verbose,
+                    behind_start_included=True,
+                )
+                visible[i, active[~aperture_visible]] = False
                 my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
                 my_print("-" * 15, show=verbose > 0)
-            if aperture_visible:
-                # Apertures are blocking surfaces, matching Camera.calc_image_vec():
-                # intersecting any aperture makes the ray invisible.
-                visible[i] &= np.all(aperture_visible, axis=0)
 
             my_print("--- checking for walls ---", show=verbose > 0)
             for w, wall_in_camera in enumerate(walls_in_camera):
-                visible[i] *= stl_utils.check_visible(mesh_obj=wall_in_camera,
-                                                      start=_eye.position,
-                                                      grid_points=camera_points,
-                                                      verbose=verbose)  # (N_points, )
+                active = np.flatnonzero(visible[i])
+                if active.size == 0:
+                    break
+                wall_visible = stl_utils.check_visible(
+                    mesh_obj=wall_in_camera,
+                    start=_eye.position,
+                    grid_points=camera_points[active],
+                    verbose=verbose,
+                )
+                visible[i, active[~wall_visible]] = False
                 my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
                 my_print("-" * 15, show=verbose > 0)
         return visible  # (N_eye, N_points)

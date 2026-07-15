@@ -10,6 +10,7 @@ from scipy import sparse
 from scipy.spatial.transform import Rotation
 
 from multi_pinhole import Aperture, Camera, Eye, Rays, Screen, Voxel, World
+from multi_pinhole.utils import stl_utils
 
 
 def make_camera():
@@ -415,6 +416,29 @@ def test_projection_preflight_counts_fixed_work_without_building_projection():
     cached_visibility = world.visible_voxels["main"]
     world.preflight_projection(res=1)
     assert world.visible_voxels["main"] is cached_visibility
+
+
+def test_projection_build_reuses_preflight_vertex_visibility(monkeypatch):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(4, 4), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    world.preflight_projection(res=1)
+
+    def visibility_must_not_run(*args, **kwargs):
+        raise AssertionError("preflight visibility cache was not reused")
+
+    monkeypatch.setattr(world, "find_visible_points", visibility_must_not_run)
+    world.set_projection_matrix(res=1, parallel=1, verbose=0)
+
+    assert world.P_matrix[0] is not None
 
 
 def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
@@ -909,24 +933,36 @@ def test_world_multiple_apertures_match_camera_blocking_rule(monkeypatch):
         z_axis=np.linspace(-1.0, 1.0, 2),
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
+    wall = stl_utils.make_stl(
+        np.array([[-2.0, -2.0, 15.0], [2.0, -2.0, 15.0], [0.0, 2.0, 15.0]]),
+        np.array([[0, 1, 2]]),
+    )
+    world.walls = [wall]
     points = np.array([
         [0.0, 0.0, 20.0],
         [1.0, 0.0, 20.0],
         [2.0, 0.0, 20.0],
+        [0.0, 0.0, 5.0],
     ])
-    visibility_by_aperture = [
-        np.array([True, False, True]),
-        np.array([True, True, False]),
-    ]
+    calls = []
 
     def fake_check_visible(*args, **kwargs):
-        return visibility_by_aperture.pop(0)
+        candidate_points = kwargs["grid_points"]
+        calls.append(candidate_points.copy())
+        if len(calls) == 1:
+            return np.array([True, False, True])
+        if len(calls) == 2:
+            return np.array([True, False])
+        return np.array([True])
 
     monkeypatch.setattr("multi_pinhole.world.stl_utils.check_visible", fake_check_visible)
 
     visible = world.find_visible_points(points, camera_idx=0, eye_idx=0, verbose=0)
 
-    np.testing.assert_array_equal(visible, np.array([[True, False, False]]))
+    np.testing.assert_array_equal(visible, np.array([[True, False, False, False]]))
+    np.testing.assert_array_equal(calls[0], points[:3])
+    np.testing.assert_array_equal(calls[1], points[[0, 2]])
+    np.testing.assert_array_equal(calls[2], points[[0]])
 
 
 def test_readme_minimal_sample_runs():
