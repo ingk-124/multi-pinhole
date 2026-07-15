@@ -103,6 +103,19 @@ def _measure(function):
     }
 
 
+def _measure_wall_clock(function):
+    """Measure elapsed time without tracemalloc's large array-allocation overhead."""
+    rss_before = _rss_peak_bytes()
+    started = time.perf_counter()
+    value = function()
+    return value, {
+        "seconds": time.perf_counter() - started,
+        "tracemalloc_peak_bytes": None,
+        "process_peak_rss_before_bytes": rss_before,
+        "process_peak_rss_after_bytes": _rss_peak_bytes(),
+    }
+
+
 def _add_partial_plane_wall(world):
     vertices = np.array([
         [-10.0, -10.0, -50.0], [0.0, -10.0, -50.0],
@@ -143,14 +156,15 @@ def _git_head() -> str:
 
 
 def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65536,
-        batch_triangles=512, implementation="optimized"):
+        batch_triangles=512, implementation="optimized", track_allocations=True):
+    measure = _measure if track_allocations else _measure_wall_clock
     world = _build_scene(scene, tuple(voxel_shape), mst_spacing)
     inside_function = world._inside_function
     inside_kwargs = dict(world._inside_kwargs)
     if inside_function is None:
         inside_function = lambda x, y, z: np.ones_like(x, dtype=bool)
 
-    _, inside_metrics = _measure(
+    _, inside_metrics = measure(
         lambda: world.set_inside_vertices(inside_function, **inside_kwargs),
     )
 
@@ -180,8 +194,8 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
     stl_utils.check_visible = configured_check_visible
     try:
         with _instrument_visibility_helpers() as helper_calls:
-            report, cold = _measure(lambda: world.preflight_projection(res=1, force_visibility=True))
-        _, cache_hit = _measure(lambda: world.preflight_projection(res=1, force_visibility=False))
+            report, cold = measure(lambda: world.preflight_projection(res=1, force_visibility=True))
+        _, cache_hit = measure(lambda: world.preflight_projection(res=1, force_visibility=False))
     finally:
         stl_utils.check_visible = production_check_visible
 
@@ -218,6 +232,7 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
     return {
         "scene": scene,
         "implementation": implementation,
+        "track_allocations": bool(track_allocations),
         "git_commit": _git_head(),
         "geometry_fingerprint_sha256": _fingerprint(world),
         "voxel_shape": list(world.voxel.shape),
@@ -259,10 +274,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch-points", type=int, default=65536)
     parser.add_argument("--batch-triangles", type=int, default=512)
     parser.add_argument("--implementation", choices=("optimized", "reference"), default="optimized")
+    parser.add_argument("--no-tracemalloc", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = run(args.scene, args.voxel_shape, args.mst_spacing, args.batch_points,
-                 args.batch_triangles, args.implementation)
+                 args.batch_triangles, args.implementation, not args.no_tracemalloc)
     payload = json.dumps(result, indent=2, sort_keys=True)
     print(payload)
     if args.output:
