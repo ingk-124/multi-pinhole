@@ -325,6 +325,60 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
     return ok
 
 
+def _check_intersection_pairs(triangles: np.ndarray, start_point: np.ndarray,
+                              end_points: np.ndarray,
+                              behind_start_included: float | bool = False,
+                              eps: float = 1e-6) -> np.ndarray:
+    """Vectorized equivalent of :func:`check_intersection` for triangle-ray pairs.
+
+    ``triangles[i]`` is tested only against the segment ending at
+    ``end_points[i]``.  The equations and tolerances intentionally match
+    :func:`check_intersection`; this helper only removes the Python call per
+    triangle from the visibility hot path.
+    """
+    if end_points.shape[0] == 0:
+        return np.zeros(0, dtype=bool)
+
+    a = triangles[:, 0, :]
+    e_1 = triangles[:, 1, :] - a
+    e_2 = triangles[:, 2, :] - a
+    d_ = end_points - start_point
+    r = start_point - a
+    n_0 = np.cross(e_1, e_2)
+    det = -np.einsum('ij,ij->i', d_, n_0)
+
+    dtype = det.dtype
+    eps = dtype.type(eps)
+    non_parallel = np.abs(det) > eps
+    inv_det = np.zeros_like(det)
+    inv_det[non_parallel] = 1.0 / det[non_parallel]
+
+    n_2 = np.cross(d_, e_2)
+    u = np.einsum('ij,ij,i->i', r, n_2, inv_det)
+    ok = non_parallel & (u >= -eps)
+
+    n_1 = np.cross(e_1, d_)
+    v = np.einsum('ij,ij,i->i', r, n_1, inv_det)
+    ok &= (v >= -eps) & (u + v <= 1 + eps)
+
+    t = np.einsum('ij,ij,i->i', r, n_0, inv_det)
+    if isinstance(behind_start_included, bool):
+        t_min = np.full(
+            end_points.shape[0],
+            -np.inf if behind_start_included else 0,
+            dtype=dtype,
+        )
+    elif isinstance(behind_start_included, Number):
+        z = d_[..., 2]
+        f = dtype.type(behind_start_included)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_min = np.where(z > eps, f / z, np.inf).astype(dtype, copy=False)
+    else:
+        raise ValueError("behind_start_included must be bool or float (default: False)")
+    ok &= (t > t_min - eps) & (t <= 1 + eps)
+    return ok
+
+
 def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
     """Compute cone plane normals for each triangle in ``mesh_obj``.
 
@@ -590,9 +644,9 @@ def delta_cone_apply_test():
     return fig
 
 
-def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
-                  behind_start_included: float | bool = False, dtype: type = np.float32,
-                  batch_points: int = 65536) -> np.ndarray:
+def _check_visible_reference(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
+                             behind_start_included: float | bool = False, dtype: type = np.float32,
+                             batch_points: int = 65536) -> np.ndarray:
     """Determine which ``grid_points`` are visible from ``start``.
 
     Parameters
@@ -666,6 +720,77 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
                 visible[inside_grid_points[intersected]] = False
     my_print(f"check_intersection done in {time.time() - start_time:.3f} sec", show=verbose > 0)
 
+    return visible
+
+
+def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
+                  behind_start_included: float | bool = False, dtype: type = np.float32,
+                  batch_points: int = 65536, batch_triangles: int = 512) -> np.ndarray:
+    """Determine point visibility using bounded point and triangle batches.
+
+    This implements the same cone filter and Möller--Trumbore test as
+    :func:`_check_visible_reference`.  Candidate pairs are consumed inside each
+    batch instead of being retained as a global CSR matrix.  Points occluded by
+    an earlier triangle batch are omitted from all later batches.
+    """
+    N = grid_points.shape[0]
+    M = mesh_obj.vectors.shape[0]
+    if N == 0:
+        return np.zeros(0, dtype=bool)
+    if M == 0:
+        return np.ones(N, dtype=bool)
+    if batch_points <= 0 or batch_triangles <= 0:
+        raise ValueError("batch_points and batch_triangles must be positive")
+
+    triangles = mesh_obj.vectors.astype(dtype, copy=False)
+    start = start.astype(dtype, copy=False)
+    grid_points = grid_points.astype(dtype, copy=False)
+    eps = np.dtype(dtype).type(1e-6)
+    planes, valid = delta_cone_prepare(triangles, start, eps=eps)
+    valid_idx = np.flatnonzero(valid)
+    visible = np.ones(N, dtype=bool)
+    allow_behind = isinstance(behind_start_included, Number) or behind_start_included is True
+
+    my_print(f"{N=}, {M=}", show=verbose > 0)
+    started = time.time()
+    for point_start in my_range(
+            0, N, batch_points, disable=verbose <= 0, desc="Check visibility"):
+        point_stop = min(point_start + batch_points, N)
+        batch_indices = np.arange(point_start, point_stop)
+        batch_points_array = grid_points[point_start:point_stop]
+        alive = np.ones(point_stop - point_start, dtype=bool)
+
+        for triangle_start in range(0, valid_idx.size, batch_triangles):
+            if not np.any(alive):
+                break
+            triangle_indices = valid_idx[triangle_start:triangle_start + batch_triangles]
+            active_local = np.flatnonzero(alive)
+            relative_points = batch_points_array[active_local] - start
+            triangle_planes = planes[triangle_indices]
+
+            ok_0 = relative_points @ triangle_planes[:, 0, :].T >= -eps
+            ok_1 = relative_points @ triangle_planes[:, 1, :].T >= -eps
+            ok_2 = relative_points @ triangle_planes[:, 2, :].T >= -eps
+            inside = ok_0 & ok_1 & ok_2
+            if allow_behind:
+                inside |= (~ok_0) & (~ok_1) & (~ok_2)
+
+            point_rows, triangle_cols = np.nonzero(inside)
+            if point_rows.size == 0:
+                continue
+            candidate_local = active_local[point_rows]
+            candidate_triangles = triangle_indices[triangle_cols]
+            intersected = _check_intersection_pairs(
+                triangles[candidate_triangles], start,
+                batch_points_array[candidate_local],
+                behind_start_included=behind_start_included, eps=eps,
+            )
+            if np.any(intersected):
+                alive[candidate_local[intersected]] = False
+
+        visible[batch_indices[~alive]] = False
+
+    my_print(f"check_visible done in {time.time() - started:.3f} sec", show=verbose > 0)
     return visible
 
 

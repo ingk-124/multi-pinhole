@@ -40,7 +40,8 @@ def _instrument_visibility_helpers():
     """Collect timings and candidate sizes without changing production code."""
     original_delta = stl_utils.delta_cone_apply
     original_intersection = stl_utils.check_intersection
-    calls = {"delta_cone_apply": [], "check_intersection": []}
+    original_pair_intersection = stl_utils._check_intersection_pairs
+    calls = {"delta_cone_apply": [], "check_intersection": [], "check_intersection_pairs": []}
 
     def measured_delta(*args, **kwargs):
         started = time.perf_counter()
@@ -65,13 +66,25 @@ def _instrument_visibility_helpers():
         })
         return result
 
+    def measured_pair_intersection(*args, **kwargs):
+        started = time.perf_counter()
+        result = original_pair_intersection(*args, **kwargs)
+        calls["check_intersection_pairs"].append({
+            "seconds": time.perf_counter() - started,
+            "candidate_points": int(len(args[2])),
+            "intersections": int(np.count_nonzero(result)),
+        })
+        return result
+
     stl_utils.delta_cone_apply = measured_delta
     stl_utils.check_intersection = measured_intersection
+    stl_utils._check_intersection_pairs = measured_pair_intersection
     try:
         yield calls
     finally:
         stl_utils.delta_cone_apply = original_delta
         stl_utils.check_intersection = original_intersection
+        stl_utils._check_intersection_pairs = original_pair_intersection
 
 
 def _measure(function):
@@ -129,7 +142,8 @@ def _git_head() -> str:
     ).stdout.strip()
 
 
-def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65536):
+def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65536,
+        batch_triangles=512, implementation="optimized"):
     world = _build_scene(scene, tuple(voxel_shape), mst_spacing)
     inside_function = world._inside_function
     inside_kwargs = dict(world._inside_kwargs)
@@ -140,15 +154,21 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
         lambda: world.set_inside_vertices(inside_function, **inside_kwargs),
     )
 
-    original_check_visible = stl_utils.check_visible
+    production_check_visible = stl_utils.check_visible
+    selected_check_visible = (
+        production_check_visible if implementation == "optimized"
+        else stl_utils._check_visible_reference
+    )
     check_visible_calls = []
 
     def configured_check_visible(*args, **kwargs):
         kwargs["batch_points"] = batch_points
+        if implementation == "optimized":
+            kwargs["batch_triangles"] = batch_triangles
         mesh_obj = kwargs.get("mesh_obj", args[0] if args else None)
         points = kwargs.get("grid_points", args[2] if len(args) > 2 else None)
         started = time.perf_counter()
-        result = original_check_visible(*args, **kwargs)
+        result = selected_check_visible(*args, **kwargs)
         check_visible_calls.append({
             "seconds": time.perf_counter() - started,
             "triangles": int(len(mesh_obj.vectors)),
@@ -163,7 +183,7 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
             report, cold = _measure(lambda: world.preflight_projection(res=1, force_visibility=True))
         _, cache_hit = _measure(lambda: world.preflight_projection(res=1, force_visibility=False))
     finally:
-        stl_utils.check_visible = original_check_visible
+        stl_utils.check_visible = production_check_visible
 
     visible_vertices = {
         repr(key): list(value.shape) for key, value in world._visible_vertices.items()
@@ -171,7 +191,21 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
     visible_voxels = {
         repr(key): list(value.shape) for key, value in world._visible_voxels.items()
     }
-    intersection_calls = helper_calls["check_intersection"]
+    visibility_digest = hashlib.sha256()
+    visible_vertex_counts = {}
+    visible_voxel_state_counts = {}
+    for key in world.cameras:
+        vertices = world._visible_vertices[key]
+        voxels = world._visible_voxels[key]
+        visibility_digest.update(vertices.tobytes())
+        visibility_digest.update(voxels.tobytes())
+        visible_vertex_counts[repr(key)] = int(np.count_nonzero(vertices))
+        visible_voxel_state_counts[repr(key)] = {
+            str(state): int(np.count_nonzero(voxels == state)) for state in (0, 1, 2)
+        }
+    intersection_calls = (
+        helper_calls["check_intersection"] + helper_calls["check_intersection_pairs"]
+    )
     intersection_summary = {
         "calls": len(intersection_calls),
         "seconds": sum(call["seconds"] for call in intersection_calls),
@@ -183,6 +217,7 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
     }
     return {
         "scene": scene,
+        "implementation": implementation,
         "git_commit": _git_head(),
         "geometry_fingerprint_sha256": _fingerprint(world),
         "voxel_shape": list(world.voxel.shape),
@@ -193,8 +228,12 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
         "camera_eyes": {repr(key): len(camera.eyes) for key, camera in world.cameras.items()},
         "wall_triangles": [int(len(wall.vectors)) for wall in world.walls],
         "batch_points": int(batch_points),
+        "batch_triangles": int(batch_triangles),
         "visible_vertices_shapes": visible_vertices,
         "visible_voxels_shapes": visible_voxels,
+        "visibility_sha256": visibility_digest.hexdigest(),
+        "visible_vertex_counts": visible_vertex_counts,
+        "visible_voxel_state_counts": visible_voxel_state_counts,
         "inside": inside_metrics,
         "cold_preflight": cold,
         "cache_hit_preflight": cache_hit,
@@ -218,9 +257,12 @@ if __name__ == "__main__":
     parser.add_argument("--voxel-shape", type=_triplet, default=(24, 16, 12))
     parser.add_argument("--mst-spacing", type=float)
     parser.add_argument("--batch-points", type=int, default=65536)
+    parser.add_argument("--batch-triangles", type=int, default=512)
+    parser.add_argument("--implementation", choices=("optimized", "reference"), default="optimized")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = run(args.scene, args.voxel_shape, args.mst_spacing, args.batch_points)
+    result = run(args.scene, args.voxel_shape, args.mst_spacing, args.batch_points,
+                 args.batch_triangles, args.implementation)
     payload = json.dumps(result, indent=2, sort_keys=True)
     print(payload)
     if args.output:

@@ -63,8 +63,16 @@ commit so before/after results can be paired safely.
 python -m benchmarks.profile_wall_visibility --scene toy --voxel-shape 24,16,12
 python -m benchmarks.profile_wall_visibility --scene plane --voxel-shape 24,16,12
 python -m benchmarks.profile_wall_visibility --scene mst --voxel-shape 24,16,12
+python -m benchmarks.profile_wall_visibility --scene mst --voxel-shape 24,16,12 --implementation reference
 ```
 
 `tracemalloc_peak_bytes` is a phase-local allocation indicator.  The
 `process_peak_rss_*` fields are process-wide high-water marks and should not be
 subtracted; use them only when the benchmark starts in a fresh process.
+
+On the restricted MST `shape=(24,16,12)` case, the bounded implementation and
+the retained reference path produced the same visibility SHA-256 and voxel
+state counts.  In one local run, cold preflight changed from 7.14 s to 0.130 s,
+phase-local traced peak allocation from 284 MB to 9.9 MB, and process peak RSS
+from about 585 MB to 204 MB.  These are small-grid development measurements,
+not the final d=10 acceptance result.

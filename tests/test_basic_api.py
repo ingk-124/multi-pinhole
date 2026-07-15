@@ -417,6 +417,29 @@ def test_projection_preflight_counts_fixed_work_without_building_projection():
     assert world.visible_voxels["main"] is cached_visibility
 
 
+def test_projection_build_reuses_preflight_vertex_visibility(monkeypatch):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(4, 4), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    world.preflight_projection(res=1)
+
+    def visibility_must_not_run(*args, **kwargs):
+        raise AssertionError("preflight visibility cache was not reused")
+
+    monkeypatch.setattr(world, "find_visible_points", visibility_must_not_run)
+    world.set_projection_matrix(res=1, parallel=1, verbose=0)
+
+    assert world.P_matrix[0] is not None
+
+
 def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(screen_shape="square", screen_size=20.0,
