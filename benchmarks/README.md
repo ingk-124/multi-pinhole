@@ -18,6 +18,7 @@ python -m benchmarks.evaluate_partial_resolution --help
 | Script | Purpose |
 |---|---|
 | `benchmark_projection.py` | Projection construction time and sparse-matrix size for a small scene or reduced MST geometry |
+| `profile_wall_visibility.py` | Stage timings, peak-memory indicators, candidate counts, and cache-hit timing for visibility preflight |
 | `evaluate_adaptive_cap.py` | Uncapped ideal source resolution versus capped adaptive resolution |
 | `evaluate_mst_adaptive_resolution.py` | Fixed, adaptive, and ideal resolution on the MST model |
 | `evaluate_partial_resolution.py` | Convergence of partial-cell integration across plane and spherical boundaries |
@@ -51,3 +52,19 @@ experiments. They do not implement the production projection path. See
 These numbers are engineering reference points, not API accuracy guarantees.
 Re-run the corresponding script when projection geometry or quadrature changes.
 
+## Visibility profiling
+
+Run each case in a fresh process so the process peak-RSS value belongs to that
+case.  Start with the wall-free toy and two-triangle plane before increasing the
+reduced MST grid.  The output includes a geometry fingerprint and generating
+commit so before/after results can be paired safely.
+
+```bash
+python -m benchmarks.profile_wall_visibility --scene toy --voxel-shape 24,16,12
+python -m benchmarks.profile_wall_visibility --scene plane --voxel-shape 24,16,12
+python -m benchmarks.profile_wall_visibility --scene mst --voxel-shape 24,16,12
+```
+
+`tracemalloc_peak_bytes` is a phase-local allocation indicator.  The
+`process_peak_rss_*` fields are process-wide high-water marks and should not be
+subtracted; use them only when the benchmark starts in a fresh process.
