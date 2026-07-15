@@ -64,6 +64,9 @@ allocation追跡なしのcold preflightは305.0 s、process peak RSSは約2.57 G
 重ならないtriangleを除外した。`shape=(96,64,48)`ではvisibility hashとvoxel状態数を維持し、
 cold preflightは4.94 sから2.67 sへ短縮した。inside vertex 125,160に対し、aperture後にwallへ
 渡るpointはcameraごとに約54,600まで減った。距離boundとbatch再編は保留する。
+full d=10でもvisibility hash・voxel状態数はbaselineと一致し、cold preflightは305.0 sから
+179.7 sへ短縮した。wall入力はinside vertex 7,394,064からcameraごとに約322万pointへ減り、
+左右wall判定は80.1 sと83.7 sだった。
 
 ## P1: partial-cell積分
 

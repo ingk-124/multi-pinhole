@@ -89,6 +89,10 @@ outside the finite Eye-to-point segments.  On the intermediate MST
 `shape=(96,64,48)` case this preserved the visibility SHA-256 and voxel state
 counts while reducing cold preflight from 4.94 s to 2.67 s.  Each wall received
 about 54,600 points after the aperture instead of all 125,160 inside vertices.
+On the full d=10 case, the same visibility SHA-256 and voxel state counts were
+retained while cold preflight changed from 305.0 s to 179.7 s.  The aperture
+and front-plane filters reduced each wall input from 7,394,064 inside vertices
+to about 3.22 million points; the two wall calls took 80.1 s and 83.7 s.
 
 On the restricted MST `shape=(24,16,12)` case, the bounded implementation and
 the retained reference path produced the same visibility SHA-256 and voxel
