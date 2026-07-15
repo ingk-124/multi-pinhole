@@ -1,177 +1,129 @@
 # Projection matrix roadmap
 
 この文書には、projection matrixの高精度化・高速化について今後実施する項目だけを記録する。
-完了した変更と撤回した設計はGit履歴で追跡し、ここには残さない。
+完了した変更の詳細はGit履歴と `docs/ja/world.md` を参照する。
+
+## 現在の前提
+
+- fully visible voxelの外接球からaxis-wise ideal source resを選択できる。
+- `adaptive_source_resolution=True`で有限の`res`を指定するとaxis-wise ceiling、`res=None`では
+  uncapped idealとなる。
+- partial voxelはvisibilityが不連続なのでadaptive化せず、固定`partial_res`を使用する。
+- `preflight_projection`でvisibility、res bucket、full sample数、partial sample上限をP構築前に確認できる。
+- d=10 wallなしToyでは、uncapped idealに対するcap=5の画像誤差は、滑らかなprofileで約0.2%以下、
+  近距離squareで約0.4%、最短距離の単一voxel impulseで約0.9%だった。cap=5は有力候補だが、
+  MST実形状で未受け入れでありdefaultにはしない。
+- QAによるPSF圧縮とoptical-bin間圧縮はFuture Workへ退避しており、現在の開発対象に含めない。
 
 ## 積み残しサマリー
 
 | 優先度 | 項目 | 完了条件 | 依存関係 |
 |---|---|---|---|
-| P0 | Source quadratureの単純化 | 外接球方式へ置換し、ToyとMSTで精度・時間を受け入れ | なし。現在の作業対象 |
-| P1 | MST実形状とinside境界 | profile・detector res・境界仕様を回帰テストで固定 | adaptive比較はP0に依存 |
-| P2 | Fine gridとcompact mapping | `d=10--25 mm`で時間・peak memory・mapping APIを受け入れ | P0、P1の仕様確定後 |
-| P3 | Eye内部局所visibility | slit実形状で必要性を定量判定 | 条件付き。効果がなければ実装しない |
+| P0 | cap=5とpartial resの受け入れ | MST短時間モデルで精度・時間を比較し、production設定を決定 | なし。次の作業対象 |
+| P1 | wall visibility / preflight高速化 | d=10でvisibility時間とpeak memoryを削減し、cache再利用を確認 | P0と並行可能 |
+| P2 | MST profileとinside境界仕様 | 境界を含むprofileとinverse problem側の未知変数仕様を回帰テストで固定 | P0のreferenceを使用 |
+| P3 | Active voxel compact mapping | 列削減、双方向mapping、projection/transpose/pickleを受け入れ | P1、P2の仕様確定後 |
+| P4 | Fine-grid最終受け入れ | d=10--25で時間、peak memory、画像誤差、inverse problemを評価 | P0--P3 |
+| P5 | Eye内部局所visibility | slit実形状で必要性を定量判定 | 条件付き |
 
-外接球判定のdefault thresholdは `1/8`とする。未決定事項はinside/outside未知変数の扱いであり、
-境界profileの可視化とinverse problem側の要件から決定する。
+## P0: cap=5とpartial resの受け入れ
 
-## 1. Source quadratureの単純化
+### 1. 再現可能なToy benchmark
 
-### 目的
+今回のwallなしd=10検証を `examples/` のスクリプトとして保存し、次を一括出力する。
 
-fixed `res`を高精度計算と検証のreferenceとして維持し、adaptiveは外接球の投影径からfully visible
-voxelの理想軸別resを選ぶ高速化optionとする。幾何判定を任意のemission profileに対する誤差保証とは
-扱わない。
+- uncapped idealとcap=5のpreflight summary、res bucket、source sample数
+- P構築時間、peak memory、Pの`nnz`と実byte数
+- constant、linear、near square、near Gaussian、nearest impulseの画像誤差
+- 総光量差、相対L1/L2、reference peakで規格化した最大pixel誤差
 
-- adaptive判定はfully visible voxelだけに適用する。
-- partial voxelはadaptive判定から除外し、明示された`partial_res`を使用する。
-- pixel境界、profile勾配、距離帯ごとの補正など個別のヒューリスティックを追加しない。
-- 判定に使用した無次元比、足切り結果、採用resを診断できるようにする。
+detectorの面積積分とsource quadratureを分離するため、まず`subpixel_resolution=1`を基準とし、
+その後`1, 2, 5`でcap=5に関する結論が変わらないことを確認する。
 
-### 外接球によるres=1判定
+### 2. MST短時間モデル
 
-voxelの辺長を `(dx, dy, dz)` とし、外接球の直径
+制限したMST領域またはd=75モデルで、次を同じvisibility cacheから比較する。
 
-```text
-L = sqrt(dx^2 + dy^2 + dz^2)
-```
+1. uncapped ideal reference
+2. adaptive cap=5
+3. 従来のfixed res=5
 
-をvoxel内部のworst-case特徴長さとする。Eyeからvoxel中心までの軸距離を `Z_e`、中心視線の
-off-axis角を `theta`、焦点距離を `f` とすると、局所投影Jacobianの最大倍率から
+profileはinside一定、小半径Gaussian、境界付近まで値を持つprofile、非対称profileを使う。
+Toyと同じ画像誤差指標に加えて、projection構築時間、peak memory、camera別画像断面を保存する。
+誤差の合格閾値は結果を見て明示的に決め、幾何heuristic自体を画像誤差保証とは扱わない。
 
-```text
-projected_diameter ~= f * L / (Z_e * cos(theta))
-```
+### 3. partial res収束
 
-と評価する。`1/cos(theta)`で斜視時のworst-caseを含め、voxelのcornerや3軸両端は実投影しない。
-外接球がEye面へ近づきすぎる条件など、局所近似を安全に使えないvoxelはres=1判定を不合格とする。
+d=10の制限MST preflightでは、`partial_res=5`のsample上限が総sample上限の約44%を占めた。
+`partial_res=2, 3, 5`と高精度referenceを比較し、partial境界だけの総光量差とpixel誤差を評価する。
+cap=5をfully visible側に導入してもpartial側が律速なら、production設定を別々に決める。
 
-有限Eye PSFとdetector samplingからscreen 2軸の基準長を作る。
+### 4. APIとlegacy cleanup
 
-```text
-reference_u = max(subpixel_pitch_u, eye_size_u * (1 + f / Z_e))
-reference_v = max(subpixel_pitch_v, eye_size_v * (1 + f / Z_e))
-reference_size = min(reference_u, reference_v)
-rho = projected_diameter / reference_size
-```
+MST受け入れ後に以下を行う。
 
-投影方向を特定しないscalar worst-caseなので、小さい方のreference scaleを採用する。`rho <= 1/8`
-なら `res=(1, 1, 1)`とする。それ以外は同じ閾値から立方体に近いsubvoxelを作る理想軸別resを
-計算し、指定されたfixed resを上限としてclipする。
+- adaptiveをdefaultにするかopt-inのままにするか決定する。
+- `res=None`をuncapped idealのまま残すか、推奨ceilingを別引数・presetで表現するか決定する。
+- 現在productionから未使用の端点投影方式 `projected_axis_spans`、
+  `select_source_resolution`、対応する旧example/testを削除する。
+- scalar fixed `res` / `partial_res`を非等方voxelの辺長比でaxis-wise化する必要性を、
+  非等方Toyで確認する。adaptive idealのaxis-wise化とは別問題として扱う。
 
-`adaptive_source_resolution=True, res=None`ではideal resをそのまま使用する。intまたはtupleの`res`を
-指定した場合だけ軸別上限としてclipする。局所近似が無効でidealを有限に決められないvoxelについて、
-上限なしの計算は明示的にerrorとし、上限resの指定を要求する。
+## P1: wall visibilityとpreflightの高速化
 
-### scalar resからaxis-wise resへの変換
+制限MST d=10（350×150×70、367.5万voxel）ではpreflightが約448秒かかった。
+preflightはpartial subvoxelを評価しておらず、主因はinside頂点とwall meshのvisibility判定である。
 
-scalar `res=r`は最長辺方向の分割数と解釈し、subvoxelが立方体に近くなるように変換する。
+1. preflightをvisibility、res選択、集計に分けて時間とpeak memoryを記録する。
+2. `stl_utils.check_visible`のcandidate triangle生成、巨大boolean配列、`nonzero`をprofileする。
+3. bounded chunk、camera/eye並列、既存cache再利用のうち効果があるものだけを実装する。
+4. preflight後の`set_projection_matrix`がvisibilityを再計算しないことを大規模caseで確認する。
+5. World保存・読込後にも安全にvisibilityを再利用できる条件を、geometry/cache schemaとともに明記する。
 
-```text
-d_max = max(dx, dy, dz)
-h = d_max / r
-r_x = clip(ceil(dx / h), 1, r)
-r_y = clip(ceil(dy / h), 1, r)
-r_z = clip(ceil(dz / h), 1, r)
-```
+preflight自体を軽い解析とみなさない。wall付きfine gridではvisibility構築も本計算の一部として扱う。
 
-例えばvoxel size `(10, 10, 2) mm`、scalar `res=5`なら `(5, 5, 1)`となる。立方voxelでは
-従来どおり `(r, r, r)`となる。
+## P2: MST profileとinside境界仕様
 
-- scalar `res`と`partial_res`には縦横比変換を適用する。
-- 明示的なtuple `(r_x, r_y, r_z)`はそのまま使用する。
-- voxelごとに辺長が異なる場合は、得られたinteger tupleごとにbucket化してprojection kernelを
-  まとめて実行する。
+source resを上げて改善できるのは、表現済みの三線形補間profile `S f`を積分する誤差だけである。
+voxel gridが実際のemissionを表現できない誤差とは分離して評価する。
 
-### 実装と受け入れ条件
+- inside voxelの補間にoutside側の隣接voxel値が混ざる条件を可視化する。
+- outside emissionをゼロ固定するか、projection列から除外するか、inverse problemで拘束するか決める。
+- 定数profileの総光量保存、内部一次profile、inside境界を横切るprofileを回帰テストにする。
+- aperture/wall境界でpartial res収束が成立することを確認する。
 
-1. 外接球指標とscalar-to-axis変換を副作用のないutilityとして実装する。
-2. 立方・非等方voxel、camera回転、off-axis、近距離、anisotropic Eyeのunit testを追加する。
-3. 現在の端点投影による判定と、res=1 voxel集合、判定時間、展開sample数をToyで比較する。
-4. wall・apertureなし、全voxel fully visibleのToyで `d` と `Z/f`を掃引し、fixed res referenceに
-   対するprojection/profile誤差を比較する。
-5. `d=75 mm` MST短時間モデルで判定時間、projection構築時間、res分布、画像誤差を比較する。
-6. 外接球方式が十分保守的であることを確認した後、端点投影方式を削除する。
-7. threshold `1/8`を明示的に変更できる引数として残し、ToyとMSTで保守性を確認する。
-
-### 誤差の分離
-
-次の2種類を混同しない。
-
-1. voxel gridが実際のemissionを表現できない誤差
-2. 表現済みの三線形補間profile `S f`を有限個のsubvoxel点で積分する誤差
-
-source resを上げて改善できるのは2だけである。1を改善するにはvoxel grid自体を細かくする。
-constant、linear、square、Gaussianを使う検証では、同じvoxel gridと同じ`S`を使い、quadrature
-だけを変えて2を評価する。
-
-## 2. MST実形状と境界の数値検証
-
-### MST profile検証
-
-まず `d=75 mm`程度の短時間モデルで、次のemission profileを投影する。
-
-1. insideで一定、outsideでゼロ
-2. 小半径方向に滑らかなGaussian
-3. plasma境界付近まで値を持つprofile
-4. 非対称なprofile
-
-各profileについて、fixed resとadaptiveの総光量、pixel差、相対L1/L2誤差、最大pixel誤差、画像断面、
-実行時間を比較する。detectorの `subpixel_resolution=1,2,5`について画像分布の収束を確認し、
-rectangle Eyeとslit形状も個別に評価する。
-
-各benchmarkの実行前に `preflight_projection` のsummaryを保存し、visible voxel数、res bucket、
-full sample数、partial sample上限を実測時間・peak memoryと対応づける。sample数だけから実行時間を
-保証せず、同じgeometry・detector条件で得た実測値を比較に使う。
-
-短時間モデルで仕様を確定した後、約110万voxel、`d=25 mm`相当を最終benchmarkとして一度実行する。
-
-### inside境界と未知変数
-
-- inside voxelの三線形補間にoutside側の隣接voxel値が混ざる条件を可視化する。
-- outside emissionをゼロ固定するか、projection matrixの列から除外するか、inverse problem側で
-  拘束するかを仕様化する。
-- 定数profileの総光量保存と、inside境界を横切るprofileの回帰テストを追加する。
-
-## 3. Fine voxel gridへの対応
-
-### 格子幅の比較
-
-emissionの空間分解能と有限体積積分精度を分離して、少なくとも次を比較する。
-
-- `d=25 mm`, source res 1または2
-- `d=12.5 mm`, source res 1
-- `d=10 mm`, source res 1
-
-`d=10 mm`のbounding gridは約 `405 x 405 x 105`、約1720万voxelになる。projection時間だけでなく、
-visibility配列、projection列数、cache、inverse problemを含むpeak memoryを測定する。
-
-### Active voxel compact mapping
+## P3: Active voxel compact mapping
 
 torus外、inside外、または全cameraから常に不可視なvoxelをprojection matrixの列から除外する。
 
-- compact indexと元のvoxel indexの双方向mappingを保存する。
-- emission入力をcompact化し、投影・transpose・inverse problem後に元のgridへ戻せるAPIを定義する。
-- mapping自体、projection列、visibility、cacheを含む実メモリ削減量を測定する。
-- constant emission、camera別visibility、pickle roundtripの回帰テストを追加する。
+- compact indexと元voxel indexの双方向mappingを保存する。
+- emission入力のcompact化、projection、transpose、inverse problem後のgrid復元APIを定義する。
+- mapping、visibility、projection列、cacheを含む実byte削減量を測定する。
+- constant emission、camera別visibility、pickle roundtripを回帰テストにする。
 
-## 4. 未実装の物理拡張
+QA/PSF圧縮を再検討するのは、compact mapping後もPの保存量またはmatvecが律速として残った場合だけとする。
 
-### Eye内部位置ごとの局所visibility
+## P4: Fine-grid最終受け入れ
 
-wallやapertureによるvisibilityがEye内部位置で変化する場合を扱う。まず `0.5 x 4 mm`程度のslitと
-実際のwall配置で中心visibilityとの差を定量化し、必要性が確認できた場合だけ実装する。
+少なくともd=25、12.5、10 mmで以下を比較する。
 
-## 実装単位
+- preflight visibility時間とres分布
+- source sample数、projection構築時間、peak memory、Pの実byte数
+- fixed referenceまたは受け入れ済みreferenceに対する画像誤差
+- projection/transposeとprofile fittingの実行時間
 
-1. **Geometry utility:** scalar-to-axis res変換、外接球指標、unit test
-2. **Adaptive integration:** fully visible voxelの理想軸別res、bucket処理、診断値
-3. **Toy acceptance:** 端点投影方式との精度・判定時間比較、`d`・`Z/f` sweepとpyplot
-4. **MST acceptance:** `d=75 mm`でfixed/adaptive、profile、detector resを比較
-5. **Cleanup:** 外接球方式の受け入れ後に端点投影方式を削除し、threshold `1/8`を文書化
-6. **Boundary semantics:** inside/outside仕様と回帰テスト
-7. **Compact mapping:** mapping API、cache、transpose、pickle、memory benchmark
-8. **Fine-grid acceptance:** `d=10--25 mm`で時間・peak memory・投影誤差を比較
-9. **Conditional physics:** slitでEye内部局所visibilityの必要性を判定
+d=10のfull bounding gridは約1720万voxelになるため、P0--P3を完了してから一度だけ最終benchmarkを行う。
 
-1--5を現在のbranchで完了させてから、6以降を独立したbranchへ分ける。
+## P5: 条件付き物理拡張
+
+`0.5×4 mm`程度のslitについて、Eye中心visibilityとEye内部位置ごとの局所visibilityの差を実形状で
+定量化する。画像差が要求精度に対して無視できない場合だけ、Eye内部visibilityを実装する。
+
+## 次の実装順
+
+1. Toy cap=5 benchmarkを `examples/` に保存し、detector res依存を追加する。
+2. 制限MSTでuncapped ideal / cap=5 / fixed 5とpartial resを比較する。
+3. production ceiling、partial res、API defaultを決定する。
+4. legacy端点投影方式を削除し、adaptive branchをmainへ統合できる状態にする。
+5. wall visibilityをprofileし、d=10 preflightを高速化する。
+6. inside境界、compact mapping、fine-grid最終benchmarkへ進む。
