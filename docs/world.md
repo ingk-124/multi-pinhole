@@ -149,6 +149,28 @@ eye.【F:multi_pinhole/world.py†L1182-L1239】 For each `(camera, eye)` pair i
 calls `_calc_voxel_image_for_eye`, then aggregates all eyes on a camera into
 that camera's pixel-space `P_matrix`.
 
+Before starting an expensive build, use the same source-resolution settings
+with `preflight_projection`:
+
+```python
+work = world.preflight_projection(
+    res=None,
+    partial_res=5,
+    adaptive_source_resolution=True,
+)
+print(work.summary())
+print(work.total_samples_upper_bound)
+```
+
+The report separates fully and partially visible voxels for every eye, lists
+the selected full-voxel resolution buckets, and reports the ideal-resolution
+percentiles and clipped-axis count for adaptive runs. Its total is an exact
+count for the full-voxel source samples plus a conservative pre-mask upper
+bound for partial voxels. It is not a runtime or sparse-`nnz` prediction.
+Preflight computes and caches voxel visibility, but does not construct or
+modify `projection` or `P_matrix`; a subsequent build can reuse that
+visibility result.
+
 ### `_calc_voxel_image_for_eye`: fully-visible vs. partially-visible voxels
 
 This is the core, and most expensive, computation in the

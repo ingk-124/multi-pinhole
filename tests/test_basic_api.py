@@ -387,6 +387,99 @@ def test_world_estimate_source_resolution_can_use_pixel_pitch():
         world.estimate_source_resolution(0, 0, detector_grid="unknown")
 
 
+def test_projection_preflight_counts_fixed_work_without_building_projection():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(2, 1, 1),
+    )
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    report = world.preflight_projection(res=(2, 3, 4))
+    row = report.eyes[0]
+
+    assert row.camera_key == "main"
+    assert row.full_voxels == 2
+    assert row.partial_voxels == 0
+    assert row.full_resolution_buckets == (((2, 3, 4), 2),)
+    assert row.full_samples == 48
+    assert report.total_samples_upper_bound == 48
+    assert "48 source samples" in report.summary()
+    assert world.projection["main"] == [None]
+    assert world.P_matrix["main"] is None
+    cached_visibility = world.visible_voxels["main"]
+    world.preflight_projection(res=1)
+    assert world.visible_voxels["main"] is cached_visibility
+
+
+def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    expected = world.estimate_source_resolution(
+        0, 0, max_resolution=None,
+    ).resolution[0]
+
+    ideal_report = world.preflight_projection(
+        res=None, adaptive_source_resolution=True,
+    )
+    ideal_row = ideal_report.eyes[0]
+    expected_tuple = tuple(int(item) for item in expected)
+    assert ideal_row.full_resolution_buckets == ((expected_tuple, 1),)
+    assert ideal_row.full_samples == int(np.prod(expected))
+    assert ideal_row.ideal_p50 is not None
+    assert ideal_row.capped_axes == 0
+
+    capped_report = world.preflight_projection(
+        res=2, adaptive_source_resolution=True,
+        point_source_threshold=1e-12,
+    )
+    capped_row = capped_report.eyes[0]
+    assert capped_row.full_resolution_buckets == (((2, 2, 2), 1),)
+    assert capped_row.full_samples == 8
+    assert capped_row.capped_axes == 3
+
+
+def test_projection_preflight_bounds_partial_voxel_work_before_masking():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel(
+        x_axis=np.array([-0.1, 0.1]),
+        y_axis=np.array([-0.1, 0.1]),
+        z_axis=np.array([30.0, 30.2]),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: x >= 0.0)
+
+    report = world.preflight_projection(
+        res=None, partial_res=(2, 3, 4),
+        adaptive_source_resolution=True,
+    )
+    row = report.eyes[0]
+
+    assert row.full_voxels == 0
+    assert row.partial_voxels == 1
+    assert row.partial_resolution == (2, 3, 4)
+    assert row.partial_samples_upper_bound == 24
+    assert report.total_samples_upper_bound == 24
+
+
 def test_adaptive_source_resolution_matches_fixed_endpoint_resolutions():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
     screen = Screen(screen_shape="square", screen_size=20.0,

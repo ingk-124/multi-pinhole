@@ -52,6 +52,20 @@
 
 `set_projection_matrix(res, ...)` は、`Voxel` グリッドと可視ボクセルの情報を、すべてのカメラ・すべての eye についてボクセル強度を検出器信号へ写像する疎行列に変換するエントリポイントです。【F:multi_pinhole/world.py†L1182-L1239】各 `(camera, eye)` の組について `_calc_voxel_image_for_eye` を呼び出し、その後1つのカメラ上のすべての eye をそのカメラのピクセル空間 `P_matrix` へ集約します。
 
+重い計算を開始する前に、同じsource resolution設定で `preflight_projection` を実行できます。
+
+```python
+work = world.preflight_projection(
+    res=None,
+    partial_res=5,
+    adaptive_source_resolution=True,
+)
+print(work.summary())
+print(work.total_samples_upper_bound)
+```
+
+reportはeyeごとに完全可視・部分可視voxel数を分け、完全可視voxelの採用res bucket、adaptive時のideal res分位点と上限clipされた軸数を整理します。総sample数は、完全可視側については正確な値、部分可視側についてはpoint visibilityとinside maskを適用する前の保守的な上限です。実行時間や疎行列`nnz`の予測値ではありません。preflightはvoxel visibilityを計算・cacheしますが、`projection`や`P_matrix`は構築・変更しません。後続の実計算はvisibility cacheを再利用できます。
+
 ### `_calc_voxel_image_for_eye`：完全可視ボクセルと部分可視ボクセル
 
 このモジュール内で最もコストが高く、かつ最も中核的な計算です。【F:multi_pinhole/world.py†L806-L1145】前段で計算したボクセルの可視性に基づき、ボクセルを2つのグループに分けて異なる方法で処理します。完全可視ボクセルはこれ以上の光線追跡を必要としないためです。

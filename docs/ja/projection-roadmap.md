@@ -120,6 +120,10 @@ constant、linear、square、Gaussianを使う検証では、同じvoxel gridと
 実行時間を比較する。detectorの `subpixel_resolution=1,2,5`について画像分布の収束を確認し、
 rectangle Eyeとslit形状も個別に評価する。
 
+各benchmarkの実行前に `preflight_projection` のsummaryを保存し、visible voxel数、res bucket、
+full sample数、partial sample上限を実測時間・peak memoryと対応づける。sample数だけから実行時間を
+保証せず、同じgeometry・detector条件で得た実測値を比較に使う。
+
 短時間モデルで仕様を確定した後、約110万voxel、`d=25 mm`相当を最終benchmarkとして一度実行する。
 
 ### inside境界と未知変数

@@ -17,6 +17,7 @@ See ``docs/overview.md`` for a walkthrough of the typical workflow.
 """
 
 from .core import Rays, Eye, Aperture, Screen, Camera
+from .projection import EyeProjectionWorkEstimate, ProjectionWorkEstimate
 from .voxel import Voxel
 from .world import World
 

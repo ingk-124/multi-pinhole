@@ -100,6 +100,83 @@ class PointSourceResolutionEstimate:
     valid: np.ndarray
 
 
+@dataclass(frozen=True)
+class EyeProjectionWorkEstimate:
+    """Preflight source-sample counts for one camera Eye."""
+
+    camera_key: object
+    eye_index: int
+    full_voxels: int
+    partial_voxels: int
+    full_samples: int
+    partial_samples_upper_bound: int
+    full_resolution_buckets: tuple[tuple[tuple[int, int, int], int], ...]
+    partial_resolution: tuple[int, int, int]
+    ideal_p50: tuple[float, float, float] | None
+    ideal_p95: tuple[float, float, float] | None
+    ideal_max: tuple[float, float, float] | None
+    point_source_voxels: int
+    capped_axes: int
+    invalid_voxels: int
+
+    @property
+    def visible_voxels(self) -> int:
+        return self.full_voxels + self.partial_voxels
+
+    @property
+    def total_samples_upper_bound(self) -> int:
+        return self.full_samples + self.partial_samples_upper_bound
+
+
+@dataclass(frozen=True)
+class ProjectionWorkEstimate:
+    """Projection preflight report across all cameras and Eyes."""
+
+    eyes: tuple[EyeProjectionWorkEstimate, ...]
+
+    @property
+    def total_visible_voxels(self) -> int:
+        return sum(eye.visible_voxels for eye in self.eyes)
+
+    @property
+    def total_samples_upper_bound(self) -> int:
+        return sum(eye.total_samples_upper_bound for eye in self.eyes)
+
+    def summary(self, max_buckets: int = 8) -> str:
+        """Return a compact human-readable work estimate."""
+        lines = [
+            "Projection preflight: "
+            f"{self.total_samples_upper_bound:,} source samples (upper bound), "
+            f"{self.total_visible_voxels:,} visible camera-voxels",
+        ]
+        for eye in self.eyes:
+            lines.append(
+                f"  camera={eye.camera_key!r} eye={eye.eye_index}: "
+                f"full={eye.full_voxels:,}, partial={eye.partial_voxels:,}, "
+                f"samples<={eye.total_samples_upper_bound:,}",
+            )
+            shown = eye.full_resolution_buckets[:max_buckets]
+            bucket_text = ", ".join(
+                f"{resolution} x {count:,}"
+                for resolution, count in shown
+            ) or "none"
+            if len(eye.full_resolution_buckets) > max_buckets:
+                bucket_text += f", ... (+{len(eye.full_resolution_buckets) - max_buckets})"
+            lines.append(f"    full buckets: {bucket_text}")
+            if eye.ideal_p50 is not None:
+                lines.append(
+                    f"    ideal p50={eye.ideal_p50}, p95={eye.ideal_p95}, "
+                    f"max={eye.ideal_max}; point-source={eye.point_source_voxels:,}, "
+                    f"capped axes={eye.capped_axes:,}, invalid={eye.invalid_voxels:,}",
+                )
+            if eye.partial_voxels:
+                lines.append(
+                    f"    partial res={eye.partial_resolution}, "
+                    f"samples<={eye.partial_samples_upper_bound:,} before masking",
+                )
+        return "\n".join(lines)
+
+
 def select_circumsphere_resolution(
         points_in_eye: np.ndarray, edge_lengths: np.ndarray,
         focal_length: float, reference_size,

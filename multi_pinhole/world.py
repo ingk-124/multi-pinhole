@@ -30,7 +30,9 @@ from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
 from .projection import (
+    EyeProjectionWorkEstimate,
     PointSourceResolutionEstimate,
+    ProjectionWorkEstimate,
     make_optical_binning,
     select_circumsphere_resolution,
 )
@@ -1164,6 +1166,128 @@ class World:
                    np.empty(0, dtype=bool)),
         )
 
+    @staticmethod
+    def _normalize_projection_resolution(value, default) -> tuple[int, int, int]:
+        """Normalize one fixed source resolution without mutating the Voxel."""
+        value = default if value is None else value
+        try:
+            resolution = np.asarray(np.broadcast_to(value, 3), dtype=float)
+        except ValueError as exc:
+            raise ValueError("resolution must be an integer or length-3 sequence") from exc
+        if (not np.all(np.isfinite(resolution)) or np.any(resolution < 1) or
+                np.any(resolution != np.floor(resolution))):
+            raise ValueError("resolution must contain positive integers")
+        return tuple(int(item) for item in resolution)
+
+    def preflight_projection(
+            self, res: int | tuple[int, int, int] | None = None,
+            partial_res: int | tuple[int, int, int] | None = None,
+            adaptive_source_resolution: bool = False,
+            point_source_threshold: float = 1.0 / 8.0,
+            force_visibility: bool = False,
+            verbose: int = 0) -> ProjectionWorkEstimate:
+        """Estimate projection source-sample work without constructing P.
+
+        Parameters match :meth:`set_projection_matrix` for the source
+        quadrature settings. With adaptive resolution, a finite ``res`` is
+        the axis-wise ceiling and ``res=None`` selects the uncapped geometric
+        ideal. ``partial_res`` remains fixed because partial visibility is
+        discontinuous.
+
+        Partial-voxel samples are reported before point visibility and inside
+        masks, so totals are conservative upper bounds. Visibility is cached
+        by :meth:`find_visible_voxels` and can be reused by the subsequent
+        projection calculation. This method does not build or modify a
+        projection matrix.
+        """
+        default_resolution = self.voxel.res
+        if adaptive_source_resolution and res is None:
+            full_ceiling = None
+        else:
+            full_ceiling = self._normalize_projection_resolution(
+                res, default_resolution,
+            )
+        partial_value = (default_resolution if res is None else res)
+        partial_resolution = self._normalize_projection_resolution(
+            partial_res, partial_value,
+        )
+        partial_cost = int(np.prod(partial_resolution))
+
+        self.find_visible_voxels(force=force_visibility, verbose=verbose)
+        rows = []
+        for camera_key, camera in self.cameras.items():
+            for eye_index in range(len(camera.eyes)):
+                state = self.visible_voxels[camera_key][eye_index]
+                full = np.flatnonzero(state == 2)
+                partial = np.flatnonzero(state == 1)
+                estimate = None
+                if adaptive_source_resolution and full.size:
+                    estimate = self.estimate_source_resolution(
+                        camera_key, eye_index, full,
+                        max_resolution=full_ceiling,
+                        point_source_threshold=point_source_threshold,
+                        detector_grid="psf",
+                    )
+                    resolutions = estimate.resolution
+                else:
+                    fixed = (self._normalize_projection_resolution(
+                        res, default_resolution,
+                    ) if full_ceiling is None else full_ceiling)
+                    resolutions = np.broadcast_to(fixed, (full.size, 3))
+
+                if full.size:
+                    unique, counts = np.unique(
+                        resolutions, axis=0, return_counts=True,
+                    )
+                    buckets = tuple(
+                        (tuple(int(item) for item in resolution), int(count))
+                        for resolution, count in zip(unique, counts)
+                    )
+                    full_samples = sum(
+                        int(np.prod(resolution)) * count
+                        for resolution, count in buckets
+                    )
+                else:
+                    buckets = ()
+                    full_samples = 0
+
+                if estimate is not None:
+                    valid_ideal = estimate.ideal_resolution[estimate.valid]
+                    if valid_ideal.size:
+                        percentiles = np.percentile(
+                            valid_ideal, (50, 95, 100), axis=0,
+                        )
+                        ideal_p50, ideal_p95, ideal_max = (
+                            tuple(float(item) for item in row)
+                            for row in percentiles
+                        )
+                    else:
+                        ideal_p50 = ideal_p95 = ideal_max = None
+                    point_source_voxels = int(estimate.point_source.sum())
+                    capped_axes = int(estimate.capped.sum())
+                    invalid_voxels = int((~estimate.valid).sum())
+                else:
+                    ideal_p50 = ideal_p95 = ideal_max = None
+                    point_source_voxels = capped_axes = invalid_voxels = 0
+
+                rows.append(EyeProjectionWorkEstimate(
+                    camera_key=camera_key,
+                    eye_index=eye_index,
+                    full_voxels=int(full.size),
+                    partial_voxels=int(partial.size),
+                    full_samples=int(full_samples),
+                    partial_samples_upper_bound=int(partial.size) * partial_cost,
+                    full_resolution_buckets=buckets,
+                    partial_resolution=partial_resolution,
+                    ideal_p50=ideal_p50,
+                    ideal_p95=ideal_p95,
+                    ideal_max=ideal_max,
+                    point_source_voxels=point_source_voxels,
+                    capped_axes=capped_axes,
+                    invalid_voxels=invalid_voxels,
+                ))
+        return ProjectionWorkEstimate(eyes=tuple(rows))
+
     def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000,
                                   partial_res: int | tuple[int, int, int] = None,
@@ -1240,13 +1364,17 @@ class World:
                                  else default_subvoxel_res)
         else:
             self.voxel.res = res
-            full_subvoxel_res = self.voxel.res
+            full_subvoxel_res = self._normalize_projection_resolution(
+                self.voxel.res, default_subvoxel_res,
+            )
         if partial_res is None:
             partial_subvoxel_res = (default_subvoxel_res if res is None
                                     else full_subvoxel_res)
         else:
             self.voxel.res = partial_res
-            partial_subvoxel_res = self.voxel.res
+            partial_subvoxel_res = self._normalize_projection_resolution(
+                self.voxel.res, default_subvoxel_res,
+            )
 
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
         self.find_visible_voxels(verbose=verbose)
