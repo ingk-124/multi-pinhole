@@ -20,7 +20,7 @@ from collections.abc import Hashable, Mapping
 from concurrent.futures import FIRST_COMPLETED, wait
 from concurrent.futures.thread import ThreadPoolExecutor
 from types import MappingProxyType
-from typing import Tuple, List
+from typing import Literal, Tuple, List
 
 import dill
 import numpy as np
@@ -29,7 +29,13 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
-from .projection import make_optical_binning
+from .projection import (
+    EyeProjectionWorkEstimate,
+    PointSourceResolutionEstimate,
+    ProjectionWorkEstimate,
+    make_optical_binning,
+    select_circumsphere_resolution,
+)
 from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
@@ -39,7 +45,7 @@ from .utils.my_stdio import *
 # Increment when a serialized projection representation or its numerical
 # meaning becomes incompatible with an older cached matrix. Legacy pickles do
 # not have this attribute and are invalidated when loaded.
-PROJECTION_CACHE_SCHEMA_VERSION = 2
+PROJECTION_CACHE_SCHEMA_VERSION = 3
 
 
 def type_list(obj, type_):
@@ -227,6 +233,7 @@ class World:
         self._visible_vertices = {i: None for i in self._cameras.keys()}
         self._visible_voxels = {i: None for i in self._cameras.keys()}
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
+        self._projection_settings = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
         self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
         self.verbose = verbose
@@ -425,6 +432,7 @@ class World:
     def _invalidate_projection_cache(self) -> None:
         """Clear projection data while retaining valid visibility data."""
         self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
+        self._projection_settings = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
         self._P_matrix = {i: None for i in self._cameras.keys()}
 
     def _ensure_projection_cache_schema(self) -> None:
@@ -483,6 +491,7 @@ class World:
         visible_vertices = {}
         visible_voxels = {}
         projection = {}
+        projection_settings = {}
         P_matrix = {}
         for camera_key, camera in cameras.items():
             if id(camera) in old_indices:
@@ -491,6 +500,7 @@ class World:
                 visible_vertices[camera_key] = self._visible_vertices[ind]
                 visible_voxels[camera_key] = self._visible_voxels[ind]
                 projection[camera_key] = self._projection[ind]
+                projection_settings[camera_key] = self._projection_settings[ind]
                 P_matrix[camera_key] = self._P_matrix[ind]
             else:
                 # if the camera is not in the original camera list,
@@ -498,6 +508,7 @@ class World:
                 visible_vertices[camera_key] = None
                 visible_voxels[camera_key] = None
                 projection[camera_key] = [None] * len(camera.eyes)
+                projection_settings[camera_key] = [None] * len(camera.eyes)
                 P_matrix[camera_key] = None
             camera.set_world(self)
             camera_dict[camera_key] = camera
@@ -511,6 +522,7 @@ class World:
         self._visible_vertices = visible_vertices
         self._visible_voxels = visible_voxels
         self._projection = projection
+        self._projection_settings = projection_settings
         self._P_matrix = P_matrix
         # self._P_matrix = None
         if all([_ is None for _ in visible_voxels.values()]):
@@ -555,6 +567,7 @@ class World:
         self._visible_vertices[camera_key] = None
         self._visible_voxels[camera_key] = None
         self._projection[camera_key] = [None] * len(new_camera.eyes)
+        self._projection_settings[camera_key] = [None] * len(new_camera.eyes)
         self._P_matrix[camera_key] = None
         print(self.camera_info())
 
@@ -578,6 +591,7 @@ class World:
         self._visible_vertices.pop(camera_key)
         self._visible_voxels.pop(camera_key)
         self._projection.pop(camera_key)
+        self._projection_settings.pop(camera_key)
         self._P_matrix.pop(camera_key)
         removed_camera.unset_world(self)
         # TODO: Add an explicit reset_camera_keys() helper if compact integer
@@ -613,6 +627,7 @@ class World:
         self._visible_vertices[camera_key] = None
         self._visible_voxels[camera_key] = None
         self._projection[camera_key] = [None] * len(camera.eyes)
+        self._projection_settings[camera_key] = [None] * len(camera.eyes)
         self._P_matrix[camera_key] = None
         if old_camera is not camera:
             old_camera.unset_world(self)
@@ -639,8 +654,7 @@ class World:
             my_print("Voxel is updated.", show=self.verbose > 0)
             self._voxel = voxel
             self._visible_voxels = {i: None for i in self._cameras.keys()}
-            self._projection = {i: [None] * len(self._cameras[i].eyes) for i in self._cameras.keys()}
-            self._P_matrix = {i: None for i in self._cameras.keys()}
+            self._invalidate_projection_cache()
 
     @walls.setter
     def walls(self, walls: list[mesh.Mesh] | mesh.Mesh):
@@ -1031,12 +1045,331 @@ class World:
         )
         return result
 
-    def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int, res: int, n_jobs: int = -2,
+    def estimate_source_resolution(
+            self, camera_idx: Hashable = 0, eye_idx: int = 0,
+            voxel_indices=None, max_resolution=4,
+            point_source_threshold: float = 1.0 / 8.0,
+            detector_grid: str = "psf",
+            batch_size: int = 100_000) -> PointSourceResolutionEstimate:
+        """Select res=1 using a conservative projected circumsphere test.
+
+        This diagnostic does not alter the voxel grid or a cached projection.
+        It compares a worst-direction projected voxel circumsphere with the
+        selected detector/PSF scale. The same threshold gives an ideal
+        near-cubic axis-wise resolution, clipped by ``max_resolution``.
+
+        Parameters
+        ----------
+        camera_idx : Hashable, optional
+            Camera key. Defaults to zero.
+        eye_idx : int, optional
+            Eye index within the camera. Defaults to zero.
+        voxel_indices : array-like of int, optional
+            Voxels to evaluate. ``None`` evaluates the complete grid.
+        max_resolution : int or (int, int, int), optional
+            Axis-wise ceiling for the ideal resolution.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in reference-scale units
+            for selecting res=1. Defaults to 1/8.
+        detector_grid : {"psf", "subpixel", "pixel"}, optional
+            Scale used to normalize projected source displacement. ``"psf"``
+            uses the larger of detector subpixel pitch and the local projected
+            Eye footprint, so a finite pinhole PSF can dominate the required
+            source quadrature. The other modes use detector pitch alone.
+        batch_size : int, optional
+            Maximum voxel count whose six chord endpoints are materialized at
+            once. This bounds diagnostic memory for large grids.
+
+        Returns
+        -------
+        PointSourceResolutionEstimate
+            Diagnostics in the same order as ``voxel_indices``.
+        """
+        if camera_idx not in self.cameras:
+            raise KeyError(f"unknown camera key: {camera_idx!r}")
+        camera = self.cameras[camera_idx]
+        if not 0 <= eye_idx < len(camera.eyes):
+            raise IndexError("eye_idx is out of range")
+        if detector_grid not in {"psf", "subpixel", "pixel"}:
+            raise ValueError("detector_grid must be 'psf', 'subpixel', or 'pixel'")
+        if isinstance(batch_size, (bool, np.bool_)) or int(batch_size) != batch_size or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        batch_size = int(batch_size)
+
+        if voxel_indices is None:
+            voxel_indices = np.arange(self.voxel.N, dtype=np.int64)
+        else:
+            voxel_indices = self.voxel._type_check_n_voxel(voxel_indices)
+
+        resolution_parts = []
+        ratio_parts = []
+        diameter_parts = []
+        reference_parts = []
+        point_source_parts = []
+        ideal_parts = []
+        capped_parts = []
+        valid_parts = []
+        for start in range(0, voxel_indices.size, batch_size):
+            selected = voxel_indices[start:start + batch_size]
+            centers = self.voxel.get_gravity_center(selected)
+            points_camera = camera.world2camera(centers)
+            eye = camera.eyes[eye_idx]
+            points_in_eye = eye.camera2eye(points_camera)
+            if detector_grid == "pixel":
+                reference_size = float(np.min(camera.screen.pixel_size))
+            elif detector_grid == "subpixel":
+                reference_size = float(np.min(camera.screen.subpixel_size))
+            else:
+                axial_distance = points_in_eye[:, 2]
+                zoom_rate = np.full(axial_distance.shape, np.nan)
+                in_front = axial_distance > 0.0
+                zoom_rate[in_front] = (
+                    1.0 + eye.focal_length / axial_distance[in_front]
+                )
+                spot_size_uv = (
+                    eye.eye_size[::-1][None, :] *
+                    np.abs(zoom_rate[:, None])
+                )
+                # Invalid/behind-Eye samples fail the geometry test below; use
+                # detector pitch here so the diagnostic scale stays finite.
+                spot_size_uv = np.where(
+                    np.isfinite(spot_size_uv), spot_size_uv, 0.0,
+                )
+                reference_size = np.min(np.maximum(
+                    camera.screen.subpixel_size[None, :], spot_size_uv,
+                ), axis=1)
+            estimate = select_circumsphere_resolution(
+                points_in_eye, self.voxel.get_edge_lengths(selected),
+                focal_length=eye.focal_length,
+                reference_size=reference_size,
+                fallback_resolution=max_resolution,
+                point_source_threshold=point_source_threshold,
+            )
+            resolution_parts.append(estimate.resolution)
+            ratio_parts.append(estimate.ratio)
+            diameter_parts.append(estimate.projected_diameter)
+            reference_parts.append(estimate.reference_size)
+            point_source_parts.append(estimate.point_source)
+            ideal_parts.append(estimate.ideal_resolution)
+            capped_parts.append(estimate.capped)
+            valid_parts.append(estimate.valid)
+
+        empty_shape = (0, 3)
+        return PointSourceResolutionEstimate(
+            resolution=(np.concatenate(resolution_parts) if resolution_parts else
+                        np.empty(empty_shape, dtype=np.int64)),
+            ratio=(np.concatenate(ratio_parts) if ratio_parts else
+                   np.empty(0, dtype=float)),
+            projected_diameter=(np.concatenate(diameter_parts) if diameter_parts else
+                                np.empty(0, dtype=float)),
+            reference_size=(np.concatenate(reference_parts) if reference_parts else
+                            np.empty(0, dtype=float)),
+            point_source=(np.concatenate(point_source_parts) if point_source_parts else
+                          np.empty(0, dtype=bool)),
+            ideal_resolution=(np.concatenate(ideal_parts) if ideal_parts else
+                              np.empty(empty_shape, dtype=float)),
+            capped=(np.concatenate(capped_parts) if capped_parts else
+                    np.empty(empty_shape, dtype=bool)),
+            valid=(np.concatenate(valid_parts) if valid_parts else
+                   np.empty(0, dtype=bool)),
+        )
+
+    @staticmethod
+    def _normalize_projection_resolution(value, default=None) -> tuple[int, int, int]:
+        """Normalize one fixed source resolution without mutating the Voxel."""
+        value = default if value is None else value
+        if value is None:
+            raise ValueError("resolution must be specified")
+        if isinstance(value, (bool, np.bool_)):
+            raise ValueError("resolution must contain positive integers")
+        try:
+            resolution = np.asarray(np.broadcast_to(value, 3), dtype=float)
+        except ValueError as exc:
+            raise ValueError("resolution must be an integer or length-3 sequence") from exc
+        if (not np.all(np.isfinite(resolution)) or np.any(resolution < 1) or
+                np.any(resolution != np.floor(resolution))):
+            raise ValueError("resolution must contain positive integers")
+        return tuple(int(item) for item in resolution)
+
+    @classmethod
+    def _resolve_projection_resolutions(
+            cls, res, res_mode: str, partial_res,
+            ) -> tuple[tuple[int, int, int] | None,
+                       tuple[int, int, int], bool]:
+        """Validate public source-resolution settings in one place.
+
+        ``fixed`` uses ``res`` directly, ``auto`` clips each geometric ideal
+        resolution by ``res``, and ``ideal`` is the explicit uncapped escape
+        hatch. The latter requires both ``res=None`` and a fixed
+        ``partial_res`` so uncapped work cannot be requested accidentally and
+        discontinuous partial visibility never inherits an undefined value.
+        """
+        if res_mode not in {"fixed", "auto", "ideal"}:
+            raise ValueError("res_mode must be 'fixed', 'auto', or 'ideal'")
+        if res_mode == "ideal":
+            if res is not None:
+                raise ValueError("res_mode='ideal' requires res=None")
+            if partial_res is None:
+                raise ValueError(
+                    "res_mode='ideal' requires an explicit partial_res",
+                )
+            return None, cls._normalize_projection_resolution(partial_res), True
+        if res is None:
+            raise ValueError(f"res_mode={res_mode!r} requires a finite res")
+        full_resolution = cls._normalize_projection_resolution(res)
+        partial_resolution = cls._normalize_projection_resolution(
+            partial_res, full_resolution,
+        )
+        return full_resolution, partial_resolution, res_mode == "auto"
+
+    @classmethod
+    def _projection_cache_key(
+            cls, res, res_mode: str, partial_res,
+            chunk_strategy: str, optical_bin_width_pixels,
+            point_source_threshold: float) -> tuple:
+        """Return the numerical settings that determine one eye projection.
+
+        Execution-only controls such as parallelism and working-memory limits
+        are deliberately excluded: they may change chunk boundaries, but not
+        the resulting quadrature policy.
+        """
+        full_resolution, partial_resolution, adaptive = (
+            cls._resolve_projection_resolutions(res, res_mode, partial_res)
+        )
+        if chunk_strategy not in {"voxel", "optical"}:
+            raise ValueError("chunk_strategy must be 'voxel' or 'optical'")
+        optical_width = None
+        if chunk_strategy == "optical":
+            try:
+                width = np.asarray(
+                    np.broadcast_to(optical_bin_width_pixels, 2), dtype=float,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "optical_bin_width_pixels must be scalar or length 2",
+                ) from exc
+            optical_width = tuple(float(item) for item in width)
+        return (
+            res_mode, full_resolution, partial_resolution,
+            float(point_source_threshold) if adaptive else None,
+            chunk_strategy, optical_width,
+        )
+
+    def preflight_projection(
+            self, res: int | tuple[int, int, int] | None,
+            res_mode: Literal["fixed", "auto", "ideal"] = "fixed",
+            partial_res: int | tuple[int, int, int] | None = None,
+            point_source_threshold: float = 1.0 / 8.0,
+            force_visibility: bool = False,
+            verbose: int = 0) -> ProjectionWorkEstimate:
+        """Estimate projection source-sample work without constructing P.
+
+        Parameters match :meth:`set_projection_matrix` for source quadrature.
+        ``fixed`` uses the mandatory ``res`` directly. ``auto`` selects a
+        geometric ideal per fully-visible voxel and clips it axis-wise by
+        ``res``. The explicitly requested ``ideal`` mode is uncapped and
+        therefore requires ``res=None`` plus a fixed ``partial_res``.
+
+        Partial-voxel samples are reported before point visibility and inside
+        masks, so totals are conservative upper bounds. Visibility is cached
+        by :meth:`find_visible_voxels` and can be reused by the subsequent
+        projection calculation. This method does not build or modify a
+        projection matrix.
+        """
+        full_resolution, partial_resolution, adaptive = (
+            self._resolve_projection_resolutions(
+                res, res_mode, partial_res,
+            )
+        )
+        partial_cost = int(np.prod(partial_resolution))
+
+        self.find_visible_voxels(force=force_visibility, verbose=verbose)
+        rows = []
+        for camera_key, camera in self.cameras.items():
+            for eye_index in range(len(camera.eyes)):
+                state = self.visible_voxels[camera_key][eye_index]
+                full = np.flatnonzero(state == 2)
+                partial = np.flatnonzero(state == 1)
+                estimate = None
+                if adaptive:
+                    if full.size:
+                        estimate = self.estimate_source_resolution(
+                            camera_key, eye_index, full,
+                            max_resolution=full_resolution,
+                            point_source_threshold=point_source_threshold,
+                            detector_grid="psf",
+                        )
+                        resolutions = estimate.resolution
+                    else:
+                        resolutions = np.empty((0, 3), dtype=np.int64)
+                else:
+                    resolutions = np.broadcast_to(
+                        full_resolution, (full.size, 3),
+                    )
+
+                if full.size:
+                    unique, counts = np.unique(
+                        resolutions, axis=0, return_counts=True,
+                    )
+                    buckets = tuple(
+                        (tuple(int(item) for item in resolution), int(count))
+                        for resolution, count in zip(unique, counts)
+                    )
+                    full_samples = sum(
+                        int(np.prod(resolution)) * count
+                        for resolution, count in buckets
+                    )
+                else:
+                    buckets = ()
+                    full_samples = 0
+
+                if estimate is not None:
+                    valid_ideal = estimate.ideal_resolution[estimate.valid]
+                    if valid_ideal.size:
+                        percentiles = np.percentile(
+                            valid_ideal, (50, 95, 100), axis=0,
+                        )
+                        ideal_p50, ideal_p95, ideal_max = (
+                            tuple(float(item) for item in row)
+                            for row in percentiles
+                        )
+                    else:
+                        ideal_p50 = ideal_p95 = ideal_max = None
+                    point_source_voxels = int(estimate.point_source.sum())
+                    capped_axes = int(estimate.capped.sum())
+                    invalid_voxels = int((~estimate.valid).sum())
+                else:
+                    ideal_p50 = ideal_p95 = ideal_max = None
+                    point_source_voxels = capped_axes = invalid_voxels = 0
+
+                rows.append(EyeProjectionWorkEstimate(
+                    camera_key=camera_key,
+                    eye_index=eye_index,
+                    full_voxels=int(full.size),
+                    partial_voxels=int(partial.size),
+                    full_samples=int(full_samples),
+                    partial_samples_upper_bound=int(partial.size) * partial_cost,
+                    full_resolution_buckets=buckets,
+                    partial_resolution=partial_resolution,
+                    ideal_p50=ideal_p50,
+                    ideal_p95=ideal_p95,
+                    ideal_max=ideal_max,
+                    point_source_voxels=point_source_voxels,
+                    capped_axes=capped_axes,
+                    invalid_voxels=invalid_voxels,
+                ))
+        return ProjectionWorkEstimate(eyes=tuple(rows))
+
+    def _calc_voxel_image_for_eye(self, camera_idx: Hashable, eye_idx: int,
+                                  res: int | tuple[int, int, int] | None,
+                                  res_mode: Literal["fixed", "auto", "ideal"] = "fixed",
+                                  n_jobs: int = -2,
                                   verbose: int = None, max_nnz: int = 100_000_000,
                                   partial_res: int | tuple[int, int, int] = None,
                                   max_working_memory: int = 1_000_000_000,
                                   chunk_strategy: str = "voxel",
-                                  optical_bin_width_pixels=1.0):
+                                  optical_bin_width_pixels=1.0,
+                                  point_source_threshold: float = 1.0 / 8.0):
         """Construct voxel-to-image projection for a specific camera eye.
 
         Parameters
@@ -1045,8 +1378,11 @@ class World:
             Key of the camera whose projection should be calculated.
         eye_idx : int
             Eye index within the selected camera.
-        res : int
-            Sub-voxel resolution used when generating interpolation matrices.
+        res : int, (int, int, int), or None
+            Required fixed resolution or adaptive ceiling. Must be ``None``
+            only when ``res_mode='ideal'``.
+        res_mode : {"fixed", "auto", "ideal"}, optional
+            Source-resolution policy for fully-visible voxels.
         n_jobs : int, optional
             Parallelism level for interpolation and visibility tasks. Negative
             values are interpreted relative to available CPU cores. Defaults to
@@ -1071,6 +1407,9 @@ class World:
         optical_bin_width_pixels : float or (float, float), optional
             Optical bin width in detector-pixel pitches for the experimental
             optical strategy.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in local finite-Eye PSF
+            units for selecting res=1. Defaults to 1/8.
 
         Notes
         -----
@@ -1084,16 +1423,20 @@ class World:
             raise ValueError("max_working_memory must be positive")
         if chunk_strategy not in {"voxel", "optical"}:
             raise ValueError("chunk_strategy must be 'voxel' or 'optical'")
+        full_subvoxel_res, partial_subvoxel_res, adaptive = (
+            self._resolve_projection_resolutions(
+                res, res_mode, partial_res,
+            )
+        )
+        if adaptive and chunk_strategy != "voxel":
+            raise ValueError(
+                "res_mode='auto' and 'ideal' require chunk_strategy='voxel'",
+            )
         verbose = self.verbose if verbose is None else verbose
         timing_start = time.perf_counter()
         _camera = self.cameras[camera_idx]
         screen = _camera.screen
         N_vox = self.voxel.N
-        self.voxel.res = res
-        full_subvoxel_res = self.voxel.res
-        self.voxel.res = partial_res
-        partial_subvoxel_res = self.voxel.res
-
         # check visible voxels (0->invisible, 1->partially visible, 2->fully visible)
         self.find_visible_voxels(verbose=verbose)
         visibility_elapsed = time.perf_counter() - timing_start
@@ -1205,7 +1548,13 @@ class World:
             if nnz_per_voxel == 0:
                 nnz_per_voxel = screen.N_subpixel * 0.01
             nnz_batch = max(1, int(np.ceil(max_nnz / nnz_per_voxel) / n_jobs))
-            batch = min(memory_batch, nnz_batch, total_voxels)
+            # A scene that fits in one memory-sized chunk would otherwise use
+            # only one worker even when n_jobs > 1. Keep up to two waves of
+            # chunks available for load balancing without increasing the
+            # existing in-flight memory bound.
+            parallel_batch = (total_voxels if n_jobs == 1 else
+                              max(1, int(np.ceil(total_voxels / (2 * n_jobs)))))
+            batch = min(memory_batch, nnz_batch, parallel_batch, total_voxels)
             my_print(
                 f"Estimated transient memory={bytes_per_voxel / 2 ** 20:.3f} MiB/voxel, "
                 f"chunk budget={bytes_per_chunk / 2 ** 20:.1f} MiB",
@@ -1286,70 +1635,119 @@ class World:
 
             return res.tocoo()
 
-        if full_voxels.size == 0:
-            my_print("Skipping full voxels processing.", show=verbose > 0)
-        else:
-            full_start = time.perf_counter()
-            # random sample voxels to estimate n_step
-            sample_n = np.random.choice(full_voxels, size=min(full_voxels.size, 20), replace=False)
-            sample_gc = self.voxel.get_sub_voxel_centers(n=sample_n, res=full_subvoxel_res)
-            sample_I = _camera.calc_image_vec(eye_idx, points=sample_gc, verbose=0,
-                                              check_visibility=False)  # (N_subpixel, sample_size * K)
-            sample_S = _sub_voxel_interpolator_matrix(sample_n, full_subvoxel_res,
-                                                      points=sample_gc)
+        def _process_full_group(group_voxels, group_resolution):
+            """Project one bucket whose voxels share an axis-wise resolution."""
+            group_result = sparse.coo_matrix((screen.N_pixel, N_vox))
+            sample_n = np.random.choice(
+                group_voxels, size=min(group_voxels.size, 20), replace=False,
+            )
+            sample_gc = self.voxel.get_sub_voxel_centers(
+                n=sample_n, res=group_resolution,
+            )
+            sample_I = _camera.calc_image_vec(
+                eye_idx, points=sample_gc, verbose=0, check_visibility=False,
+            )
+            sample_S = _sub_voxel_interpolator_matrix(
+                sample_n, group_resolution, points=sample_gc,
+            )
             sample_result = screen.transform_matrix @ (sample_I @ sample_S)
             batch_size = _estimate_batch_size(
                 sample_n.size, sample_gc, sample_I, sample_S, sample_result,
-                full_voxels.size,
+                group_voxels.size,
             )
             del sample_I, sample_S, sample_result
-            _chunks = [slice(_i, min(_i + batch_size, full_voxels.size)) for _i in
-                       range(0, full_voxels.size, batch_size)]
-            my_print(f"Processing full voxels in {len(_chunks)} chunks "
-                     f"(n_step={batch_size}, full_size={full_voxels.size})",
-                     show=verbose > 0)
+            chunks = [
+                slice(start, min(start + batch_size, group_voxels.size))
+                for start in range(0, group_voxels.size, batch_size)
+            ]
+            description = f"Processing full voxels res={tuple(group_resolution)}"
+            my_print(
+                f"{description} in {len(chunks)} chunks "
+                f"(n_step={batch_size}, full_size={group_voxels.size})",
+                show=verbose > 0,
+            )
 
             if n_jobs == 1:
-                # initialize result matrix for full voxels
                 data_buf, row_buf, col_buf = [], [], []
                 buffer_nbytes = 0
-                for i, _slice in enumerate(my_tqdm(_chunks, desc="Processing full voxels", disable=verbose <= 0)):
-                    sv_gc = self.voxel.get_sub_voxel_centers(n=full_voxels[_slice], res=full_subvoxel_res)
-                    S = _sub_voxel_interpolator_matrix(full_voxels[_slice], full_subvoxel_res,
-                                                       points=sv_gc)
+                for chunk in my_tqdm(chunks, desc=description,
+                                     disable=verbose <= 0):
+                    voxel_indices = group_voxels[chunk]
+                    sv_gc = self.voxel.get_sub_voxel_centers(
+                        n=voxel_indices, res=group_resolution,
+                    )
+                    S = _sub_voxel_interpolator_matrix(
+                        voxel_indices, group_resolution, points=sv_gc,
+                    )
                     data, row, col = _full_vox_proc(sv_gc, S)
                     data_buf.append(data)
                     row_buf.append(row)
                     col_buf.append(col)
                     buffer_nbytes += _triplet_nbytes(data, row, col)
-
                     if buffer_nbytes >= result_buffer_limit:
-                        sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                        (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                       shape=(screen.N_pixel, N_vox))
-                        full_res = full_res + sum_of_buf
-                        # clear buffer
+                        group_result = group_result + sparse.coo_matrix(
+                            (np.concatenate(data_buf),
+                             (np.concatenate(row_buf), np.concatenate(col_buf))),
+                            shape=(screen.N_pixel, N_vox),
+                        )
                         data_buf, row_buf, col_buf = [], [], []
                         buffer_nbytes = 0
-                # summarize remaining buffer
                 if data_buf:
-                    sum_of_buf = sparse.coo_matrix((np.concatenate(data_buf),
-                                                    (np.concatenate(row_buf), np.concatenate(col_buf))),
-                                                   shape=(screen.N_pixel, N_vox))
-                    full_res = full_res + sum_of_buf
-                    del data_buf, row_buf, col_buf
+                    group_result = group_result + sparse.coo_matrix(
+                        (np.concatenate(data_buf),
+                         (np.concatenate(row_buf), np.concatenate(col_buf))),
+                        shape=(screen.N_pixel, N_vox),
+                    )
             else:
-                def _process_full_chunk(_slice):
-                    voxel_indices = full_voxels[_slice]
-                    sv_gc = self.voxel.get_sub_voxel_centers(n=voxel_indices, res=full_subvoxel_res)
-                    S = _sub_voxel_interpolator_matrix(voxel_indices, full_subvoxel_res,
-                                                       points=sv_gc)
+                def _process_full_chunk(chunk):
+                    voxel_indices = group_voxels[chunk]
+                    sv_gc = self.voxel.get_sub_voxel_centers(
+                        n=voxel_indices, res=group_resolution,
+                    )
+                    S = _sub_voxel_interpolator_matrix(
+                        voxel_indices, group_resolution, points=sv_gc,
+                    )
                     return _full_vox_proc(sv_gc, S)
 
-                full_res = _process_parallel_chunks(_chunks, _process_full_chunk,
-                                                    desc="Processing full voxels")
+                group_result = _process_parallel_chunks(
+                    chunks, _process_full_chunk, desc=description,
+                )
+            return group_result
 
-            my_print(f"Full voxels processed.", show=verbose > 0)
+        if full_voxels.size == 0:
+            my_print("Skipping full voxels processing.", show=verbose > 0)
+        else:
+            full_start = time.perf_counter()
+            if adaptive:
+                estimate = self.estimate_source_resolution(
+                    camera_idx, eye_idx, full_voxels,
+                    max_resolution=full_subvoxel_res,
+                    point_source_threshold=point_source_threshold,
+                    detector_grid="psf",
+                )
+                group_resolutions, inverse = np.unique(
+                    estimate.resolution, axis=0, return_inverse=True,
+                )
+                full_groups = [
+                    (full_voxels[inverse == group_index], tuple(resolution))
+                    for group_index, resolution in enumerate(group_resolutions)
+                ]
+                my_print(
+                    f"Adaptive full-voxel resolution selected "
+                    f"{len(full_groups)} buckets; point-source voxels="
+                    f"{estimate.point_source.sum()}/{estimate.point_source.size}; "
+                    f"capped axes={estimate.capped.sum()}",
+                    show=verbose > 0,
+                )
+            else:
+                full_groups = [(full_voxels, full_subvoxel_res)]
+
+            for group_voxels, group_resolution in full_groups:
+                full_res = full_res + _process_full_group(
+                    group_voxels, group_resolution,
+                )
+
+            my_print("Full voxels processed.", show=verbose > 0)
         full_elapsed = 0.0 if full_voxels.size == 0 else time.perf_counter() - full_start
 
         if partial_voxels.size == 0:
@@ -1488,19 +1886,26 @@ class World:
         else:
             raise ValueError("coord_type should be 'XY' or 'UV'")
 
-    def set_projection_matrix(self, res: int = None, verbose: int = 1, parallel: int = -1,
+    def set_projection_matrix(
+            self, res: int | tuple[int, int, int] | None,
+            res_mode: Literal["fixed", "auto", "ideal"] = "fixed",
+            verbose: int = 1, parallel: int = -1,
                               partial_res: int | tuple[int, int, int] = None,
                               force: bool = False,
                               max_working_memory: int = 1_000_000_000,
                               chunk_strategy: str = "voxel",
-                              optical_bin_width_pixels=1.0):
+                              optical_bin_width_pixels=1.0,
+                              point_source_threshold: float = 1.0 / 8.0):
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
         ----------
-        res : int, optional
-            Sub-voxel resolution used when recomputing projection matrices.
-            ``None`` preserves the voxel default.
+        res : int, (int, int, int), or None
+            Mandatory source resolution. ``fixed`` uses it directly and
+            ``auto`` treats it as an axis-wise ceiling. Pass ``None`` only
+            with the explicitly uncapped ``res_mode='ideal'``.
+        res_mode : {"fixed", "auto", "ideal"}, optional
+            Fully-visible source-resolution policy. Defaults to ``"fixed"``.
         verbose : int, optional
             Verbosity level controlling progress logging. Defaults to ``1``.
         parallel : int, optional
@@ -1512,7 +1917,8 @@ class World:
             ``None`` reuses ``res``.
         force : bool, optional
             When ``True`` (default ``False``) forces recalculation even if
-            cached matrices already exist with matching shapes.
+            cached matrices already exist with matching numerical settings
+            and shapes.
         max_working_memory : int, optional
             Approximate byte budget for transient in-flight chunk data.
             Defaults to one billion bytes.
@@ -1523,6 +1929,10 @@ class World:
         optical_bin_width_pixels : float or (float, float), optional
             Optical-bin width in detector-pixel pitches when
             ``chunk_strategy="optical"``. Defaults to one pixel.
+        point_source_threshold : float, optional
+            Maximum projected circumsphere diameter in local finite-Eye PSF
+            units for selecting res=1. Defaults to 1/8; it is not a numerical
+            error tolerance.
 
         Notes
         -----
@@ -1530,6 +1940,10 @@ class World:
         index, while per-eye pixel-space matrices remain in
         :attr:`_projection`. Subpixels are transient integration samples.
         """
+        cache_key = self._projection_cache_key(
+            res, res_mode, partial_res, chunk_strategy,
+            optical_bin_width_pixels, point_source_threshold,
+        )
         my_print("Calculating projection matrix", show=verbose > 0)
         indices = list(self.cameras.keys())
         for _c in indices:
@@ -1537,18 +1951,24 @@ class World:
             for _e in range(len(self.cameras[_c].eyes)):
                 my_print(f"Processing camera {_c!r}, eye {_e + 1}/{len(self.cameras[_c].eyes)}",
                          show=verbose > 0)
-                # The experimental optical ordering is intentionally rebuilt;
-                # cache keys do not encode projection strategy yet.
-                if force or chunk_strategy == "optical" or (self._projection[_c][_e] is None) or \
+                if force or \
+                        (self._projection_settings[_c][_e] != cache_key) or \
+                        (self._projection[_c][_e] is None) or \
                         (self._projection[_c][_e].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                     my_print(f"Calculating projection matrix for camera {_c!r}, "
                              f"eye {_e + 1}/{len(self.cameras[_c].eyes)}", show=verbose > 0)
-                    self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e, res=res, n_jobs=parallel,
+                    self._calc_voxel_image_for_eye(camera_idx=_c, eye_idx=_e,
+                                                   res=res, res_mode=res_mode,
+                                                   n_jobs=parallel,
                                                    verbose=verbose, max_nnz=100_000_000,
                                                    partial_res=partial_res,
                                                    max_working_memory=max_working_memory,
                                                    chunk_strategy=chunk_strategy,
-                                                   optical_bin_width_pixels=optical_bin_width_pixels)
+                                                   optical_bin_width_pixels=optical_bin_width_pixels,
+                                                   point_source_threshold=point_source_threshold)
+                    # Record settings only after successful construction so a
+                    # failed calculation can never make a stale P look valid.
+                    self._projection_settings[_c][_e] = cache_key
                     flag = True
                 else:
                     my_print(f"Projection matrix for camera {_c!r}, "

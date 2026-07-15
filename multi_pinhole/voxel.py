@@ -443,6 +443,28 @@ class Voxel:
         cz = self.cz_axis[indices[:, 2]]
         return np.stack([cx, cy, cz], axis=1)
 
+    def get_edge_lengths(self, n=None):
+        """Return selected voxel edge lengths without materializing full grids.
+
+        Parameters
+        ----------
+        n : int, array-like of int, slice, optional
+            Voxel indices. ``None`` selects every voxel.
+
+        Returns
+        -------
+        np.ndarray, shape (n_selected, 3)
+            Cell lengths along the world x, y, and z axes.
+        """
+        indices = np.atleast_2d(
+            self.get_voxel_position(self._type_check_n_voxel(n)),
+        ).astype(int)
+        return np.column_stack((
+            self.dx_axis[indices[:, 0]],
+            self.dy_axis[indices[:, 1]],
+            self.dz_axis[indices[:, 2]],
+        ))
+
     def get_sub_voxel_centers(self, n=None, res=None):
         """Return sub-voxel center points without constructing Voxel objects.
 

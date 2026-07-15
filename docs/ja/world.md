@@ -52,6 +52,20 @@
 
 `set_projection_matrix(res, ...)` は、`Voxel` グリッドと可視ボクセルの情報を、すべてのカメラ・すべての eye についてボクセル強度を検出器信号へ写像する疎行列に変換するエントリポイントです。【F:multi_pinhole/world.py†L1182-L1239】各 `(camera, eye)` の組について `_calc_voxel_image_for_eye` を呼び出し、その後1つのカメラ上のすべての eye をそのカメラのピクセル空間 `P_matrix` へ集約します。
 
+重い計算を開始する前に、同じsource resolution設定で `preflight_projection` を実行できます。
+
+```python
+work = world.preflight_projection(
+    res=5,
+    res_mode="auto",
+    partial_res=3,
+)
+print(work.summary())
+print(work.total_samples_upper_bound)
+```
+
+reportはeyeごとに完全可視・部分可視voxel数を分け、完全可視voxelの採用res bucket、adaptive時のideal res分位点と上限clipされた軸数を整理します。総sample数は、完全可視側については正確な値、部分可視側についてはpoint visibilityとinside maskを適用する前の保守的な上限です。実行時間や疎行列`nnz`の予測値ではありません。preflightはvoxel visibilityを計算・cacheしますが、`projection`や`P_matrix`は構築・変更しません。後続の実計算はvisibility cacheを再利用できます。
+
 ### `_calc_voxel_image_for_eye`：完全可視ボクセルと部分可視ボクセル
 
 このモジュール内で最もコストが高く、かつ最も中核的な計算です。【F:multi_pinhole/world.py†L806-L1145】前段で計算したボクセルの可視性に基づき、ボクセルを2つのグループに分けて異なる方法で処理します。完全可視ボクセルはこれ以上の光線追跡を必要としないためです。
@@ -78,6 +92,8 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 3. **チャンクを直列またはスレッドプールで処理**：`n_jobs > 1` の場合は `ThreadPoolExecutor` を使い、同時に保持するタスクを最大 `2 * n_jobs` に制限します。各ワーカー内でサンプル点と補間行列を生成し、完了したfutureを直ちに回収します。COO形式の結果bufferは固定チャンク数ではなく、`max_working_memory` から決めたbyte上限へ達した時点で畳み込みます。これにより、すべてのチャンクの入力と出力を同時に保持せず、ピークメモリを抑えます。
 
 この一連の処理（手順1〜3。完全可視・部分可視の各グループに対して別々に実行されます）は純粋にメモリ／スループットのトレードオフのために存在しています——数学的な結果は `n_jobs` や `max_nnz` に関わらず同じ疎行列になります。変わるのは計算の分割方法だけで、答えではありません。
+
+`res`は必須引数です。`res_mode="fixed"`では指定値を固定resとして使い、`res_mode="auto"`では完全可視voxelごとのideal resに対する軸別上限として使います。voxelの外接球をoff-axisの `1/cos(theta)` を含む局所worst-case倍率でscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅で無次元化します。`point_source_threshold`のdefaultは `1/8`です。これは幾何学heuristicであり画像誤差の上限ではありません。上限なし計算は `res=None, res_mode="ideal"` と固定`partial_res`を明示した場合だけ許可します。部分可視voxelはvisibilityが不連続なので固定`partial_res`を使い、`fixed`または`auto`で省略した場合は`res`を再利用します。ただし任意位置のwall/inside境界に対して、小さな固定`partial_res`は画像誤差を保証しません。対象geometryで別途収束確認するか、保守的な値を明示します。
 
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 

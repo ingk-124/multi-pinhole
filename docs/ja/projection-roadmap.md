@@ -1,348 +1,141 @@
-# Projection matrix 改善候補
+# Projection matrix roadmap
 
-この文書は、projection matrix の高速化と検証作業で残っている候補を記録する。
-現在の実装済み範囲と、今後の仕様検討を混同しないための追跡用メモである。
+この文書には、projection matrixの高精度化・高速化について今後実施する項目だけを記録する。
+完了した変更の詳細はGit履歴と `docs/ja/world.md` を参照する。
 
-## 現在地
+## 現在の前提
 
-- detector cellとprojected Eye spotの面積積分、有限Eye内の局所etendue、メモリ上限に基づく
-  work chunk処理は実装済みである。
-- projection cacheにはschema versionを持たせ、互換性のない旧cacheはvisibilityを残して
-  projectionだけを無効化する。subpixelは面積積分中の一時評価点とし、永続化するeye別projection
-  と全eye合算projectionはいずれもpixel空間 `(N_pixel, N_voxel)` とする。
-- optical bin順に通常のnative sparse `P`を作る非圧縮経路までをproduction候補として残す。
-- `I ~= Q R`, `A = R S` によるPSF group化の実装と評価コードは
-  [Draft PR #9](https://github.com/ingk-124/multi-pinhole/pull/9) に退避した。0.6.0には含めず、
-  native sparse `P`を標準表現とする。
-- source `res`自動判定、active voxel compact mapping、Eye内部位置ごとの局所visibilityは未実装である。
-- `d=75 mm` MST benchmarkは短時間性能の確認には使用済みだが、全profile・detector res・境界を
-  含む数値検証は未完了である。
+- fully visible voxelの外接球からaxis-wise ideal source resを選択できる。
+- `res_mode="auto"`では必須の`res`がaxis-wise ceilingとなる。
+- uncapped idealは `res=None, res_mode="ideal"` と固定`partial_res`を明示した場合だけ許可する。
+- partial voxelはvisibilityが不連続なのでadaptive化せず、固定`partial_res`を使用する。
+- partial cellの寄与は三線形補間により複数のvoxel列へ分散するため、MSTのP列をpartial voxel indexで
+  抜き出してもpartial積分誤差を単離できない。
+- `preflight_projection`でvisibility、res bucket、full sample数、partial sample上限をP構築前に確認できる。
+- d=10 wallなしToyでは、uncapped idealに対するcap=5の画像誤差は、滑らかなprofileで約0.2%以下、
+  近距離squareで約0.4%、最短距離の単一voxel impulseで約0.9%だった。
+- MST d=25制限ROIでは、partial resを5に固定したauto cap=5のideal fullに対する画像L2誤差は
+  0.044--0.112%、光量差は0.0022--0.0055%だった。source sample上限はideal比44%、fixed 5比24%減り、
+  構築時間は189.5秒から155.5秒へ短縮した。fully-visible側のcap=5は受け入れ済みとする。
+- QAによるPSF圧縮とoptical-bin間圧縮はFuture Workへ退避しており、現在の開発対象に含めない。
 
-## 0.6.0で完了した項目
+## 積み残しサマリー
 
-### Projection cache の互換性
+| 優先度 | 項目 | 完了条件 | 依存関係 |
+|---|---|---|---|
+| P0 | partial resの積分方式 | 不連続境界の精度要件と積分方式を決定 | full側cap=5は受け入れ済み |
+| P1 | wall visibility / preflight高速化 | d=10でvisibility時間とpeak memoryを削減し、cache再利用を確認 | P0と並行可能 |
+| P2 | MST profileとinside境界仕様 | 境界を含むprofileとinverse problem側の未知変数仕様を回帰テストで固定 | P0のreferenceを使用 |
+| P3 | Active voxel compact mapping | 列削減、双方向mapping、projection/transpose/pickleを受け入れ | P1、P2の仕様確定後 |
+| P4 | Fine-grid最終受け入れ | d=10--25で時間、peak memory、画像誤差、inverse problemを評価 | P0--P3 |
+| P5 | Eye内部局所visibility | slit実形状で必要性を定量判定 | 条件付き |
 
-- projection計算の数値的意味を表すcache schema versionを `World` に保存する。
-- versionが存在しない、または一致しない旧worldでは `_projection` と `_P_matrix` だけを
-  無効化し、visibilityなど再利用可能な情報は保持する。
-- 古いpickleに存在しない `Screen` の派生値を読み込み時に再構築する。
-- 現行形式、versionなし、version不一致について回帰テストを持つ。
+## P0: cap=5とpartial resの受け入れ
 
-## 次に確認する項目
+### 1. 再現可能なToy benchmark
 
-### MST 実形状での数値検証
+今回のwallなしd=10検証を `examples/` のスクリプトとして保存し、次を一括出力する。
 
-まず `d = 75 mm` 程度の短時間で計算できる格子を使い、次の emission
-profile を投影する。
+- uncapped idealとcap=5のpreflight summary、res bucket、source sample数
+- P構築時間、peak memory、Pの`nnz`と実byte数
+- constant、linear、near square、near Gaussian、nearest impulseの画像誤差
+- 総光量差、相対L1/L2、reference peakで規格化した最大pixel誤差
 
-1. inside で一定、outside でゼロ
-2. 小半径方向に滑らかな Gaussian
-3. plasma 境界付近まで値を持つ profile
-4. 非対称な profile
+detectorの面積積分とsource quadratureを分離するため、まず`subpixel_resolution=1`を基準とし、
+その後`1, 2, 5`でcap=5に関する結論が変わらないことを確認する。
 
-各 profile について、総光量、pixel ごとの差、相対 L2 誤差、画像断面を比較する。
-detector の `subpixel_resolution = 1, 2, 5` について、総和だけでなく画像分布も
-収束していることを確認する。rectangle Eye は、旧実装の spot 幅の不具合修正に
-よって結果が変わるため、個別に確認する。
+### 2. MST短時間モデル
 
-検証後、実際の MST 解析スクリプトで detector 側
-`subpixel_resolution = 1` を標準値にできるか決定する。元の約 110 万 voxel、
-`d = 25 mm` 相当の計算は、正しさを確認した後に最終 benchmark として一度だけ
-実行する候補とする。
+制限したMST領域またはd=75モデルで、partial resを同じ値に固定し、次を同じvisibility cacheから比較する。
 
-### inside 境界と未知変数の扱い
+1. uncapped ideal reference
+2. adaptive cap=5
+3. 従来のfixed res=5
 
-- inside voxel の補間に outside 側の隣接 voxel 値が混ざる場合を調べる。
-- outside の emission を常にゼロとするのか、projection matrix の列から除外するのか、
-  inverse problem 側で拘束するのかを仕様化する。
-- 定数 profile の総光量保存と、境界を横切る profile の挙動をテストする。
+profileはinside一定、小半径Gaussian、境界付近まで値を持つprofile、非対称profileを使う。
+Toyと同じ画像誤差指標に加えて、projection構築時間、peak memory、camera別画像断面を保存する。
+この比較はfully-visible側のcap=5だけを受け入れるもので、partial resの精度判定には使わない。
+誤差の合格閾値は結果を見て明示的に決め、幾何heuristic自体を画像誤差保証とは扱わない。
 
-## Source subvoxel 解像度
+### 3. partial res収束
 
-### `res` の自動判定
+wall/apertureなしの1-cell Toyを使い、解析的な平面または球面inside条件でcellを切る。球面は
+`coordinate_type="spherical"`とし、MSTのd=75、25に対応する曲率比`R/d≈5, 20`を含める。
+距離、境界法線、cell内offsetを振り、`partial_res=2, 3, 5`を高res referenceと比較する。
+1 cellだけにすることでfull側、wall mesh、近傍cellの寄与を除き、総光量差とpixel誤差をpartial積分だけで評価する。
 
-現在の評価スクリプトは診断用であり、ライブラリに `res="auto"` はない。
-自動判定では、代表的な visible voxel に対して `res=1` と `res=2`、必要なら
-`res=2` と `res=4` の投影結果を比較し、相対誤差が閾値以下になった最小値を採用する。
+初期結果では曲率差よりも、不連続境界と規則的subvoxel中心の相対位置がworst-case誤差を支配した。
+したがって小さな固定resに画像誤差保証を与えず、必要なら境界体積積分または別の不連続積分法を検討する。
+d=10の制限MST preflightで`partial_res=5`のsample上限が総sample上限の約44%だった事実は、
+精度根拠ではなく計算負荷の指標としてのみ使う。
 
-- 可能なら軸別に `(r_x, r_y, r_z)` を決める。
-- fully visible voxel と partial voxel を別々に評価する。
-- 判定に使用した voxel、誤差、採用 res、上限到達の有無を診断情報として返す。
-- wall や inside 境界にかかる partial voxel は不連続性を含むため、fully visible
-  voxel 用の幾何学的な閾値だけで安全と判断しない。
+### 4. APIとlegacy cleanup
 
-### voxel ごとの適応 res
+fully-visible側のMST受け入れ後に以下を行う。
 
-遠方かつ fully visible で、voxel の投影像が pinhole PSF より十分小さい場合は
-`res=1` とし、partial voxel や投影変化の大きい voxel だけ高い res を使う。
-実装する場合は res ごとに voxel を bucket 化し、同じ kernel をまとめて実行する。
+- `res`必須、`res_mode={"fixed", "auto", "ideal"}`のAPIをmainへ統合する。
+- productionでは`res_mode="auto", res=5`を第一候補とし、uncapped idealはreference用途に限定する。
+- production設定では`partial_res`を明示し、小さな推奨defaultや精度保証を導入しない。
+  API上は`fixed`/`auto`で省略した場合に`res`を再利用する。
+- 現在productionから未使用の端点投影方式 `projected_axis_spans`、
+  `select_source_resolution`、対応する旧example/testを削除する。
+- scalar fixed `res` / `partial_res`を非等方voxelの辺長比でaxis-wise化する必要性を、
+  非等方Toyで確認する。adaptive idealのaxis-wise化とは別問題として扱う。
 
-## Fine voxel grid を現実的に扱う方法
+## P1: wall visibilityとpreflightの高速化
 
-### 格子幅の比較
+制限MST d=10（350×150×70、367.5万voxel）ではpreflightが約448秒かかった。
+preflightはpartial subvoxelを評価しておらず、主因はinside頂点とwall meshのvisibility判定である。
 
-emission の空間分解能と有限体積積分の精度を分離するため、少なくとも次を比較する。
+1. preflightをvisibility、res選択、集計に分けて時間とpeak memoryを記録する。
+2. `stl_utils.check_visible`のcandidate triangle生成、巨大boolean配列、`nonzero`をprofileする。
+3. bounded chunk、camera/eye並列、既存cache再利用のうち効果があるものだけを実装する。
+4. preflight後の`set_projection_matrix`がvisibilityを再計算しないことを大規模caseで確認する。
+5. World保存・読込後にも安全にvisibilityを再利用できる条件を、geometry/cache schemaとともに明記する。
 
-- `d=25 mm`, source res 1 または 2
-- `d=12.5 mm`, source res 1
-- `d=10 mm`, source res 1
+preflight自体を軽い解析とみなさない。wall付きfine gridではvisibility構築も本計算の一部として扱う。
 
-`d=10 mm` の bounding grid は約 `405 x 405 x 105`、約 1720 万 voxel になるため、
-projection 計算時間だけでなく、可視性配列、行列の列数、メモリ使用量が律速になる。
+## P2: MST profileとinside境界仕様
 
-### Active voxel の compact mapping
+source resを上げて改善できるのは、表現済みの三線形補間profile `S f`を積分する誤差だけである。
+voxel gridが実際のemissionを表現できない誤差とは分離して評価する。
 
-torus 外、inside 外、または全 camera から常に不可視な voxel を projection matrix の
-列から除外し、compact index と元の voxel index の対応を保存する。inverse problem と
-可視化では、この mapping を通して fine grid に戻せるようにする。`d=10 mm` 対応では
-優先度が高い。
+- inside voxelの補間にoutside側の隣接voxel値が混ざる条件を可視化する。
+- outside emissionをゼロ固定するか、projection列から除外するか、inverse problemで拘束するか決める。
+- 定数profileの総光量保存、内部一次profile、inside境界を横切るprofileを回帰テストにする。
+- aperture/wall境界でpartial res収束が成立することを確認する。
 
-### Adaptive voxel merging / reduced basis
+## P3: Active voxel compact mapping
 
-fine grid 上の emission `f` を reduced parameter `c` と mapping `B` により
-
-```text
-f = B c
-g = P_fine B c
-```
-
-と表す。fully visible かつ光学的に区別しにくい隣接 voxel のみをまとめ、定数 emission
-と体積を保存する。wall、inside 境界、partial visibility、急峻な emission を持ち得る
-領域は統合しない。mapping、各 group の体積、推定した統合誤差を保存し、結果が何を
-表すか追跡可能にする。
-
-最初から octree を導入せず、active voxel compact 化と `res` 自動判定の効果を確認した
-後に必要性を判断する。
-
-### 投影応答による column group 化 (`P ~= Q A`)
-
-> **Future Work:** 以下の設計・Toy実装・benchmarkはDraft PR #9に保存している。
-> tolerance 0.01では多くの条件で保存量削減が小さく、0.1では近距離chunkのfactor化が
-> native sparse blockより大きくなるケースが確認された。このため0.6.0の実行経路・公開API・
-> cacheにはfactorized operatorを入れない。再開時はDraft PRを最新mainへrebaseして評価する。
-
-#### 目的と表現
-
-現在のprojection計算を
-
-```text
-u = S f
-g = I u
-P = I S
-```
-
-と分ける。`f` はvoxel中心のemission、`S` は三線形補間とsubvoxel体積weight、`u` は
-weighted subvoxel emission、`I[:, i]` はsubvoxel点 `i` の完全なPSFである。最終 `P` の
-voxel columnではなく、似たsubvoxel PSFを
-
-```text
-I ~= Q R
-P = I S ~= Q R S = Q A
-A = R S
-g ~= Q A f
-```
-
-とgroup化する。subvoxel PSFの総感度を `s_i = sum(I[:, i])`、正規化形状を
-`h_i = I[:, i] / s_i` とする。group `g` の代表 `q_g` は `s_i` 加重平均で総和1に正規化し、
-`R[g, i] = s_i`、それ以外を0とする。したがって `R` はsubvoxel点ごとに1非ゼロ要素を
-持つ。三線形補間によって1 voxelが複数groupへ寄与することは、一般の疎行列 `A = R S`
-として保持する。
-
-これはSVDや直交QR分解ではなく、ほぼ比例するPSF columnの代表化である。各 `q_g` の総和を
-1にするため、signedな `f` を含む任意の入力についてdetectorの符号付き総和は保存される。
-近似されるのはpixel間の分布である。profileを別basis `B` で `f = B c` と表す場合も
-
-```text
-g ~= Q A B c
-```
-
-とそのまま適用できる。
-
-#### 光学座標による chunk 分割
-
-圧縮はchunkごとに独立に行う。ただし、ここでいう「光学chunk」は現在の
-`_calc_voxel_image_for_eye` が使うvoxel indexの連続slice（メモリ制御用work chunk）とは
-異なる。world配列上で連続する点を順番にサンプルしたり、flattenしたindexを一定個数ずつ
-切ったりせず、camera/Eyeから見た投影方向で候補を分ける。
-
-Eye中心を原点とする座標を `(X_e, Y_e, Z_e)` とする。`Z_e` はEyeからsourceまでの軸距離で、
-camera座標では概ね `Z_camera - f` に相当する。まず
-
-```text
-xi  = X_e / Z_e
-eta = Y_e / Z_e
-```
-
-の2次元空間をdetector pixel pitch基準の角度binに分割する。これはscreen上の
-投影中心 `q = q0 - f (xi, eta)` で分けることと同値である。同じ `(xi, eta)` bin内では、
-必要に応じて `f / Z_e`、`log(Z_e)`、またはzoom rateで奥行き方向を並べる・bin分けする。
-最後に各binをメモリ上限に収まる最大展開sample数で分割し、これを圧縮候補scopeとする。
-production実装では全subvoxel点を先に展開せず、visible voxelの重心から整数bin IDを計算して
-bucketへscatterする。1 voxelは必ず1個のscopeだけに所属するが、scope内で展開した各subvoxel
-PSFは個別にgroup判定する。したがってbinningはvoxel単位でも有限体積近似はsubvoxel単位で残る。
-
-bin幅はvisible pointsのAABBをpixel数で等分して決めず、screen原点に固定した格子を使う。
-`optical_bin_width_pixels`をscreen pixel pitchに掛け、`1`を1 pixel、`0.5`を半pixel、`2`を
-2 pixels相当とする。subpixel resolutionとは独立に指定し、初期defaultは`1`とする。
-wall/apertureに対して完全に不可視なvoxelはbinning前に除外する。partial voxelは重心位置でbinへ
-入れ、work chunk内でsubvoxelへ展開した後にpoint visibilityとinside maskを適用する。不可視な
-subvoxelは`I`と`S`から除外してからgroup化する。screenと重ならずPSF感度が0になる可視点は
-PSF計算後に除外する。
-
-角度binとdepth binは類似columnを探す範囲を制限するためのもので、近似を受理する閾値そのもの
-ではない。binを細かくしすぎると圧縮候補を見逃すが精度は悪化せず、粗くしすぎても最終的な
-column距離判定でrejectまたは再分割される。最初はdetector pixel幅を角度bin幅として使い、
-depth binなしでzoom rate順に並べ、計算量が大きい場合だけdepth binを追加する。
-
-実装では、(1) optical bin、(2) compression scope、(3) work chunkを区別する。bin間圧縮は
-初期実装では行わない。1個のbinがメモリ上限を超える場合だけ`f / Z_e`順に複数scopeへ分割し、
-scope間も圧縮しない。work chunkはPSF計算呼び出しを細かくしすぎないため複数の完全なscopeを
-メモリ上限まで束ねるが、同じwork chunk内でも異なるscopeのPSFを同じgroupには入れない。
-full/partialでsource resが異なり得るため、binとwork chunkのcostはvoxel数ではなく各voxelの
-`prod(res)`の和で見積もる。
-
-voxel重心binningでは、1 voxelの投影範囲がbin境界をまたぐと圧縮候補を取りこぼす可能性がある。
-これはPSF距離判定を通るため精度誤差ではなく圧縮率低下として現れる。診断値としてvoxelの投影
-AABB幅とbin幅の比`rho = max(delta_u/bin_u, delta_v/bin_v)`を評価し、`rho >= 1`が多い場合だけ
-subvoxel binningまたはbin幅拡大を再検討する。
-
-この方法なら、world座標では離れていても同じview cone上にあり、ほぼ同じPSFを持つ点を
-比較できる。一方、投影方向が異なる点を「配列上で隣だった」という理由だけで同じgroup候補に
-入れない。異なるcameraまたはEyeは必ず別bucketにする。visibilityはgroup化前にsubvoxel点ごとに
-適用し、不可視点を `I` と `S` から除く。残った1点ごとの `I[:, i]` は完全なPSFなので、
-fully visible voxel由来かpartial voxel由来かだけを理由に分ける必要はない。ただし由来flagは
-診断用に保持し、wall/inside境界をまたいだgroupで誤差が増えていないかを可視化する。
-
-#### projection計算への組み込み
-
-圧縮導入前に、optical bin順へ並べ替えたwork chunkごとに通常の`P_chunk = I_chunk S_chunk`を
-計算し、既存のvoxel-index chunk版と一致することを確認する。Toyではwork chunk上限を変えても
-絶対誤差`1e-14`以下で一致済みである。同じ経路を`World`の実験option
-`chunk_strategy="optical"`へ移し、full/partial voxel、bin幅`0.5/1/2 pixels`で既存経路との差が
-`1e-13`以下であることも確認した。defaultの`chunk_strategy="voxel"`は変更していない。
-
-現在のoptical経路はvisible voxel重心だけを保持し、work chunk確定後にsubvoxel座標と`S`を生成
-するため、全subvoxel座標の事前保持は廃止した。work chunk処理はまだserialである。またprojection
-cache keyはchunk strategyを含まないため、optical optionは常に再計算する。parallel化とcache
-versionはfactorized operatorの表現確定後に行う。
-
-wallなし3200 voxel、res 2（25600 samples）、24x24 pixelのwarm serial比較では、既存voxel
-chunkがmedian `0.0322 s`、voxel重心binningの未圧縮optical chunkが`0.0334 s`で約3.9%遅かった。nnzはともに
-46876、最大要素差は`1.4e-23`未満である。これは圧縮前の2-pass並べ替えコストの小規模基準値で、
-MST条件のpeak memory・時間評価を置き換えるものではない。
-
-処理単位はcamera・Eye・光学chunkとする。各chunkで `I_chunk` と、それに対応する `S_chunk` の
-rowを作り、正規化PSFをgroup化して `Q_chunk`, `R_chunk` を得る。続いて
-`A_chunk = R_chunk @ S_chunk` を計算したら、`I_chunk`, `R_chunk`, `S_chunk` は破棄できる。
-最後に `Q_chunk` を横方向、`A_chunk` を縦方向に連結すれば、全体の `Q`, `A` が得られる。
-
-この順序なら各 `I[:, i]` は1点光源の完全なPSFなので、三線形補間が最大8個のvoxel columnへ
-寄与してもchunk境界のhaloは不要である。複数groupから同じvoxelへ入る寄与は `A` の同一columnに
-別rowとして残る。複数cameraを連結した `P_allcam` 自体は共同分解せず、cameraごとの
-`Q_camera A_camera` を個別に適用して画像を連結する。
-
-初期clusteringは、chunk全体の `s_i` 加重平均代表を作り、全memberとの距離が閾値内なら受理、
-超えたら平均からの最遠点と、そこからの最遠点をseedに二分する再帰方式とする。分割探索には
-高速な相対L2、最終診断には正規化PSFのL1と相対L2を両方保存する。single-pass leader方式は
-代表更新後に全memberを再確認すればdriftを防げるが、Toy評価では再帰方式より遅くgroup数も
-多かったため第2候補とする。
-
-`eps == 0`はsingleton groupを作る特殊ケースとして扱わない。clustering、PSF正規化、`Q,R,A`構築を
-明示的に全てバイパスし、そのscopeを通常のdirect block `P_chunk = I_chunk S_chunk`として保存する。
-これにより厳密計算を要求した場合の余分な計算と`Q+A`の保存増加を避ける。
-
-factorized operatorにはforward `Q @ (A @ f)`だけでなく、inverse problemで必要なtranspose
-`A.T @ (Q.T @ g)`、shape、dtype、camera/Eyeごとのmapping、tolerance、最大group誤差を持たせる。
-従来のSciPy sparse `P`を要求するAPIとの互換方法と、projection cache versionも同時に決める。
-
-#### 現在までの評価と次の判定
-
-最終 `P` のpost-processing prototypeは予備評価として残すが、本命は `I ~= Q R`, `A = R S`
-である。Toy評価では、手組みした `I @ S` と既存 `World.set_projection_matrix` の `P` が
-Frobenius相対誤差 `1e-16`以下で一致し、visibilityと三線形補間の再構成が確認できた。
-
-無回転の評価では、正規化column L1閾値0.1に対するcolumn圧縮率はmedian `Z_e/f`が
-約5、15、50の順に1.01、1.82、4.05倍、閾値0.2では1.37、2.34、8.00倍だった。
-遠方ほどpinhole PSFが支配的になり、group化が効くという予想と一致する。`Z_e/f ~= 50`では
-Gaussian profileの相対L2誤差は閾値0.1で約`1.0e-5`、0.2で約`2.7e-5`だった。
-
-新しいToy sweep（144 voxel、res 1/2/4、wallなし、相対L2閾値0.1、再帰方式）では、
-`Z_e/f = 5, 15, 50`を比較した。res 4のsubvoxel PSFは9216本で、代表PSF数はそれぞれ
-5772、1623、196本、`N_s/N_g`は1.60、5.68、47.0倍だった。`nnz(I)`に対する
-`nnz(Q)+nnz(A)`の圧縮率は0.92、2.48、15.0倍で、近距離ではfactor化が逆に大きくなり得る。
-同条件のGaussian画像相対L2誤差は約0.00189、0.00296、0.00221だった。したがって本番では
-光学chunkごとに、factor化後のstorageが減らない場合は圧縮せず元のblockを保持する選択も必要である。
-
-cameraを30度回転した評価では奥行きに対する単調性が崩れた。現在の `Voxel` はworld軸に
-整列しており、camera座標で指定したboxをworld座標のAABBに変換すると横方向分解能と
-奥行き分解能が同時に変化するためである。回転依存を分離する次の評価では、同一の
-camera/Eye座標サンプルを直接投影する。
-
-採用判断では、constant/linear/square/Gaussian profileについてflux、相対L1/L2、pixelごとの
-最大誤差を測る。さらにwallなし回転系、MST wallあり、fully/partial境界、複数cameraで、
-projection構築時間、peak memory、保存容量、forward/transpose時間をfine `P` と比較する。
-圧縮率だけでなくこれらが改善し、指定toleranceに対する誤差が追跡可能な場合に本番化する。
-
-## 有限サイズ Eye の物理モデル
-
-### Eye 内部位置ごとの局所 etendue
-
-screen上のoverlap位置をEye内の通過位置へ逆写像し、位置ごとの距離、角度、etendueを
-積分する処理は実装済み。spotが1 pixelより小さい場合もEye形状上のquadratureを使う。
-circle、ellipse、rectangleについて、独立な高次開口積分との回帰テストを持つ。
-
-局所etendueは標準計算として常時使用する。旧来のEye中心光線による一様近似は高速化に
-ならず、通常APIにON/OFFのboolは追加しない。旧projectionとの互換比較や補正量の診断が
-必要な場合は、テスト・評価コード内で中心近似を計算する。将来どうしても公開切替が必要に
-なった場合は、速度オプションではなく `etendue_mode="local" | "eye_center"` のように
-物理モデルを明示する。
-
-`d=75 mm` MST benchmark（40824 voxel、source res 1、detector res 1、parallel 4）では、
-局所etendue導入前後のwarm実行時間はともに約7.3--7.6秒で、意味のある低速化は
-観測されなかった。行列の `nnz` は92643で不変、行列総和は11.31715から11.32026へ
-約0.0275%変化した。したがってMSTの小さいpinholeでは補正は小さい一方、
-`0.5 x 4 mm`程度のslit、近距離、斜入射では中心近似との差を別途評価する価値がある。
-
-未実装なのは、wallやapertureによるvisibilityがEye内部位置によって変わる場合の局所
-visibilityである。必要性を`0.5 x 4 mm`程度のslitと実際のwall配置で評価する。
-
-## Detector と aperture の拡張
-
-### Photodiode array
-
-- active area、pitch、pixel 間の非感光領域を明示できる detector 表現を検討する。
-- fill factor が高い配列は連続 screen として扱い、面積積分を利用する。
-- active area が spacing より十分小さい疎な配列は、複数の 1x1 screen、または
-  multi-detector screen として表す。
-- `0.75 x 4 mm`、pitch `0.95 mm`、gap 約 `0.2 mm` のような具体例で検証する。
-
-### Eye 形状
-
-spot の面積積分が直接対応する Eye 形状は circle、ellipse、rectangle である。
-任意形状の aperture mesh は遮蔽判定には使えるが、その形状を projected spot の
-放射分布として積分する機能とは別である。任意 Eye 形状が必要になった場合は、polygon
-clip または数値積分を追加する。
-
-## 意図的に保留している最適化
-
-- `I @ S` の完全融合は保留する。現在の sparse 積は一時的な非ゼロ要素増加を抑えており、
-  単純な融合は subvoxel 補間の最大 8 列分を展開して、逆にメモリを増やす可能性がある。
-- 全 voxel で一律に高い source res を使う前に、自動判定と適応 res を評価する。
-- adaptive voxel merging は、compact mapping だけでは不足すると確認してから着手する。
-
-## 実施順序案
-
-1. mainの0.6.0から新規branchを切り、source `res` 自動判定とfully/partialの適応化を実装する
-2. `d=75 mm` MST数値検証で固定resと自動resの画像誤差、時間、選択res分布を比較する
-3. inside境界仕様を確定する
-4. active voxel compact mappingと `d=10--25 mm` 比較を行う
-5. 同一のcamera/Eye座標サンプルを使い、回転と `Z_e/f` だけを変えてgroup化を再評価する
-6. MST wallあり条件でpost-processing group化を行い、fully/partial境界と許容閾値を決定する
-7. 保存量と実行時間に明確な利点がある場合だけDraft PR #9を再開する
-8. subvoxel PSF基準の光学chunkで `I_chunk ~= Q_chunk R_chunk`,
-   `A_chunk = R_chunk S_chunk` を直接構築
-9. factorized operator、transpose、cache、従来のsparse `P`との互換層を実装
-10. fine `P`と構築時間・peak memory・保存容量・forward/transpose時間を比較
-11. 圧縮が不利な近距離chunkを非圧縮blockとして混在させるoperator表現を追加
-12. compact mappingとgroup化だけでは不足する場合に adaptive voxel mergingを検討
-13. PD array、任意 Eye 形状、Eye内部位置ごとの局所visibilityの必要性を定量化
+torus外、inside外、または全cameraから常に不可視なvoxelをprojection matrixの列から除外する。
+
+- compact indexと元voxel indexの双方向mappingを保存する。
+- emission入力のcompact化、projection、transpose、inverse problem後のgrid復元APIを定義する。
+- mapping、visibility、projection列、cacheを含む実byte削減量を測定する。
+- constant emission、camera別visibility、pickle roundtripを回帰テストにする。
+
+QA/PSF圧縮を再検討するのは、compact mapping後もPの保存量またはmatvecが律速として残った場合だけとする。
+
+## P4: Fine-grid最終受け入れ
+
+少なくともd=25、12.5、10 mmで以下を比較する。
+
+- preflight visibility時間とres分布
+- source sample数、projection構築時間、peak memory、Pの実byte数
+- fixed referenceまたは受け入れ済みreferenceに対する画像誤差
+- projection/transposeとprofile fittingの実行時間
+
+d=10のfull bounding gridは約1720万voxelになるため、P0--P3を完了してから一度だけ最終benchmarkを行う。
+
+## P5: 条件付き物理拡張
+
+`0.5×4 mm`程度のslitについて、Eye中心visibilityとEye内部位置ごとの局所visibilityの差を実形状で
+定量化する。画像差が要求精度に対して無視できない場合だけ、Eye内部visibilityを実装する。
+
+## 次の実装順
+
+1. adaptive branchをmainへ統合する。
+2. legacy端点投影方式を削除する。
+3. partial境界の要求精度を決め、固定res継続または境界積分を選ぶ。
+4. wall visibilityをprofileし、d=10 preflightを高速化する。
+5. inside境界、compact mapping、fine-grid最終benchmarkへ進む。

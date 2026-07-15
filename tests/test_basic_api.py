@@ -293,7 +293,7 @@ def test_loading_incompatible_projection_cache_invalidates_only_projection(
     np.testing.assert_array_equal(loaded.visible_voxels["main"], visible)
     assert loaded.projection["main"] == [None]
     assert loaded.P_matrix["main"] is None
-    assert loaded.projection_cache_schema_version == 2
+    assert loaded.projection_cache_schema_version == 3
 
 
 def test_world_list_camera_keys_are_not_renumbered_after_removal():
@@ -334,6 +334,279 @@ def test_projection_pipeline_supports_string_camera_key():
 
     assert world.projection["right"][0].shape == (camera.screen.N_pixel, voxel.N_voxel)
     assert world.P_matrix["right"].shape == (camera.screen.N_pixel, voxel.N_voxel)
+
+
+def test_world_estimate_source_resolution_is_batched_and_nonmutating():
+    camera = make_camera()
+    camera.screen.subpixel_resolution = 2
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-1.0, 1.0), (20.0, 40.0)),
+        shape=(4, 2, 5),
+    )
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+    selected = np.array([0, 3, 8, 17, 31])
+
+    batched = world.estimate_source_resolution(
+        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=2,
+    )
+    single_batch = world.estimate_source_resolution(
+        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=100,
+    )
+
+    np.testing.assert_array_equal(batched.resolution, single_batch.resolution)
+    np.testing.assert_allclose(batched.ratio, single_batch.ratio)
+    np.testing.assert_allclose(batched.projected_diameter,
+                               single_batch.projected_diameter)
+    np.testing.assert_array_equal(batched.point_source,
+                                  single_batch.point_source)
+    np.testing.assert_array_equal(batched.capped, single_batch.capped)
+    assert batched.resolution.shape == (selected.size, 3)
+    assert world.projection["main"] == [None]
+    assert world.P_matrix["main"] is None
+
+
+def test_world_estimate_source_resolution_can_use_pixel_pitch():
+    camera = make_camera()
+    camera.screen.subpixel_resolution = 4
+    voxel = Voxel.uniform_voxel(
+        ranges=((-2.0, 2.0), (-1.0, 1.0), (20.0, 24.0)),
+        shape=(2, 1, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+
+    pixel = world.estimate_source_resolution(0, 0, detector_grid="pixel",
+                                             max_resolution=8)
+    subpixel = world.estimate_source_resolution(0, 0, detector_grid="subpixel",
+                                                max_resolution=8)
+    psf = world.estimate_source_resolution(0, 0, detector_grid="psf",
+                                           max_resolution=8)
+
+    assert np.all(subpixel.resolution >= pixel.resolution)
+    assert np.all(subpixel.resolution >= psf.resolution)
+    with pytest.raises(ValueError, match="detector_grid"):
+        world.estimate_source_resolution(0, 0, detector_grid="unknown")
+
+
+def test_projection_preflight_counts_fixed_work_without_building_projection():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(2, 1, 1),
+    )
+    world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    report = world.preflight_projection(res=(2, 3, 4))
+    row = report.eyes[0]
+
+    assert row.camera_key == "main"
+    assert row.full_voxels == 2
+    assert row.partial_voxels == 0
+    assert row.full_resolution_buckets == (((2, 3, 4), 2),)
+    assert row.full_samples == 48
+    assert report.total_samples_upper_bound == 48
+    assert "48 source samples" in report.summary()
+    assert world.projection["main"] == [None]
+    assert world.P_matrix["main"] is None
+    cached_visibility = world.visible_voxels["main"]
+    world.preflight_projection(res=1)
+    assert world.visible_voxels["main"] is cached_visibility
+
+
+def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    expected = world.estimate_source_resolution(
+        0, 0, max_resolution=None,
+    ).resolution[0]
+
+    ideal_report = world.preflight_projection(
+        res=None, res_mode="ideal", partial_res=1,
+    )
+    ideal_row = ideal_report.eyes[0]
+    expected_tuple = tuple(int(item) for item in expected)
+    assert ideal_row.full_resolution_buckets == ((expected_tuple, 1),)
+    assert ideal_row.full_samples == int(np.prod(expected))
+    assert ideal_row.ideal_p50 is not None
+    assert ideal_row.capped_axes == 0
+
+    capped_report = world.preflight_projection(
+        res=2, res_mode="auto",
+        point_source_threshold=1e-12,
+    )
+    capped_row = capped_report.eyes[0]
+    assert capped_row.full_resolution_buckets == (((2, 2, 2), 1),)
+    assert capped_row.full_samples == 8
+    assert capped_row.capped_axes == 3
+
+    axis_capped = world.preflight_projection(
+        res=(1, 2, 3), res_mode="auto",
+        point_source_threshold=1e-12,
+    ).eyes[0]
+    assert axis_capped.full_resolution_buckets == (((1, 2, 3), 1),)
+    assert axis_capped.full_samples == 6
+
+
+def test_projection_preflight_bounds_partial_voxel_work_before_masking():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel(
+        x_axis=np.array([-0.1, 0.1]),
+        y_axis=np.array([-0.1, 0.1]),
+        z_axis=np.array([30.0, 30.2]),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: x >= 0.0)
+
+    report = world.preflight_projection(
+        res=None, partial_res=(2, 3, 4),
+        res_mode="ideal",
+    )
+    row = report.eyes[0]
+
+    assert row.full_voxels == 0
+    assert row.partial_voxels == 1
+    assert row.partial_resolution == (2, 3, 4)
+    assert row.partial_samples_upper_bound == 24
+    assert report.total_samples_upper_bound == 24
+
+
+def test_auto_resolution_matches_fixed_endpoint_resolutions():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    aperture = Aperture(shape="circle", size=50.0,
+                        position=(0.0, 0.0, 5.0))
+    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
+                    camera_position=(0.0, 0.0, -20.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0), (-1.0, 1.0), (20.0, 24.0)),
+        shape=(2, 2, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True)
+    fixed_one = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        res_mode="auto", point_source_threshold=1e6,
+    )
+    adaptive_one = world.P_matrix[0].copy()
+    np.testing.assert_allclose(adaptive_one.toarray(), fixed_one.toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+    world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
+    fixed_two = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=1, force=True,
+        res_mode="auto", point_source_threshold=1e-12,
+    )
+    adaptive_two = world.P_matrix[0].copy()
+    np.testing.assert_allclose(adaptive_two.toarray(), fixed_two.toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+
+def test_projection_cache_tracks_resolution_policy_settings():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=1)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0), (-1.0, 1.0), (20.0, 24.0)),
+        shape=(2, 2, 2),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+
+    world.set_projection_matrix(res=1, verbose=0, parallel=1)
+    fixed_one = world.projection[0][0]
+    world.set_projection_matrix(res=1, verbose=0, parallel=1)
+    assert world.projection[0][0] is fixed_one
+
+    world.set_projection_matrix(res=2, verbose=0, parallel=1)
+    fixed_two = world.projection[0][0]
+    assert fixed_two is not fixed_one
+    world.set_projection_matrix(
+        res=2, res_mode="auto", point_source_threshold=1e6,
+        verbose=0, parallel=1,
+    )
+    assert world.projection[0][0] is not fixed_two
+
+
+def test_explicit_ideal_mode_uses_uncapped_resolution():
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
+    screen = Screen(screen_shape="square", screen_size=20.0,
+                    pixel_shape=(12, 12), subpixel_resolution=2)
+    camera = Camera(eyes=[eye], apertures=[], screen=screen,
+                    camera_position=(0.0, 0.0, 0.0))
+    voxel = Voxel.uniform_voxel(
+        ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
+        shape=(1, 1, 1),
+    )
+    world = World(voxel=voxel, cameras=[camera], verbose=0)
+    world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
+    ideal = tuple(world.estimate_source_resolution(
+        0, 0, max_resolution=None,
+    ).resolution[0])
+
+    world.set_projection_matrix(
+        res=None, res_mode="ideal", partial_res=1,
+        verbose=0, parallel=1, force=True,
+    )
+    adaptive = world.P_matrix[0].copy()
+    world.set_projection_matrix(
+        res=ideal, res_mode="fixed",
+        verbose=0, parallel=1, force=True,
+    )
+
+    assert ideal != (1, 1, 1)
+    np.testing.assert_allclose(adaptive.toarray(), world.P_matrix[0].toarray(),
+                               rtol=1e-13, atol=1e-15)
+
+
+def test_auto_resolution_rejects_optical_work_ordering():
+    world = World(cameras=[make_camera()], verbose=0)
+
+    with pytest.raises(ValueError, match="require chunk_strategy='voxel'"):
+        world.set_projection_matrix(
+            res=2, verbose=0, parallel=1,
+            chunk_strategy="optical", res_mode="auto",
+        )
+
+
+@pytest.mark.parametrize("method", ["preflight_projection", "set_projection_matrix"])
+def test_projection_resolution_mode_requires_explicit_safe_settings(method):
+    world = World(cameras=[make_camera()], verbose=0)
+    call = getattr(world, method)
+
+    with pytest.raises(ValueError, match="requires a finite res"):
+        call(res=None, res_mode="fixed")
+    with pytest.raises(ValueError, match="requires a finite res"):
+        call(res=None, res_mode="auto")
+    with pytest.raises(ValueError, match="requires res=None"):
+        call(res=5, res_mode="ideal", partial_res=5)
+    with pytest.raises(ValueError, match="explicit partial_res"):
+        call(res=None, res_mode="ideal")
+    with pytest.raises(ValueError, match="res_mode"):
+        call(res=5, res_mode="unknown")
 
 
 def test_eye_calc_rays_projects_front_points_and_masks_back_points():
@@ -971,6 +1244,29 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     assert result["projection_path"].is_file()
 
 
+def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(
+        tmp_path):
+    example_path = (Path(__file__).resolve().parents[1] / "examples"
+                    / "evaluate_partial_resolution.py")
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_partial_resolution", example_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run(
+        output_dir=tmp_path, spacing=25.0, reference_res=8,
+        resolutions=(2, 5), parallel=1,
+    )
+    records = result["result"]["records"]
+
+    assert {record["boundary"] for record in records} == set(module.BOUNDARIES)
+    assert {record["partial_res"] for record in records} == {2, 5}
+    assert all(np.isfinite(record["l2_relative"]) for record in records)
+    assert result["figure_path"].is_file()
+    assert result["json_path"].is_file()
+
+
 def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
                     / "examples" / "verify_1d_analytic_projection.py")
@@ -1045,3 +1341,28 @@ def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path
     assert len(constant_rows) == 2
     assert constant_rows[0]["sampling_ratio"] == 2 * constant_rows[1]["sampling_ratio"]
     assert all(np.isfinite(row["relative_l2"]) for row in result["rows"])
+
+
+def test_small_voxel_depth_sweep_is_fully_visible_and_draws_outputs(tmp_path):
+    example_path = (Path(__file__).resolve().parents[1]
+                    / "examples" / "evaluate_small_voxel_depth_sweep.py")
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_small_voxel_depth_sweep", example_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run(
+        tmp_path, voxel_sizes=(2.0,), depth_ratios=(20.0,),
+        adaptive_max_res=2, reference_res=3,
+    )
+
+    assert result["heatmap_path"].is_file()
+    assert result["profile_path"].is_file()
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert row["resolution"].shape == (25, 3)
+    assert np.all((row["resolution"] >= 1) & (row["resolution"] <= 2))
+    assert 0.0 < row["sample_ratio"] <= (2 / 3) ** 3 + 1e-15
+    assert np.isfinite(row["matrix_l2"])
+    assert all(np.isfinite(value) for value in row["profile_errors"].values())

@@ -149,6 +149,28 @@ eye.【F:multi_pinhole/world.py†L1182-L1239】 For each `(camera, eye)` pair i
 calls `_calc_voxel_image_for_eye`, then aggregates all eyes on a camera into
 that camera's pixel-space `P_matrix`.
 
+Before starting an expensive build, use the same source-resolution settings
+with `preflight_projection`:
+
+```python
+work = world.preflight_projection(
+    res=5,
+    res_mode="auto",
+    partial_res=3,
+)
+print(work.summary())
+print(work.total_samples_upper_bound)
+```
+
+The report separates fully and partially visible voxels for every eye, lists
+the selected full-voxel resolution buckets, and reports the ideal-resolution
+percentiles and clipped-axis count for adaptive runs. Its total is an exact
+count for the full-voxel source samples plus a conservative pre-mask upper
+bound for partial voxels. It is not a runtime or sparse-`nnz` prediction.
+Preflight computes and caches voxel visibility, but does not construct or
+modify `projection` or `P_matrix`; a subsequent build can reuse that
+visibility result.
+
 ### `_calc_voxel_image_for_eye`: fully-visible vs. partially-visible voxels
 
 This is the core, and most expensive, computation in the
@@ -222,6 +244,23 @@ This entire dance (steps 1-3, run separately for the full-visibility and
 partial-visibility voxel groups) exists purely as a memory/throughput
 trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
+
+`res` is mandatory. `res_mode="fixed"` uses it directly, while
+`res_mode="auto"` interprets it as an axis-wise ceiling for fully-visible
+voxels. The
+voxel circumsphere is projected with the local worst-direction perspective
+magnification, including the off-axis `1/cos(theta)` factor, and normalized by
+the local finite-Eye PSF/detector scale. `point_source_threshold` defaults to
+`1/8`. It selects res 1 when the complete voxel is negligible and determines a
+near-cubic ideal axis-wise resolution otherwise. Voxels are bucketed by the
+clipped `(r_x, r_y, r_z)`. This is a geometry heuristic, not a bound on image
+error. Uncapped work requires the explicit combination
+`res=None, res_mode="ideal"` and an explicit fixed `partial_res`.
+Partially-visible voxels remain fixed because visibility is discontinuous;
+with `fixed` or `auto`, omitted `partial_res` reuses `res`. A small fixed
+`partial_res` does not provide an error bound for an arbitrarily positioned
+visibility/inside boundary; validate it separately or specify a conservative
+value for the geometry being integrated.
 
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye
