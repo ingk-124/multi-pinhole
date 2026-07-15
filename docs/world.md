@@ -171,6 +171,13 @@ Preflight computes and caches voxel visibility, but does not construct or
 modify `projection` or `P_matrix`; a subsequent build can reuse that
 visibility result.
 
+After construction, `world.project(emission, camera_idx, eye_idx=None)`
+applies the cached camera-summed matrix, or one Eye matrix when `eye_idx` is
+given. `world.backproject(image, camera_idx, eye_idx=None)` applies its
+transpose. Backprojection is the discrete adjoint `P.T @ image`, not an
+inverse reconstruction. Neither method starts an implicit projection build;
+they raise `RuntimeError` when the requested matrix is not cached.
+
 ### `_calc_voxel_image_for_eye`: fully-visible vs. partially-visible voxels
 
 This is the core, and most expensive, computation in the

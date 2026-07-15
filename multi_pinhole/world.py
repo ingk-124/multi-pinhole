@@ -401,13 +401,99 @@ class World:
 
     @property
     def projection(self):
-        """dict[int, list[sparse.csr_matrix]]: Subpixel projection matrices per eye."""
+        """dict[int, list[sparse.csr_matrix]]: Pixel-space projection matrices per eye."""
         return self._projection
 
     @property
     def projection_cache_schema_version(self) -> int:
         """Version governing compatibility of serialized projection caches."""
         return self._projection_cache_schema_version
+
+    def _projection_operator(self, camera_idx: Hashable, eye_idx: int | None):
+        """Return one cached projection matrix without triggering construction."""
+        if camera_idx not in self._cameras:
+            raise KeyError(f"camera key {camera_idx!r} is not registered")
+        if eye_idx is None:
+            operator = self._P_matrix[camera_idx]
+            description = f"camera {camera_idx!r}"
+        else:
+            if not isinstance(eye_idx, (int, np.integer)):
+                raise TypeError("eye_idx must be an integer or None")
+            if eye_idx < 0 or eye_idx >= len(self._cameras[camera_idx].eyes):
+                raise IndexError(
+                    f"eye_idx must be in [0, {len(self._cameras[camera_idx].eyes) - 1}]"
+                )
+            operator = self._projection[camera_idx][int(eye_idx)]
+            description = f"camera {camera_idx!r}, eye {int(eye_idx)}"
+        if operator is None:
+            raise RuntimeError(
+                f"projection matrix for {description} is not constructed; "
+                "call set_projection_matrix() first"
+            )
+        return operator
+
+    def project(self, emission, camera_idx: Hashable, eye_idx: int | None = None):
+        """Apply a cached voxel-to-pixel projection matrix.
+
+        Parameters
+        ----------
+        emission : array-like, shape (N_voxel,)
+            Emission value at every voxel center.
+        camera_idx : Hashable
+            Key of the camera to project. The camera's Eye contributions are
+            summed when ``eye_idx`` is ``None``.
+        eye_idx : int, optional
+            Select one Eye instead of the camera-summed projection.
+
+        Returns
+        -------
+        numpy.ndarray, shape (N_pixel,)
+            Pixel-space image.
+
+        Notes
+        -----
+        This method never constructs a projection implicitly. Call
+        :meth:`set_projection_matrix` before projecting.
+        """
+        emission = np.asarray(emission)
+        if emission.ndim != 1 or emission.shape[0] != self.voxel.N:
+            raise ValueError(
+                f"emission must have shape {(self.voxel.N,)}, got {emission.shape}"
+            )
+        operator = self._projection_operator(camera_idx, eye_idx)
+        return np.asarray(operator @ emission).reshape(-1)
+
+    def backproject(self, image, camera_idx: Hashable, eye_idx: int | None = None):
+        """Apply the transpose of a cached voxel-to-pixel projection matrix.
+
+        Parameters
+        ----------
+        image : array-like, shape (N_pixel,)
+            Pixel-space values to map back to voxel space.
+        camera_idx : Hashable
+            Key of the camera whose transpose is applied. The camera-summed
+            projection is used when ``eye_idx`` is ``None``.
+        eye_idx : int, optional
+            Select one Eye instead of the camera-summed projection.
+
+        Returns
+        -------
+        numpy.ndarray, shape (N_voxel,)
+            Result of the discrete adjoint operation ``P.T @ image``.
+
+        Notes
+        -----
+        Backprojection is the linear adjoint, not an inverse reconstruction.
+        This method never constructs a projection implicitly.
+        """
+        operator = self._projection_operator(camera_idx, eye_idx)
+        image = np.asarray(image)
+        expected_shape = (operator.shape[0],)
+        if image.ndim != 1 or image.shape != expected_shape:
+            raise ValueError(
+                f"image must have shape {expected_shape}, got {image.shape}"
+            )
+        return np.asarray(operator.T @ image).reshape(-1)
 
     @property
     def inside_vertices(self):

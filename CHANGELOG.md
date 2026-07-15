@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.2
+
+- Added `World.project()` for camera-summed or per-Eye forward projection.
+- Added `World.backproject()` for the corresponding discrete adjoint.
+- Added explicit cache and input-shape validation without triggering implicit
+  projection construction.
+
+Backprojection applies `P.T`; it is not an inverse reconstruction.
+
 ## 0.7.1
 
 - Reduced wall-visibility time and peak memory with bounded point/triangle
