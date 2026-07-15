@@ -37,7 +37,7 @@ def run(output_dir=None, thresholds=(0.5, 0.25, 0.125, 0.0625), reference_res=4)
         start = time.perf_counter()
         world.set_projection_matrix(
             res=reference_res, verbose=0, parallel=1, force=True,
-            adaptive_source_resolution=True,
+            res_mode="auto",
             point_source_threshold=threshold,
             max_working_memory=256 * 2 ** 20,
         )

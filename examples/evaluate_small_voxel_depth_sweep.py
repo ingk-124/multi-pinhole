@@ -76,7 +76,7 @@ def run(output_dir=None, voxel_sizes=(2.0, 5.0, 10.0, 25.0),
             )
             world.set_projection_matrix(
                 res=adaptive_max_res, verbose=0, parallel=1, force=True,
-                adaptive_source_resolution=True,
+                res_mode="auto",
                 point_source_threshold=point_source_threshold,
             )
             adaptive = world.P_matrix[0].copy()

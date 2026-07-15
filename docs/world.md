@@ -154,9 +154,9 @@ with `preflight_projection`:
 
 ```python
 work = world.preflight_projection(
-    res=None,
-    partial_res=5,
-    adaptive_source_resolution=True,
+    res=5,
+    res_mode="auto",
+    partial_res=3,
 )
 print(work.summary())
 print(work.total_samples_upper_bound)
@@ -245,17 +245,19 @@ partial-visibility voxel groups) exists purely as a memory/throughput
 trade-off — the mathematical result is the same sparse matrix regardless of
 `n_jobs` or `max_nnz`; only the computation is chunked, not the answer.
 
-For fully-visible voxels, `adaptive_source_resolution=True` may be used to
-interpret `res` as an axis-wise ceiling rather than a fixed resolution. The
+`res` is mandatory. `res_mode="fixed"` uses it directly, while
+`res_mode="auto"` interprets it as an axis-wise ceiling for fully-visible
+voxels. The
 voxel circumsphere is projected with the local worst-direction perspective
 magnification, including the off-axis `1/cos(theta)` factor, and normalized by
 the local finite-Eye PSF/detector scale. `point_source_threshold` defaults to
 `1/8`. It selects res 1 when the complete voxel is negligible and determines a
 near-cubic ideal axis-wise resolution otherwise. Voxels are bucketed by the
 clipped `(r_x, r_y, r_z)`. This is a geometry heuristic, not a bound on image
-error. Passing `res=None` uses the uncapped ideal resolution; an integer or
-tuple provides an axis-wise ceiling. Partially-visible voxels keep the explicit
-fixed `partial_res` (or the voxel default when both resolutions are omitted).
+error. Uncapped work requires the explicit combination
+`res=None, res_mode="ideal"` and an explicit fixed `partial_res`.
+Partially-visible voxels remain fixed because visibility is discontinuous;
+with `fixed` or `auto`, omitted `partial_res` reuses `res`.
 
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye

@@ -52,12 +52,11 @@ def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     output_dir.mkdir(parents=True, exist_ok=True)
     world = build_case()
     cases = {
-        "fixed 1": dict(res=1, adaptive_source_resolution=False),
-        "fixed 2": dict(res=2, adaptive_source_resolution=False),
-        "adaptive": dict(res=reference_res, adaptive_source_resolution=True,
+        "fixed 1": dict(res=1, res_mode="fixed"),
+        "fixed 2": dict(res=2, res_mode="fixed"),
+        "adaptive": dict(res=reference_res, res_mode="auto",
                          point_source_threshold=point_source_threshold),
-        f"fixed {reference_res}": dict(res=reference_res,
-                                       adaptive_source_resolution=False),
+        f"fixed {reference_res}": dict(res=reference_res, res_mode="fixed"),
     }
     matrices, elapsed = {}, {}
     # Warm visibility, rasterization kernels, and sparse assembly once before
