@@ -1244,6 +1244,29 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     assert result["projection_path"].is_file()
 
 
+def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(
+        tmp_path):
+    example_path = (Path(__file__).resolve().parents[1] / "examples"
+                    / "evaluate_partial_resolution.py")
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_partial_resolution", example_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module.run(
+        output_dir=tmp_path, spacing=25.0, reference_res=8,
+        resolutions=(2, 5), parallel=1,
+    )
+    records = result["result"]["records"]
+
+    assert {record["boundary"] for record in records} == set(module.BOUNDARIES)
+    assert {record["partial_res"] for record in records} == {2, 5}
+    assert all(np.isfinite(record["l2_relative"]) for record in records)
+    assert result["figure_path"].is_file()
+    assert result["json_path"].is_file()
+
+
 def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
                     / "examples" / "verify_1d_analytic_projection.py")

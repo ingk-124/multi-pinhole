@@ -93,7 +93,7 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 
 この一連の処理（手順1〜3。完全可視・部分可視の各グループに対して別々に実行されます）は純粋にメモリ／スループットのトレードオフのために存在しています——数学的な結果は `n_jobs` や `max_nnz` に関わらず同じ疎行列になります。変わるのは計算の分割方法だけで、答えではありません。
 
-`res`は必須引数です。`res_mode="fixed"`では指定値を固定resとして使い、`res_mode="auto"`では完全可視voxelごとのideal resに対する軸別上限として使います。voxelの外接球をoff-axisの `1/cos(theta)` を含む局所worst-case倍率でscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅で無次元化します。`point_source_threshold`のdefaultは `1/8`です。これは幾何学heuristicであり画像誤差の上限ではありません。上限なし計算は `res=None, res_mode="ideal"` と固定`partial_res`を明示した場合だけ許可します。部分可視voxelはvisibilityが不連続なので固定`partial_res`を使い、`fixed`または`auto`で省略した場合は`res`を再利用します。
+`res`は必須引数です。`res_mode="fixed"`では指定値を固定resとして使い、`res_mode="auto"`では完全可視voxelごとのideal resに対する軸別上限として使います。voxelの外接球をoff-axisの `1/cos(theta)` を含む局所worst-case倍率でscreenへ投影し、detector subpixel pitchと局所有限Eye PSF幅で無次元化します。`point_source_threshold`のdefaultは `1/8`です。これは幾何学heuristicであり画像誤差の上限ではありません。上限なし計算は `res=None, res_mode="ideal"` と固定`partial_res`を明示した場合だけ許可します。部分可視voxelはvisibilityが不連続なので固定`partial_res`を使い、`fixed`または`auto`で省略した場合は`res`を再利用します。ただし任意位置のwall/inside境界に対して、小さな固定`partial_res`は画像誤差を保証しません。対象geometryで別途収束確認するか、保守的な値を明示します。
 
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 

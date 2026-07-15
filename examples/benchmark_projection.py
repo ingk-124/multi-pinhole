@@ -57,7 +57,7 @@ def _center_ranges_for_spacing(bounds, spacing):
 
 
 def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
-                    detector_res: int = 5) -> World:
+                    detector_res: int = 5, voxel_bounds=None) -> World:
     """Build a reduced-grid version of the 2026 MST tangential SXR case."""
     camera_center = np.array([1550.7, -1522.4, 210.8])
     forward_point = np.array([1525.9, -1521.1, 207.3])
@@ -83,9 +83,10 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
     if voxel_spacing is None:
         ranges = ((-2012.5, 2012.5), (-2012.5, 2012.5), (-512.5, 512.5))
     else:
+        bounds = (((-2020.0, 2020.0), (-2020.0, 2020.0), (-520.0, 520.0))
+                  if voxel_bounds is None else voxel_bounds)
         ranges, voxel_shape = _center_ranges_for_spacing(
-            ((-2020.0, 2020.0), (-2020.0, 2020.0), (-520.0, 520.0)),
-            voxel_spacing,
+            bounds, voxel_spacing,
         )
     voxel = Voxel.uniform_voxel_from_centers(
         ranges=ranges,

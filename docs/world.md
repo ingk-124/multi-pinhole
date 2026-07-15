@@ -257,7 +257,10 @@ clipped `(r_x, r_y, r_z)`. This is a geometry heuristic, not a bound on image
 error. Uncapped work requires the explicit combination
 `res=None, res_mode="ideal"` and an explicit fixed `partial_res`.
 Partially-visible voxels remain fixed because visibility is discontinuous;
-with `fixed` or `auto`, omitted `partial_res` reuses `res`.
+with `fixed` or `auto`, omitted `partial_res` reuses `res`. A small fixed
+`partial_res` does not provide an error bound for an arbitrarily positioned
+visibility/inside boundary; validate it separately or specify a conservative
+value for the geometry being integrated.
 
 Each projected subvoxel image is immediately passed through the screen's
 `transform_matrix` (subpixel → pixel binning, from `docs/core.md`). Per-eye
