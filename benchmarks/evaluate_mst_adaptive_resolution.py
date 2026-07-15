@@ -24,7 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from examples.benchmark_projection import build_mst_world
+from benchmarks.benchmark_projection import build_mst_world
 
 
 def _profiles(voxel):

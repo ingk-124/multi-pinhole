@@ -220,7 +220,7 @@ def _parse_floats(value):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("examples/output/subvoxel_resolution"))
+                        default=Path("benchmarks/output/subvoxel_resolution"))
     parser.add_argument("--voxel-counts", type=_parse_ints, default=(21, 41, 81))
     parser.add_argument("--pixel-counts", type=_parse_ints, default=(41, 81, 161))
     parser.add_argument("--distances", type=_parse_floats, default=(40.0, 80.0, 160.0))

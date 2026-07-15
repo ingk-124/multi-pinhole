@@ -94,7 +94,8 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
         coordinate_type="torus_inverse",
         coordinate_parameters={"major_radius": 1500, "minor_radius": 520},
     )
-    wall_path = Path(__file__).resolve().parent / "mst" / "MST_wall-mesh.stl"
+    wall_path = (Path(__file__).resolve().parents[1] / "examples" / "mst"
+                 / "MST_wall-mesh.stl")
     world = World(
         voxel=voxel,
         cameras={"left": make_camera(-4.15), "right": make_camera(4.15)},

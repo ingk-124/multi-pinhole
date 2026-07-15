@@ -7,7 +7,8 @@ import sys
 import numpy as np
 
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "evaluate_subvoxel_psf_compression.py"
+EXAMPLE = (Path(__file__).resolve().parents[1] / "benchmarks"
+           / "evaluate_subvoxel_psf_compression.py")
 SPEC = util.spec_from_file_location("evaluate_subvoxel_psf_compression", EXAMPLE)
 MODULE = util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE

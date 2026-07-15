@@ -880,7 +880,7 @@ def _parse_int_pair(value):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("examples/output/subvoxel_psf_compression"))
+                        default=Path("benchmarks/output/subvoxel_psf_compression"))
     parser.add_argument("--axial-distance", type=float, default=100.0)
     parser.add_argument("--resolution", type=int, default=2)
     parser.add_argument("--voxel-shape", type=_parse_int_triplet, default=(10, 10, 6))

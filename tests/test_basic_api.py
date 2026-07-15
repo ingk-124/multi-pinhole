@@ -1246,7 +1246,7 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
 
 def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(
         tmp_path):
-    example_path = (Path(__file__).resolve().parents[1] / "examples"
+    example_path = (Path(__file__).resolve().parents[1] / "benchmarks"
                     / "evaluate_partial_resolution.py")
     spec = importlib.util.spec_from_file_location(
         "evaluate_partial_resolution", example_path,
@@ -1292,7 +1292,7 @@ def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
 
 def test_optical_chunks_and_local_column_compression(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
-                    / "examples" / "evaluate_projection_column_compression.py")
+                    / "benchmarks" / "evaluate_projection_column_compression.py")
     spec = importlib.util.spec_from_file_location("evaluate_projection_column_compression", example_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1323,7 +1323,7 @@ def test_optical_chunks_and_local_column_compression(tmp_path):
 
 def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
-                    / "examples" / "evaluate_subvoxel_resolution.py")
+                    / "benchmarks" / "evaluate_subvoxel_resolution.py")
     spec = importlib.util.spec_from_file_location("evaluate_subvoxel_resolution", example_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1345,7 +1345,7 @@ def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path
 
 def test_small_voxel_depth_sweep_is_fully_visible_and_draws_outputs(tmp_path):
     example_path = (Path(__file__).resolve().parents[1]
-                    / "examples" / "evaluate_small_voxel_depth_sweep.py")
+                    / "benchmarks" / "evaluate_small_voxel_depth_sweep.py")
     spec = importlib.util.spec_from_file_location(
         "evaluate_small_voxel_depth_sweep", example_path,
     )

@@ -391,7 +391,7 @@ def _parse_ints(value):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("examples/output/projection_column_compression"))
+                        default=Path("benchmarks/output/projection_column_compression"))
     parser.add_argument("--rotations", type=_parse_floats, default=(0.0, 30.0))
     parser.add_argument("--axial-ranges", type=str, default="60:140,200:400,800:1200")
     parser.add_argument("--tolerances", type=_parse_floats,

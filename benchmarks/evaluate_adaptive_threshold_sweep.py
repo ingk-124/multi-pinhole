@@ -7,7 +7,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from examples.evaluate_adaptive_projection import build_case, profiles, _relative_l2
+from benchmarks.evaluate_adaptive_projection import build_case, profiles, _relative_l2
 
 
 def run(output_dir=None, thresholds=(0.5, 0.25, 0.125, 0.0625), reference_res=4):
