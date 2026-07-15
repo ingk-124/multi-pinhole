@@ -18,6 +18,7 @@ python -m benchmarks.evaluate_partial_resolution --help
 | Script | Purpose |
 |---|---|
 | `benchmark_projection.py` | Projection construction time and sparse-matrix size for a small scene or reduced MST geometry |
+| `benchmark_partial_visibility.py` | Reference/optimized comparison of partial sub-voxel visibility after a cache-building preflight |
 | `profile_wall_visibility.py` | Stage timings, peak-memory indicators, candidate counts, and cache-hit timing for visibility preflight |
 | `evaluate_adaptive_cap.py` | Uncapped ideal source resolution versus capped adaptive resolution |
 | `evaluate_mst_adaptive_resolution.py` | Fixed, adaptive, and ideal resolution on the MST model |
@@ -76,3 +77,12 @@ state counts.  In one local run, cold preflight changed from 7.14 s to 0.130 s,
 phase-local traced peak allocation from 284 MB to 9.9 MB, and process peak RSS
 from about 585 MB to 204 MB.  These are small-grid development measurements,
 not the final d=10 acceptance result.
+
+Partial sub-voxel visibility uses the same optimized wall-intersection helper.
+Run the following commands in separate processes and require matching
+`projection_sha256` values:
+
+```bash
+python -m benchmarks.benchmark_partial_visibility --implementation reference
+python -m benchmarks.benchmark_partial_visibility --implementation optimized
+```
