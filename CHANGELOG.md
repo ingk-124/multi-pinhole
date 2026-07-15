@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1
+
+- Reduced wall-visibility time and peak memory with bounded point/triangle
+  processing and vectorized triangle-ray pair intersections.
+- Skipped Eye-rejected and aperture-occluded points in subsequent mesh tests,
+  while preserving the existing center-Eye visibility model.
+- Added regression coverage for preflight visibility reuse during projection
+  construction and accelerated the same path for partial sub-voxel samples.
+- Added reproducible preflight and partial-visibility benchmarks, including a
+  full d=10 MST reference run.
+
+Visibility work sizes remain internal implementation details. The optimized
+path preserves reference visibility masks and projection matrices.
+
 ## 0.7.0
 
 - Added fixed, capped adaptive, and uncapped ideal source-resolution policies.

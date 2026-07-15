@@ -44,6 +44,11 @@ Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
 # Matrix like object (2D array) (accepts numpy.ndarray, list of list, tuple of tuple, etc.)
 MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[List[Number]], Tuple[Tuple[Number]]]
 
+# Internal visibility work sizes.  These are implementation details rather
+# than World/projection settings: changing them must not alter visibility.
+_VISIBILITY_POINT_BATCH = 8192
+_VISIBILITY_TRIANGLE_BATCH = 512
+
 
 # MARK: - STL utilities
 def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict = None) -> Tuple[str, Vector2DLike]:
@@ -725,7 +730,7 @@ def _check_visible_reference(mesh_obj, start: np.ndarray, grid_points: np.ndarra
 
 def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
                   behind_start_included: float | bool = False, dtype: type = np.float32,
-                  batch_points: int = 65536, batch_triangles: int = 512) -> np.ndarray:
+                  batch_points: int = _VISIBILITY_POINT_BATCH) -> np.ndarray:
     """Determine point visibility using bounded point and triangle batches.
 
     This implements the same cone filter and Möller--Trumbore test as
@@ -739,8 +744,8 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
         return np.zeros(0, dtype=bool)
     if M == 0:
         return np.ones(N, dtype=bool)
-    if batch_points <= 0 or batch_triangles <= 0:
-        raise ValueError("batch_points and batch_triangles must be positive")
+    if batch_points <= 0:
+        raise ValueError("batch_points must be positive")
 
     triangles = mesh_obj.vectors.astype(dtype, copy=False)
     start = start.astype(dtype, copy=False)
@@ -777,10 +782,12 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
         batch_points_array = grid_points[point_start:point_stop]
         alive = np.ones(point_stop - point_start, dtype=bool)
 
-        for triangle_start in range(0, valid_idx.size, batch_triangles):
+        for triangle_start in range(0, valid_idx.size, _VISIBILITY_TRIANGLE_BATCH):
             if not np.any(alive):
                 break
-            triangle_indices = valid_idx[triangle_start:triangle_start + batch_triangles]
+            triangle_indices = valid_idx[
+                triangle_start:triangle_start + _VISIBILITY_TRIANGLE_BATCH
+            ]
             active_local = np.flatnonzero(alive)
             relative_points = batch_points_array[active_local] - start
             triangle_planes = planes[triangle_indices]

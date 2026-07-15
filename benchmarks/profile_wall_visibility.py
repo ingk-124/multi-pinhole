@@ -155,7 +155,7 @@ def _git_head() -> str:
     ).stdout.strip()
 
 
-def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65536,
+def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=8192,
         batch_triangles=512, implementation="optimized", track_allocations=True):
     measure = _measure if track_allocations else _measure_wall_clock
     world = _build_scene(scene, tuple(voxel_shape), mst_spacing)
@@ -169,6 +169,7 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
     )
 
     production_check_visible = stl_utils.check_visible
+    production_triangle_batch = stl_utils._VISIBILITY_TRIANGLE_BATCH
     selected_check_visible = (
         production_check_visible if implementation == "optimized"
         else stl_utils._check_visible_reference
@@ -177,8 +178,6 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
 
     def configured_check_visible(*args, **kwargs):
         kwargs["batch_points"] = batch_points
-        if implementation == "optimized":
-            kwargs["batch_triangles"] = batch_triangles
         mesh_obj = kwargs.get("mesh_obj", args[0] if args else None)
         points = kwargs.get("grid_points", args[2] if len(args) > 2 else None)
         started = time.perf_counter()
@@ -192,12 +191,14 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=65
         return result
 
     stl_utils.check_visible = configured_check_visible
+    stl_utils._VISIBILITY_TRIANGLE_BATCH = batch_triangles
     try:
         with _instrument_visibility_helpers() as helper_calls:
             report, cold = measure(lambda: world.preflight_projection(res=1, force_visibility=True))
         _, cache_hit = measure(lambda: world.preflight_projection(res=1, force_visibility=False))
     finally:
         stl_utils.check_visible = production_check_visible
+        stl_utils._VISIBILITY_TRIANGLE_BATCH = production_triangle_batch
 
     visible_vertices = {
         repr(key): list(value.shape) for key, value in world._visible_vertices.items()
@@ -271,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("--scene", choices=("toy", "plane", "mst"), default="toy")
     parser.add_argument("--voxel-shape", type=_triplet, default=(24, 16, 12))
     parser.add_argument("--mst-spacing", type=float)
-    parser.add_argument("--batch-points", type=int, default=65536)
+    parser.add_argument("--batch-points", type=int, default=8192)
     parser.add_argument("--batch-triangles", type=int, default=512)
     parser.add_argument("--implementation", choices=("optimized", "reference"), default="optimized")
     parser.add_argument("--no-tracemalloc", action="store_true")

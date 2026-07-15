@@ -17,7 +17,8 @@ def _random_mesh_and_points(seed=124):
 
 @pytest.mark.parametrize("behind_start_included", [False, True, -2.0])
 @pytest.mark.parametrize("batch_points,batch_triangles", [(17, 3), (64, 11), (1000, 1000)])
-def test_batched_visibility_matches_reference(behind_start_included, batch_points, batch_triangles):
+def test_batched_visibility_matches_reference(monkeypatch, behind_start_included,
+                                              batch_points, batch_triangles):
     model, points = _random_mesh_and_points()
     start = np.array([0.25, -0.5, 0.75], dtype=np.float32)
 
@@ -25,9 +26,10 @@ def test_batched_visibility_matches_reference(behind_start_included, batch_point
         model, start, points, behind_start_included=behind_start_included,
         batch_points=batch_points,
     )
+    monkeypatch.setattr(stl_utils, "_VISIBILITY_TRIANGLE_BATCH", batch_triangles)
     actual = stl_utils.check_visible(
         model, start, points, behind_start_included=behind_start_included,
-        batch_points=batch_points, batch_triangles=batch_triangles,
+        batch_points=batch_points,
     )
 
     np.testing.assert_array_equal(actual, expected)
@@ -48,8 +50,9 @@ def test_batched_visibility_skips_points_occluded_by_an_earlier_triangle_batch(m
         return original(*args, **kwargs)
 
     monkeypatch.setattr(stl_utils, "_check_intersection_pairs", recorded)
+    monkeypatch.setattr(stl_utils, "_VISIBILITY_TRIANGLE_BATCH", 1)
     visible = stl_utils.check_visible(
-        model, np.zeros(3, dtype=np.float32), points, batch_triangles=1,
+        model, np.zeros(3, dtype=np.float32), points,
     )
 
     np.testing.assert_array_equal(visible, [False, False])
