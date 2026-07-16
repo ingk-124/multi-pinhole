@@ -3,6 +3,41 @@ import pytest
 
 from multi_pinhole import Voxel
 from multi_pinhole import profiles
+from multi_pinhole.coordinates import spherical_coordinates
+
+
+def test_spherical_coordinates_angles_do_not_depend_on_reference_radius():
+    points = np.array([[1.0, 2.0, 3.0], [0.0, 0.0, 2.0], [0.0, -3.0, 0.0]])
+    unit = spherical_coordinates(1.0)(points)
+    scaled = spherical_coordinates(4.0)(points)
+
+    np.testing.assert_allclose(scaled[:, 0], unit[:, 0] / 4.0)
+    np.testing.assert_allclose(scaled[:, 1:], unit[:, 1:])
+
+
+def test_spherical_coordinates_axes_and_general_point():
+    points = np.array([
+        [0.0, 0.0, 2.0],
+        [0.0, 0.0, -2.0],
+        [2.0, 0.0, 0.0],
+        [0.0, 2.0, 0.0],
+        [1.0, -2.0, 3.0],
+    ])
+    result = spherical_coordinates(7.0)(points)
+
+    np.testing.assert_allclose(result[:4, 1], [0.0, np.pi, np.pi / 2, np.pi / 2])
+    np.testing.assert_allclose(result[2:4, 2], [0.0, np.pi / 2])
+    expected_theta = np.arccos(points[-1, 2] / np.linalg.norm(points[-1]))
+    np.testing.assert_allclose(result[-1, 1], expected_theta)
+
+
+def test_spherical_coordinates_origin_and_roundoff_handling():
+    points = np.array([[0.0, 0.0, 0.0], [1e-300, 0.0, 1.0]])
+    result = spherical_coordinates(2.0)(points)
+
+    assert np.isnan(result[0, 1])
+    assert np.isfinite(result[1, 1])
+    np.testing.assert_allclose(result[1, 1], 0.0)
 
 
 def test_torus_to_poloidal_cartesian_passes_phi_through():

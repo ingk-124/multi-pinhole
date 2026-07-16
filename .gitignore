@@ -1,4 +1,5 @@
 # created by virtualenv automatically
+.DS_Store
 */.DS_Store
 */.idea
 */.vscode

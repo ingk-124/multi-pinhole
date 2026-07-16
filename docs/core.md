@@ -1,16 +1,22 @@
 # Core Module Reference
 
-This document explains the classes defined in `multi_pinhole.core` and, more
+This document explains the optics classes re-exported by `multi_pinhole.core` and, more
 importantly, *how* they compute what they compute: the coordinate-frame
 conventions, the pinhole projection formula, the rasterization algorithm that
 turns a ray into subpixel weights, and the aperture-occlusion check. For the
-full API surface, read the docstrings in `multi_pinhole/core.py` directly —
+Implementations are organized by responsibility: `multi_pinhole.eye` owns
+`Eye` and ray generation, `multi_pinhole.aperture` owns aperture/STL geometry,
+`multi_pinhole.screen` owns detector overlap, etendue quadrature, and
+rasterization, and `multi_pinhole.camera` owns composition, coordinate
+transforms, orientation, and drawing. `multi_pinhole.core` is a compatibility
+facade; both the old imports and the direct module imports return the same
+class objects. For the full API surface, read the class docstrings —
 this document focuses on the underlying process.
 
 ## The four coordinate systems
 
-Every calculation in `core.py` moves points between four coordinate systems,
-laid out in a comment block at the top of the module.【F:multi_pinhole/core.py†L54-L106】
+The core optics modules move points between four coordinate systems,
+laid out in a comment block at the top of the module.
 Understanding the chain is the key to reading the rest of this document:
 
 ```
@@ -30,7 +36,7 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
    coordinates by translating to the camera position and then applying the
    camera's rotation matrix — this is exactly `Camera.world2camera`:
    `X_cam = R · (x_world − camera_position)`, implemented as
-   `(self.rotation_matrix @ (points - self.camera_position[None, :]).T).T`.【F:multi_pinhole/core.py†L1390-L1403】
+   `(self.rotation_matrix @ (points - self.camera_position[None, :]).T).T`.
 
 3. **Eye (pinhole) coordinates** `(X', Y', Z')` — one per `Eye` mounted on
    the camera. A camera can hold several eyes, each offset within the camera
@@ -38,7 +44,7 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
    The eye frame is just the camera frame translated so its origin sits at
    the eye: `X' = X − X_h`, `Y' = Y − Y_h`, `Z' = Z − f` (for a pinhole; a
    concave lens uses `Z' = Z`, see below). This translation is
-   `Eye.camera2eye`.【F:multi_pinhole/core.py†L273-L287】
+   `Eye.camera2eye`.
 
 4. **Image coordinates** `(u, v)` — a 2D frame on the screen surface, with
    the origin at the screen's *upper-left* corner (not its center). `u`
@@ -46,7 +52,7 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
    (matching camera `X`); note the axis order is swapped relative to
    `(X, Y)`. The screen center, which is the camera-frame origin, sits at
    `(u_c, v_c) = screen_size / 2`. `Screen.xy2uv` performs exactly this
-   flip-and-shift: `uv = xy[..., ::-1] + screen_size / 2`.【F:multi_pinhole/core.py†L1001-L1019】
+   flip-and-shift: `uv = xy[..., ::-1] + screen_size / 2`.
 
 Two eye types change how the pinhole frame sits relative to the screen:
 
@@ -59,7 +65,7 @@ Two eye types change how the pinhole frame sits relative to the screen:
   formula below) is offset to `(X_h, Y_h, f)`.
 
 This is enforced in `Eye.__init__`, which also normalizes `eye_size` into a
-`(height, width)` pair and validates `eye_shape`.【F:multi_pinhole/core.py†L136-L259】
+`(height, width)` pair and validates `eye_shape`.
 
 ## Rays
 
@@ -81,7 +87,7 @@ for each input point:
   (`Z > 0`) with any aperture-occlusion result passed in from outside.
 
 All four arrays are aligned and support fancy indexing (`Rays.__getitem__`),
-so a caller can slice all four fields with one boolean mask.【F:multi_pinhole/rays.py†L1-L63】
+so a caller can slice all four fields with one boolean mask.
 `Rays.n` and `Rays.n_visible` expose the total and surviving ray counts,
 letting screening code size sparse buffers or skip empty batches without a
 separate `np.count_nonzero` call.
@@ -94,7 +100,7 @@ back to the `Eye` or `Camera` that created it.
 
 An `Eye` converts a 3D point already expressed in camera coordinates into a
 2D landing spot on the screen. `Eye.calc_rays` does this in four steps
-(mirroring the docstring's own summary):【F:multi_pinhole/core.py†L289-L333】
+(mirroring the docstring's own summary):
 
 1. **Translate into eye coordinates.** `camera2eye` subtracts the eye's
    camera-frame position: `points_in_eye = points_in_camera − eye.position`.
@@ -128,7 +134,7 @@ An `Eye` converts a 3D point already expressed in camera coordinates into a
    never divides by zero for surviving points.
 
 `Eye.camera2eye` is the vectorized building block for step 1; everything
-past that is inline in `calc_rays`.【F:multi_pinhole/core.py†L273-L333】
+past that is inline in `calc_rays`.
 
 ## Aperture: an occluding shape
 
@@ -137,7 +143,7 @@ It accepts either an analytic shape (circle, ellipse, rectangle) or an
 explicit STL mesh; for analytic shapes, `Aperture.set_model` builds an STL
 mesh on demand via `stl_utils.generate_aperture_stl` (a Delaunay
 triangulation of the shape's interior — see `docs/utilities.md` for how that
-mesh is constructed) and translates it to the aperture's position.【F:multi_pinhole/core.py†L411-L487】
+mesh is constructed) and translates it to the aperture's position.
 
 That STL mesh is not decorative — it is the actual geometry used for
 occlusion testing. When a `Camera` projects points (`calc_image_vec`, below),
@@ -157,16 +163,16 @@ The `Screen` represents the detector plane. `Screen.__init__` validates the
 physical `screen_shape`/`screen_size`, lays out a `pixel_shape = (U_p, V_p)`
 grid of pixels across that rectangle, and computes each pixel's center via
 `positions()` — a simple `linspace` over each axis, offset by half a pixel
-so centers sit at the middle of each cell (not on its edge).【F:multi_pinhole/core.py†L545-L640】【F:multi_pinhole/core.py†L771-L791】
+so centers sit at the middle of each cell (not on its edge).
 Setting `subpixel_resolution = k` subdivides every pixel into a `k × k`
 finer sub-grid (`_set_variables`), and builds a sparse `transform_matrix`
 that sums each pixel's `k²` subpixels back together — this is how
 `Screen.subpixel_to_pixel` downsamples a high-resolution subpixel image to
 the coarser pixel grid via one sparse matrix-vector product instead of a
-Python loop.【F:multi_pinhole/core.py†L754-L769】【F:multi_pinhole/core.py†L1046-L1081】
+Python loop.
 `image_mask` marks pixels/subpixels outside a circular or elliptical screen
 (no masking for a rectangular screen) so they can be zeroed in displayed
-images.【F:multi_pinhole/core.py†L793-L818】
+images.
 
 ### Cosine falloff and etendue weighting
 
@@ -174,17 +180,14 @@ images.【F:multi_pinhole/core.py†L793-L818】
 between the eye's optical axis and the line from the eye to that subpixel:
 if `tangent = |subpixel_position − eye_position| / focal_length`, then
 `cosine = 1 / sqrt(1 + tangent²)` (the standard `cos(atan(x)) = 1/√(1+x²)`
-identity).【F:multi_pinhole/core.py†L820-L842】 `etendue_per_subpixel` retains
+identity). `etendue_per_subpixel` retains
 the corresponding small-aperture `A_subpixel · cos⁴(θ) / (4π)` diagnostic,
 but the production rasterizer no longer reuses that detector-only value: a
 finite Eye requires source- and Eye-position-dependent local ray geometry.
 
 ### `ray2image_grid`: turning a ray bundle into a sparse image
 
-`Screen.ray2image_grid` is the only rasterizer in the current code (earlier
-revisions of this document mentioned additional `ray2image`/`ray2image2`
-variants; those have been removed — only commented-out call sites remain in
-`Camera.calc_image_vec`).【F:multi_pinhole/core.py†L864-L999】【F:multi_pinhole/core.py†L1468-L1471】
+`Screen.ray2image_grid` is the public detector rasterizer.
 For a `Rays` bundle, it builds a `(N_subpixel, n_rays)` sparse matrix where
 column `r` holds the etendue-weighted subpixel footprint of ray `r`. The
 algorithm:
@@ -217,24 +220,33 @@ algorithm:
    from the Eye centre, the local distance is
    `D² = Z² + |rho - a|²`, and the detector-area density is
    `Z / (4π · zoom_rate² · D³)`. The rasterizer integrates this density over
-   each exact spot/cell overlap with bounded deterministic quadrature, then
+   each spot/cell overlap with deterministic quadrature, then
    stores the resulting weights directly in CSR/CSC form. A complete spot
    contained in one large detector pixel is integrated over the Eye shape
    itself, so local etendue does not depend on detector subpixel refinement.
+
+Ellipse/cell overlap *area* is analytic, which prevents a small spot from
+vanishing merely because no cell center hits it. Density integration is not
+generally analytic: rectangles use 2×2 Gauss quadrature, an ellipse completely
+inside one cell uses 2 radial × 8 angular quadrature, and a clipped ellipse
+boundary cell uses a 4×4 masked midpoint approximation. The last case has no
+strict error guarantee. Subpixel refinement can therefore change local PSF
+accuracy. A spot clipped at the physical screen boundary contributes less
+total signal because only its on-screen part is detected.
 
 The other `Screen` helpers are simpler coordinate/accumulation utilities:
 `xy2uv` (camera `(X,Y)` → image `(u,v)`, described above),
 `uv2subpixel_index` (image coordinates → integer subpixel indices, dropping
 out-of-range hits), `subpixel_to_pixel` (sparse downsampling, described
 above), and `show_image` (Matplotlib display of a pixel or subpixel
-image).【F:multi_pinhole/core.py†L1001-L1150】
+image).
 
 ## Camera: tying eyes, apertures, and the screen together
 
 `Camera` groups one or more `Eye` instances (all sharing the same
 `eye_type`), a list of `Aperture` objects, and a single `Screen`, and
 positions/orients the whole assembly in world space via a `camera_position`
-and `rotation_matrix`.【F:multi_pinhole/core.py†L1185-L1232】 Eye spots may be
+and `rotation_matrix`. Eye spots may be
 smaller than a pixel or subpixel; analytic overlap weighting preserves their
 area without imposing a detector-resolution constraint at construction.
 
@@ -287,7 +299,7 @@ shared by multiple worlds, and removing it from a world does not thaw it.
 
 `Camera.calc_image_vec(eye_num, points, ...)` is the top-level entry point
 that a `World` calls (once per camera eye) to project a batch of world
-points through one eye. It runs three steps:【F:multi_pinhole/core.py†L1434-L1472】
+points through one eye. It runs three steps:
 
 1. **World → camera.** `points_in_camera = self.world2camera(points)`.
 2. **Aperture visibility (optional, on by default).** For every `Aperture`
@@ -337,7 +349,7 @@ Using a pinhole eye built with `position=(5, 0)`, `focal_length=20` (so
 `draw_optical_system`, `draw_camera_orientation_plotly`, and
 `draw_camera_orientation` render the eyes, apertures, and screen in
 Matplotlib or Plotly 3D scenes for alignment and debugging; they are pure
-visualization and do not affect the projection math above.【F:multi_pinhole/core.py†L1474-L1697】
+visualization and do not affect the projection math above.
 
 Together these classes provide the foundation that `multi_pinhole.world`
 and `multi_pinhole.voxel` build on to simulate complete multi-aperture

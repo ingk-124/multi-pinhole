@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.0
+
+- Split the optics implementation into responsibility-focused modules:
+  `eye`, `aperture`, `screen`, `camera`, and `rays`. The public package and
+  `multi_pinhole.core` compatibility facade continue to expose the same class
+  objects and legacy pickle/dill globals.
+- Moved geometry-only visibility calculations into the private
+  `multi_pinhole._visibility` module. `World` retains public methods, scene
+  state, cache ownership, and projection invalidation.
+- Moved optical-bin source quadrature and sparse projection assembly into the
+  private `multi_pinhole._projection_matrix` module. `World` retains camera
+  selection, cache validation and assignment, serialization, and the tightly
+  coupled adaptive contiguous-voxel orchestration.
+- Preserved detector/source integration formulas, visibility ordering,
+  projection/backprojection behavior, public signatures and defaults, and
+  projection cache schema version 3.
+- Added decomposition, legacy serialization, fixed-value visibility,
+  serial/parallel projection, optical/contiguous assembly, partial-volume,
+  and architecture regressions.
+
+## 0.7.3
+
+- Standardized public API docstrings toward NumPy style and documented
+  defaults, shapes, units, exceptions, and callable contracts.
+- Documented detector and source quadrature, visibility-boundary
+  approximations, and the limits of adaptive source-resolution heuristics.
+- Replaced the README sample with a runnable projection/preflight/project/
+  backproject workflow and synchronized the English and Japanese guidance.
+- Added documentation regression checks for public docstrings, Markdown
+  links, stale source-line citations, and an executed README workflow.
+- Fixed spherical polar-angle calculation so the reference radius scales only
+  the dimensionless radius and no longer contaminates ``theta``.
+- Preserved projection, etendue, visibility, and serialization behavior,
+  public names/signatures/import paths, and projection-cache schema version 3.
+
 ## 0.7.2
 
 - Added `World.project()` for camera-summed or per-Eye forward projection.

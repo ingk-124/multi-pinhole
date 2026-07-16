@@ -4,8 +4,8 @@ This top-level package re-exports the public classes and helper functions
 needed to build multi-pinhole camera simulations, so most users only need
 ``from multi_pinhole import ...``:
 
-* Optics: :class:`~multi_pinhole.core.Eye`, :class:`~multi_pinhole.core.Aperture`,
-  :class:`~multi_pinhole.core.Screen`, :class:`~multi_pinhole.core.Camera`, and the
+* Optics: :class:`~multi_pinhole.eye.Eye`, :class:`~multi_pinhole.aperture.Aperture`,
+  :class:`~multi_pinhole.screen.Screen`, :class:`~multi_pinhole.camera.Camera`, and the
   :class:`~multi_pinhole.rays.Rays` data container returned by ray tracing.
 * Scene modeling: :class:`~multi_pinhole.voxel.Voxel` (the Cartesian voxel grid)
   and :mod:`multi_pinhole.profiles` helpers for evaluating synthetic toroidal

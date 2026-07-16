@@ -14,28 +14,40 @@ linear inverse problem against the same matrix.
 
 The package is organized around four coordinate systems — world, camera,
 pinhole/eye, and screen/image — that are formalized in
-`multi_pinhole.core`.【F:multi_pinhole/core.py†L54-L106】 Every geometric
+`multi_pinhole.core`. Every geometric
 calculation in the package is a composition of transforms between these
 frames; `docs/core.md` walks through that chain in detail.
 
 ## Key Components
 
-- **Core optics** (`multi_pinhole.core`) — `Eye` (a single pinhole/lens
+- **Core optics** (`multi_pinhole.eye`, `multi_pinhole.aperture`,
+  `multi_pinhole.screen`, and `multi_pinhole.camera`) — `Eye` (a single pinhole/lens
   channel), `Aperture` (an occluding shape, analytic or STL), `Screen` (the
   pixelated detector plane and its rasterizer), and `Camera` (which groups
   eyes/apertures/screen and places them in world space). See
-  `docs/core.md`.【F:multi_pinhole/core.py†L126-L1727】
+  `docs/core.md`. `multi_pinhole.core` remains the compatibility facade for
+  all historical imports.
 - **Voxel modeling** (`multi_pinhole.voxel`) — a Cartesian voxel grid
   (`Voxel`) plus synthetic-profile helpers for toroidal plasma emission. See
-  the "Voxel grid geometry" section below.【F:multi_pinhole/voxel.py†L307-L1367】
+  the "Voxel grid geometry" section below.
 - **Coordinate transforms** (`multi_pinhole.coordinates`) — pure functions
   that reinterpret Cartesian voxel-grid points in cylindrical, toroidal, or
   spherical terms, purely for *evaluating a profile*; the grid itself is
-  always Cartesian.【F:multi_pinhole/coordinates.py†L1-L124】
+  always Cartesian.
+
+For spherical coordinates, ``r = ||(x,y,z)|| / a`` is dimensionless,
+``theta = arccos(z / ||(x,y,z)||)`` is the polar angle from ``+z`` in
+``[0, pi]``, and ``phi = atan2(y, x)`` is the counter-clockwise azimuth from
+``+x`` in ``[-pi, pi]``. The reference radius ``a`` scales only ``r``. At the
+origin ``theta`` is ``nan``; azimuth on the ``z`` axis follows NumPy's
+``atan2`` signed-zero behavior although it is mathematically undefined.
 - **World orchestration** (`multi_pinhole.world`) — `World` binds a `Voxel`,
   one or more `Camera` instances, and optional STL `walls` into a scene; it
   computes per-eye visibility and assembles the voxel-to-screen projection
-  matrix. See `docs/world.md`.【F:multi_pinhole/world.py†L151-L1595】
+  matrix. Geometry-to-mask calculations live in private
+  `multi_pinhole._visibility`, while independent optical-bin quadrature and
+  sparse assembly live in private `multi_pinhole._projection_matrix`; public
+  methods and cache ownership remain on `World`. See `docs/world.md`.
 
 ## Typical Workflow
 
@@ -116,9 +128,9 @@ each of these sub-steps.
 
 A `Voxel` is a rectilinear (not necessarily uniformly-spaced) 3D grid,
 defined by three 1D axis arrays `x_axis`, `y_axis`, `z_axis` of grid-line
-positions.【F:multi_pinhole/voxel.py†L370-L450】 From those axes,
+positions. From those axes,
 `Voxel.update()` derives everything else in a vectorized way (no Python
-loops over voxels):【F:multi_pinhole/voxel.py†L924-L992】
+loops over voxels):
 
 * **Grid points** are the `(N_x+1) × (N_y+1) × (N_z+1)` Cartesian product of
   the three axes, flattened in `z`-fastest, then `y`, then `x` order (i.e.
@@ -142,7 +154,7 @@ loops over voxels):【F:multi_pinhole/voxel.py†L924-L992】
   position `(a, b, c)` within the parent voxel (`a, b, c ∈ [0, 1]`) is
   assigned to a weighted combination of the voxel's 8 corner vertex values,
   with weights `(1−a)(1−b)(1−c)`, `(1−a)(1−b)c`, ..., `abc` — the standard
-  trilinear interpolation basis.【F:multi_pinhole/voxel.py†L39-L77】
+  trilinear interpolation basis.
 
 ### Coordinate transforms for profile evaluation
 
@@ -150,7 +162,7 @@ The grid itself is always Cartesian; `Voxel.normalized_coordinates()`
 optionally *reinterprets* Cartesian points (by default, the voxel gravity
 centers) in a different coordinate system, purely so that profile functions
 can be written in terms that are natural for the device's symmetry.
-【F:multi_pinhole/voxel.py†L749-L772】
+
 `multi_pinhole.coordinates` implements five such transforms (all taking
 Cartesian `(x, y, z)` and returning normalized coordinates):
 
@@ -164,9 +176,12 @@ Cartesian `(x, y, z)` and returning normalized coordinates):
   `+z`). `torus_inverse` is the same construction with both angles flipped
   in sign/reference (`theta` referenced to the inboard midplane, `phi`
   counter-clockwise) — both conventions are right-handed
-  `(r, theta, phi)`.【F:multi_pinhole/coordinates.py†L32-L82】
-* **Spherical** `(r, theta, phi)` — the usual physics convention,
-  `r = |x|/a`, `theta = arccos(z/r)`, `phi = atan2(y, x)`.
+  `(r, theta, phi)`.
+* **Spherical** `(r, theta, phi)` — let
+  `distance = sqrt(x² + y² + z²)`. Then `r = distance / a`,
+  `theta = arccos(z / distance)`, and `phi = atan2(y, x)`. The reference
+  radius `a` scales only `r` and does not affect either angle. At the origin,
+  `theta = nan`.
 
 `multi_pinhole.profiles` provides composable helpers for evaluating synthetic
 toroidal and poloidal profiles on top of these coordinates, including shifted

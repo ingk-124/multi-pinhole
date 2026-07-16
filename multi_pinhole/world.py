@@ -29,12 +29,21 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
+from ._visibility import (
+    calculate_point_visibility,
+    calculate_visible_vertex_mask,
+    classify_visible_voxels,
+)
 from .projection import (
     EyeProjectionWorkEstimate,
     PointSourceResolutionEstimate,
     ProjectionWorkEstimate,
     make_optical_binning,
     select_circumsphere_resolution,
+)
+from ._projection_matrix import (
+    build_optical_projection_matrix,
+    sum_eye_projections,
 )
 from .voxel import Voxel
 from .utils import stl_utils
@@ -848,53 +857,14 @@ class World:
         if any([_e >= len(_camera.eyes) or _e < 0 for _e in eye_idx]):
             raise ValueError(f"eye_idx should be in the range of [0, {len(_camera.eyes) - 1}]")
 
-        visible = np.zeros((len(eye_idx), points.shape[0]), dtype=bool)  # (N_eye, N_points)
-
-        for i, _e in enumerate(eye_idx):
-            _eye = _camera.eyes[_e]
-            # check if the voxel is behind the camera (N_points, )
-            visible[i] = camera_points[:, 2] >= _eye.position[-1]
-            # check if the voxel is in front of the camera (N_points, )
-            my_print(f"checking visible points for eye {_e + 1}/{len(_camera.eyes)}",
-                     show=verbose > 0)
-            my_print("-" * 15, show=verbose > 0)
-            # Apply each occluder only to points that remain visible.  This is
-            # equivalent to the previous boolean AND, but avoids repeating the
-            # expensive mesh test for points rejected by the front-plane test
-            # or an earlier aperture/wall.
-            my_print(f"--- checking for apertures ---", show=verbose > 0)
-            for a, aperture in enumerate(_camera.apertures):
-                active = np.flatnonzero(visible[i])
-                if active.size == 0:
-                    break
-                if aperture.stl_model is None:
-                    aperture.set_model()
-                aperture_visible = stl_utils.check_visible(
-                    mesh_obj=aperture.stl_model,
-                    start=_eye.position,
-                    grid_points=camera_points[active],
-                    verbose=verbose,
-                    behind_start_included=True,
-                )
-                visible[i, active[~aperture_visible]] = False
-                my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
-                my_print("-" * 15, show=verbose > 0)
-
-            my_print("--- checking for walls ---", show=verbose > 0)
-            for w, wall_in_camera in enumerate(walls_in_camera):
-                active = np.flatnonzero(visible[i])
-                if active.size == 0:
-                    break
-                wall_visible = stl_utils.check_visible(
-                    mesh_obj=wall_in_camera,
-                    start=_eye.position,
-                    grid_points=camera_points[active],
-                    verbose=verbose,
-                )
-                visible[i, active[~wall_visible]] = False
-                my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
-                my_print("-" * 15, show=verbose > 0)
-        return visible  # (N_eye, N_points)
+        return calculate_point_visibility(
+            camera_points=camera_points,
+            eyes=_camera.eyes,
+            eye_indices=eye_idx,
+            apertures=_camera.apertures,
+            walls_in_camera=walls_in_camera,
+            verbose=verbose,
+        )  # (N_eye, N_points)
 
     def _find_visible_vertices(self, force: bool = False, verbose: int = None,
                                camera_idx: Hashable = None) -> None:
@@ -939,15 +909,19 @@ class World:
                              f"Recalculating...", show=verbose > 0)
             else:
                 my_print(f"Finding visible vertices for camera {c_!r}...", show=verbose > 0)
-            visible_vertices = np.zeros((len(camera.eyes), self.voxel.N_grid), dtype=bool)
-            visible_vertices[:, self.inside_vertices] = True
             if np.sum(self.inside_vertices) == 0:
                 my_print("No inside vertices. Skip calculating visible vertices.", show=verbose > 0)
+                inside_visibility = np.ones((len(camera.eyes), 0), dtype=bool)
             else:
-                visible_vertices[:, self.inside_vertices] \
-                    = self.find_visible_points(self.voxel.grid[self.inside_vertices],
-                                               camera_idx=c_,
-                                               verbose=verbose)  # (N_eye, N_inside_points)
+                inside_visibility = self.find_visible_points(
+                    self.voxel.grid[self.inside_vertices],
+                    camera_idx=c_,
+                    verbose=verbose,
+                )  # (N_eye, N_inside_points)
+            visible_vertices = calculate_visible_vertex_mask(
+                self.inside_vertices,
+                inside_visibility,
+            )
             self._visible_vertices[c_] = visible_vertices
             my_print(f"Visible vertices for camera {c_!r} is calculated.", show=verbose > 0)
 
@@ -985,9 +959,10 @@ class World:
                          show=verbose > 1)
                 continue
             self._find_visible_vertices(force=force, verbose=verbose, camera_idx=c_)
-            conditions_any = np.any(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
-            conditions_all = np.all(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
-            visible_voxels[c_] = conditions_any + conditions_all
+            visible_voxels[c_] = classify_visible_voxels(
+                self._visible_vertices[c_],
+                self.voxel.vertices_indices,
+            )
             my_print(f"Visible voxels for camera {c_!r} is calculated.", show=verbose > 0)
         self._visible_voxels = visible_voxels
         my_print("Finding visible voxels is done.", show=verbose > 0)
@@ -998,148 +973,25 @@ class World:
             full_subvoxel_res, partial_subvoxel_res,
             max_nnz: int, max_working_memory: int,
             optical_bin_width_pixels, verbose: int):
-        """Build ordinary sparse P using visible-voxel optical bins.
-
-        This experimental path bins visible voxel centers, packs complete bins
-        into work chunks, and only then expands those voxels into sub-voxel
-        samples. Detector subpixels remain transient quadrature samples; each
-        chunk is binned to physical pixels before persistent sparse assembly.
-        """
-        camera = self.cameras[camera_idx]
-        screen = camera.screen
-        n_vox = self.voxel.N
-        index_start = time.perf_counter()
-        full_resolution = tuple(int(r) for r in np.broadcast_to(full_subvoxel_res, 3))
-        partial_resolution = tuple(int(r) for r in np.broadcast_to(partial_subvoxel_res, 3))
-        full_cost = int(np.prod(full_resolution))
-        partial_cost = int(np.prod(partial_resolution))
-        visible_voxels = np.concatenate((full_voxels, partial_voxels))
-        sample_costs = np.concatenate((
-            np.full(full_voxels.size, full_cost, dtype=np.int64),
-            np.full(partial_voxels.size, partial_cost, dtype=np.int64),
-        ))
-        voxel_centers = self.voxel.get_gravity_center(visible_voxels)
-        if visible_voxels.size == 0:
-            return sparse.csr_matrix((screen.N_pixel, n_vox))
-
-        def _sparse_nbytes(matrix):
-            matrix = matrix.tocsr()
-            return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
-
-        if full_voxels.size:
-            sample_voxels = full_voxels[:min(full_voxels.size, 20)]
-            sample_resolution = full_resolution
-        else:
-            sample_voxels = partial_voxels[:min(partial_voxels.size, 20)]
-            sample_resolution = partial_resolution
-        sample_points = self.voxel.get_sub_voxel_centers(
-            sample_voxels, res=sample_resolution,
+        """Build ordinary sparse P using visible-voxel optical bins."""
+        return build_optical_projection_matrix(
+            voxel=self.voxel,
+            camera=self.cameras[camera_idx],
+            eye_idx=eye_idx,
+            full_voxels=full_voxels,
+            partial_voxels=partial_voxels,
+            full_subvoxel_res=full_subvoxel_res,
+            partial_subvoxel_res=partial_subvoxel_res,
+            max_nnz=max_nnz,
+            max_working_memory=max_working_memory,
+            optical_bin_width_pixels=optical_bin_width_pixels,
+            verbose=verbose,
+            point_visibility=lambda points: self.find_visible_points(
+                points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
+            ),
+            inside_points=self._inside_points,
+            make_binning=make_optical_binning,
         )
-        sample_S = self.voxel.sub_voxel_interpolator_from_centers(
-            sample_voxels, res=sample_resolution, points=sample_points,
-        )
-        sample_I = camera.calc_image_vec(
-            eye_idx, points=sample_points, verbose=0, check_visibility=False,
-        )
-        sample_result = screen.transform_matrix @ (sample_I @ sample_S)
-        sample_count = sample_points.shape[0]
-        transient_bytes = (
-            sample_points.nbytes + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
-            + _sparse_nbytes(sample_result)
-        )
-        bytes_per_sample = max(1.0, transient_bytes / sample_count)
-        memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
-        nnz_per_sample = sample_I.nnz / sample_count
-        if nnz_per_sample == 0.0:
-            nnz_per_sample = screen.N_subpixel * 0.01
-        nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
-        max_samples = min(memory_samples, nnz_samples, int(sample_costs.sum()))
-        del sample_I, sample_S, sample_result
-
-        binning = make_optical_binning(
-            camera, eye_idx, voxel_centers,
-            bin_width_pixels=optical_bin_width_pixels,
-            max_scope_samples=max_samples,
-            sample_costs=sample_costs,
-        )
-        work_chunks = binning.work_chunks(max_samples=max_samples)
-        index_elapsed = time.perf_counter() - index_start
-        my_print(
-            f"Processing {visible_voxels.size} visible voxels "
-            f"({sample_costs.sum()} sub-voxel samples before partial masking) in "
-            f"{binning.n_scopes} optical scopes and {len(work_chunks)} work chunks "
-            f"(max_samples={max_samples})",
-            show=verbose > 0,
-        )
-
-        projection_start = time.perf_counter()
-        result = sparse.csr_matrix((screen.N_pixel, n_vox))
-        data_buf, row_buf, col_buf = [], [], []
-        buffer_nbytes = 0
-        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
-
-        def _flush():
-            nonlocal result, data_buf, row_buf, col_buf, buffer_nbytes
-            if not data_buf:
-                return
-            block = sparse.coo_matrix(
-                (np.concatenate(data_buf),
-                 (np.concatenate(row_buf), np.concatenate(col_buf))),
-                shape=result.shape,
-            ).tocsr()
-            result += block
-            data_buf, row_buf, col_buf = [], [], []
-            buffer_nbytes = 0
-
-        def _project_voxels(owners, resolution, check_point_visibility):
-            if owners.size == 0:
-                return None
-            points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
-            S = self.voxel.sub_voxel_interpolator_from_centers(
-                owners, res=resolution, points=points,
-            )
-            if check_point_visibility:
-                mask = self.find_visible_points(
-                    points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
-                ).reshape(-1)
-                mask &= self._inside_points(points)
-                if not np.any(mask):
-                    return None
-                points = points[mask]
-                S = S[mask]
-            I_subpixel = camera.calc_image_vec(
-                eye_idx, points=points, verbose=0, check_visibility=False,
-            )
-            # Integrate source samples first, then bin detector quadrature
-            # samples. Only the physical-pixel matrix is retained.
-            return (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
-
-        for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
-                             disable=verbose <= 0):
-            ordered_voxels = visible_voxels[chunk]
-            is_full = chunk < full_voxels.size
-            chunk_results = (
-                _project_voxels(ordered_voxels[is_full], full_resolution, False),
-                _project_voxels(ordered_voxels[~is_full], partial_resolution, True),
-            )
-            for P_chunk in chunk_results:
-                if P_chunk is None:
-                    continue
-                data_buf.append(P_chunk.data)
-                row_buf.append(P_chunk.row)
-                col_buf.append(P_chunk.col)
-                buffer_nbytes += (P_chunk.data.nbytes + P_chunk.row.nbytes
-                                  + P_chunk.col.nbytes)
-            if buffer_nbytes >= result_buffer_limit:
-                _flush()
-        _flush()
-        projection_elapsed = time.perf_counter() - projection_start
-        my_print(
-            f"Optical sparse-P timing: index={index_elapsed:.3f}s, "
-            f"projection={projection_elapsed:.3f}s",
-            show=verbose > 1,
-        )
-        return result
 
     def estimate_source_resolution(
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
@@ -1147,11 +999,11 @@ class World:
             point_source_threshold: float = 1.0 / 8.0,
             detector_grid: str = "psf",
             batch_size: int = 100_000) -> PointSourceResolutionEstimate:
-        """Select res=1 using a conservative projected circumsphere test.
+        """Recommend source resolution using a local perspective heuristic.
 
         This diagnostic does not alter the voxel grid or a cached projection.
-        It compares a worst-direction projected voxel circumsphere with the
-        selected detector/PSF scale. The same threshold gives an ideal
+        It compares a voxel-center local-perspective circumsphere scale with
+        the selected detector/PSF scale. The same threshold gives an uncapped
         near-cubic axis-wise resolution, clipped by ``max_resolution``.
 
         Parameters
@@ -1180,6 +1032,15 @@ class World:
         -------
         PointSourceResolutionEstimate
             Diagnostics in the same order as ``voxel_indices``.
+
+        Notes
+        -----
+        This is not a rigorous upper bound for projection over the complete
+        finite voxel. Large voxels near an Eye can be underestimated. The
+        point-source threshold is a sampling policy, not an image-error
+        tolerance; ``ideal_resolution`` likewise carries no error guarantee.
+        Invalid geometry uses ``max_resolution`` as a fallback, and capped
+        axes may not reach the heuristic recommendation.
         """
         if camera_idx not in self.cameras:
             raise KeyError(f"unknown camera key: {camera_idx!r}")
@@ -1358,19 +1219,45 @@ class World:
             point_source_threshold: float = 1.0 / 8.0,
             force_visibility: bool = False,
             verbose: int = 0) -> ProjectionWorkEstimate:
-        """Estimate projection source-sample work without constructing P.
+        """Estimate projection source-sample work without constructing ``P``.
 
+        Parameters
+        ----------
+        res : int or tuple of int or None
+            Full-voxel resolution. Required for ``"fixed"`` and ``"auto"``;
+            use ``None`` only with uncapped ``"ideal"``.
+        res_mode : {"fixed", "auto", "ideal"}, default="fixed"
+            Fully-visible source sampling policy.
+        partial_res : int or tuple of int, optional
+            Partial-voxel resolution. If ``None``, use ``res``. An explicit
+            value is required for ``res_mode="ideal"``.
+        point_source_threshold : float, default=1/8
+            Dimensionless sampling threshold, not an image-error tolerance.
+        force_visibility : bool, default=False
+            Recompute rather than reuse voxel visibility.
+        verbose : int, default=0
+            Verbosity level.
+
+        Returns
+        -------
+        ProjectionWorkEstimate
+            Per-Eye sample counts and heuristic resolution diagnostics.
+
+        Notes
+        -----
         Parameters match :meth:`set_projection_matrix` for source quadrature.
         ``fixed`` uses the mandatory ``res`` directly. ``auto`` selects a
         geometric ideal per fully-visible voxel and clips it axis-wise by
         ``res``. The explicitly requested ``ideal`` mode is uncapped and
         therefore requires ``res=None`` plus a fixed ``partial_res``.
 
+        Fully-visible scheduled counts are exact for this sampling policy.
         Partial-voxel samples are reported before point visibility and inside
-        masks, so totals are conservative upper bounds. Visibility is cached
+        masks, so those counts are upper bounds. Visibility is cached
         by :meth:`find_visible_voxels` and can be reused by the subsequent
         projection calculation. This method does not build or modify a
-        projection matrix.
+        projection matrix. ``ideal`` means uncapped heuristic work, not a
+        numerical error guarantee.
         """
         full_resolution, partial_resolution, adaptive = (
             self._resolve_projection_resolutions(
@@ -2000,14 +1887,14 @@ class World:
             Mandatory source resolution. ``fixed`` uses it directly and
             ``auto`` treats it as an axis-wise ceiling. Pass ``None`` only
             with the explicitly uncapped ``res_mode='ideal'``.
-        res_mode : {"fixed", "auto", "ideal"}, optional
-            Fully-visible source-resolution policy. Defaults to ``"fixed"``.
-        verbose : int, optional
-            Verbosity level controlling progress logging. Defaults to ``1``.
-        parallel : int, optional
+        res_mode : {"fixed", "auto", "ideal"}, default="fixed"
+            Fully-visible source-resolution policy.
+        verbose : int, default=1
+            Verbosity level controlling progress logging.
+        parallel : int, default=-1
             Degree of parallelism forwarded to
             :meth:`_calc_voxel_image_for_eye`. Negative values are interpreted
-            relative to available CPU cores. Defaults to ``-1``.
+            relative to available CPU cores.
         partial_res : int or (int, int, int), optional
             Sub-voxel resolution used only for partially visible voxels.
             ``None`` reuses ``res``.
@@ -2073,9 +1960,9 @@ class World:
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                 # at least one eye is recalculated
                 # Per-eye matrices already share physical pixel coordinates.
-                self._P_matrix[_c] = sum(
+                self._P_matrix[_c] = sum_eye_projections(
                     self._projection[_c],
-                    sparse.csr_matrix((self.cameras[_c].screen.N_pixel, self.voxel.N)),
+                    (self.cameras[_c].screen.N_pixel, self.voxel.N),
                 )
                 my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
