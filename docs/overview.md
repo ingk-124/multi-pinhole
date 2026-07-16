@@ -44,7 +44,10 @@ origin ``theta`` is ``nan``; azimuth on the ``z`` axis follows NumPy's
 - **World orchestration** (`multi_pinhole.world`) — `World` binds a `Voxel`,
   one or more `Camera` instances, and optional STL `walls` into a scene; it
   computes per-eye visibility and assembles the voxel-to-screen projection
-  matrix. See `docs/world.md`.
+  matrix. Geometry-to-mask calculations live in private
+  `multi_pinhole._visibility`, while independent optical-bin quadrature and
+  sparse assembly live in private `multi_pinhole._projection_matrix`; public
+  methods and cache ownership remain on `World`. See `docs/world.md`.
 
 ## Typical Workflow
 

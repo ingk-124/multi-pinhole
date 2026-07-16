@@ -14,7 +14,7 @@ Projection matrix の検証項目と今後の改善候補は
 - **コア光学系**（`multi_pinhole.eye`、`multi_pinhole.aperture`、`multi_pinhole.screen`、`multi_pinhole.camera`）—— `Eye`（単一の pinhole／レンズチャンネル）、`Aperture`（解析形状または STL による遮蔽形状）、`Screen`（画素化された検出面とそのラスタライザ）、`Camera`（eye・aperture・screen をまとめ、ワールド空間に配置する）から構成されます。`multi_pinhole.core` は旧importを維持する互換facadeです。詳細は `docs/core.md` を参照してください。
 - **ボクセルモデリング**（`multi_pinhole.voxel`）—— デカルト座標のボクセルグリッド（`Voxel`）と、トーラス状プラズマ発光を合成するためのヘルパー関数群です。詳細は下記「ボクセルグリッドの幾何」を参照してください。
 - **座標変換**（`multi_pinhole.coordinates`）—— デカルト座標のボクセルグリッド点を円筒・トーラス・球座標などで**再解釈**するだけの純粋な関数群です。あくまでプロファイルを評価するための道具であり、グリッド自体は常にデカルト座標のままです。
-- **ワールドの統括**（`multi_pinhole.world`）—— `World` は `Voxel`、1台以上の `Camera`、任意の STL 「壁」を1つのシーンにまとめます。eye ごとの可視性を計算し、ボクセル→スクリーンの投影行列を組み立てます。詳細は `docs/world.md` を参照してください。
+- **ワールドの統括**（`multi_pinhole.world`）—— `World` は `Voxel`、1台以上の `Camera`、任意の STL 「壁」を1つのシーンにまとめます。eye ごとの可視性を計算し、ボクセル→スクリーンの投影行列を組み立てます。geometryからmaskへの計算はprivateな `multi_pinhole._visibility`、独立したoptical-bin quadratureとsparse assemblyはprivateな `multi_pinhole._projection_matrix` が担当し、公開methodとcache所有は `World` に残ります。詳細は `docs/world.md` を参照してください。
 
 ## 典型的なワークフロー
 

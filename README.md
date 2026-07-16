@@ -11,6 +11,17 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 - `examples/`: Example and analysis scripts demonstrating how to use the package.
 - `benchmarks/`: Reproducible performance and numerical-accuracy experiments.
 
+## Architecture and compatibility
+
+The public classes remain available from `multi_pinhole`. Optics
+implementations live in `eye`, `aperture`, `screen`, `camera`, and `rays`;
+`multi_pinhole.core` remains a compatibility facade exposing the same class
+objects for legacy imports and serialized globals. `World` remains in
+`multi_pinhole.world` and owns public orchestration, scene state,
+serialization, and caches. Private `_visibility` and `_projection_matrix`
+modules contain calculations that can return masks or sparse matrices without
+owning those caches. Projection cache schema 3 remains compatible with 0.7.3.
+
 ## Installation
 To install the package, clone the repository and run:
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0
+
+- Split the optics implementation into responsibility-focused modules:
+  `eye`, `aperture`, `screen`, `camera`, and `rays`. The public package and
+  `multi_pinhole.core` compatibility facade continue to expose the same class
+  objects and legacy pickle/dill globals.
+- Moved geometry-only visibility calculations into the private
+  `multi_pinhole._visibility` module. `World` retains public methods, scene
+  state, cache ownership, and projection invalidation.
+- Moved optical-bin source quadrature and sparse projection assembly into the
+  private `multi_pinhole._projection_matrix` module. `World` retains camera
+  selection, cache validation and assignment, serialization, and the tightly
+  coupled adaptive contiguous-voxel orchestration.
+- Preserved detector/source integration formulas, visibility ordering,
+  projection/backprojection behavior, public signatures and defaults, and
+  projection cache schema version 3.
+- Added decomposition, legacy serialization, fixed-value visibility,
+  serial/parallel projection, optical/contiguous assembly, partial-volume,
+  and architecture regressions.
+
 ## 0.7.3
 
 - Standardized public API docstrings toward NumPy style and documented
