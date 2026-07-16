@@ -29,6 +29,11 @@ from scipy import sparse
 from stl import mesh
 
 from .core import Aperture, Camera, Eye, Screen
+from ._visibility import (
+    calculate_point_visibility,
+    calculate_visible_vertex_mask,
+    classify_visible_voxels,
+)
 from .projection import (
     EyeProjectionWorkEstimate,
     PointSourceResolutionEstimate,
@@ -848,53 +853,14 @@ class World:
         if any([_e >= len(_camera.eyes) or _e < 0 for _e in eye_idx]):
             raise ValueError(f"eye_idx should be in the range of [0, {len(_camera.eyes) - 1}]")
 
-        visible = np.zeros((len(eye_idx), points.shape[0]), dtype=bool)  # (N_eye, N_points)
-
-        for i, _e in enumerate(eye_idx):
-            _eye = _camera.eyes[_e]
-            # check if the voxel is behind the camera (N_points, )
-            visible[i] = camera_points[:, 2] >= _eye.position[-1]
-            # check if the voxel is in front of the camera (N_points, )
-            my_print(f"checking visible points for eye {_e + 1}/{len(_camera.eyes)}",
-                     show=verbose > 0)
-            my_print("-" * 15, show=verbose > 0)
-            # Apply each occluder only to points that remain visible.  This is
-            # equivalent to the previous boolean AND, but avoids repeating the
-            # expensive mesh test for points rejected by the front-plane test
-            # or an earlier aperture/wall.
-            my_print(f"--- checking for apertures ---", show=verbose > 0)
-            for a, aperture in enumerate(_camera.apertures):
-                active = np.flatnonzero(visible[i])
-                if active.size == 0:
-                    break
-                if aperture.stl_model is None:
-                    aperture.set_model()
-                aperture_visible = stl_utils.check_visible(
-                    mesh_obj=aperture.stl_model,
-                    start=_eye.position,
-                    grid_points=camera_points[active],
-                    verbose=verbose,
-                    behind_start_included=True,
-                )
-                visible[i, active[~aperture_visible]] = False
-                my_print(f"{a + 1}/{len(_camera.apertures)} done", show=verbose > 0)
-                my_print("-" * 15, show=verbose > 0)
-
-            my_print("--- checking for walls ---", show=verbose > 0)
-            for w, wall_in_camera in enumerate(walls_in_camera):
-                active = np.flatnonzero(visible[i])
-                if active.size == 0:
-                    break
-                wall_visible = stl_utils.check_visible(
-                    mesh_obj=wall_in_camera,
-                    start=_eye.position,
-                    grid_points=camera_points[active],
-                    verbose=verbose,
-                )
-                visible[i, active[~wall_visible]] = False
-                my_print(f"{w + 1}/{len(walls_in_camera)} done", show=verbose > 0)
-                my_print("-" * 15, show=verbose > 0)
-        return visible  # (N_eye, N_points)
+        return calculate_point_visibility(
+            camera_points=camera_points,
+            eyes=_camera.eyes,
+            eye_indices=eye_idx,
+            apertures=_camera.apertures,
+            walls_in_camera=walls_in_camera,
+            verbose=verbose,
+        )  # (N_eye, N_points)
 
     def _find_visible_vertices(self, force: bool = False, verbose: int = None,
                                camera_idx: Hashable = None) -> None:
@@ -939,15 +905,19 @@ class World:
                              f"Recalculating...", show=verbose > 0)
             else:
                 my_print(f"Finding visible vertices for camera {c_!r}...", show=verbose > 0)
-            visible_vertices = np.zeros((len(camera.eyes), self.voxel.N_grid), dtype=bool)
-            visible_vertices[:, self.inside_vertices] = True
             if np.sum(self.inside_vertices) == 0:
                 my_print("No inside vertices. Skip calculating visible vertices.", show=verbose > 0)
+                inside_visibility = np.ones((len(camera.eyes), 0), dtype=bool)
             else:
-                visible_vertices[:, self.inside_vertices] \
-                    = self.find_visible_points(self.voxel.grid[self.inside_vertices],
-                                               camera_idx=c_,
-                                               verbose=verbose)  # (N_eye, N_inside_points)
+                inside_visibility = self.find_visible_points(
+                    self.voxel.grid[self.inside_vertices],
+                    camera_idx=c_,
+                    verbose=verbose,
+                )  # (N_eye, N_inside_points)
+            visible_vertices = calculate_visible_vertex_mask(
+                self.inside_vertices,
+                inside_visibility,
+            )
             self._visible_vertices[c_] = visible_vertices
             my_print(f"Visible vertices for camera {c_!r} is calculated.", show=verbose > 0)
 
@@ -985,9 +955,10 @@ class World:
                          show=verbose > 1)
                 continue
             self._find_visible_vertices(force=force, verbose=verbose, camera_idx=c_)
-            conditions_any = np.any(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
-            conditions_all = np.all(self._visible_vertices[c_][:, self.voxel.vertices_indices], axis=-1).astype(int)
-            visible_voxels[c_] = conditions_any + conditions_all
+            visible_voxels[c_] = classify_visible_voxels(
+                self._visible_vertices[c_],
+                self.voxel.vertices_indices,
+            )
             my_print(f"Visible voxels for camera {c_!r} is calculated.", show=verbose > 0)
         self._visible_voxels = visible_voxels
         my_print("Finding visible voxels is done.", show=verbose > 0)
