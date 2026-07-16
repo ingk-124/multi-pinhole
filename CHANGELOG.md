@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.3
+
+- Standardized public API docstrings toward NumPy style and documented
+  defaults, shapes, units, exceptions, and callable contracts.
+- Documented detector and source quadrature, visibility-boundary
+  approximations, and the limits of adaptive source-resolution heuristics.
+- Replaced the README sample with a runnable projection/preflight/project/
+  backproject workflow and synchronized the English and Japanese guidance.
+- Added documentation regression checks for public docstrings, Markdown
+  links, stale source-line citations, and an executed README workflow.
+- Fixed spherical polar-angle calculation so the reference radius scales only
+  the dimensionless radius and no longer contaminates ``theta``.
+- Preserved projection, etendue, visibility, and serialization behavior,
+  public names/signatures/import paths, and projection-cache schema version 3.
+
 ## 0.7.2
 
 - Added `World.project()` for camera-summed or per-Eye forward projection.
