@@ -73,6 +73,14 @@ scratch.
 
 ## Visibility Evaluation
 
+`World` owns scene state and the per-camera visibility caches, while the
+private `multi_pinhole._visibility` module contains the geometry-to-mask
+calculations. `World.find_visible_points` remains the public entry point: it
+resolves the camera key and prepares camera-coordinate points and walls.
+Vertex and voxel helpers return new masks to `World`, which remains solely
+responsible for assigning `_visible_vertices` and `_visible_voxels` and for
+invalidating projection caches when scene geometry changes.
+
 Visibility is computed at three granularities, each building on the last:
 **points → vertices → voxels**.
 

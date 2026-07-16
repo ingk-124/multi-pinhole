@@ -39,6 +39,13 @@ geometry は設定 resolution へ fallback します。
 
 ## 可視性の評価
 
+`World` はscene状態とcameraごとのvisibility cacheを所有し、privateな
+`multi_pinhole._visibility` moduleはgeometryからmaskを求める計算だけを
+担当します。公開entry pointは引き続き `World.find_visible_points` です。
+ここでcamera keyを解決し、pointとwallをcamera座標へ準備します。
+`_visible_vertices` と `_visible_voxels` への代入、およびgeometry変更時の
+projection cache無効化は、引き続き `World` だけが担当します。
+
 可視性は **点 → 頂点 → ボクセル** という3段階の粒度で計算され、それぞれが前段の結果の上に構築されます。
 
 ### `find_visible_points`：eye ごとの可視性判定の中核
