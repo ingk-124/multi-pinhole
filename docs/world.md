@@ -150,6 +150,20 @@ mostly empty space.
 
 ## Projection Assembly
 
+`World` owns projection settings and cache lifecycle. The private
+`multi_pinhole._projection_matrix` module owns the optical-bin quadrature and
+sparse assembly that can be expressed from explicit `Voxel`, `Camera`, voxel
+index, resolution, and geometry-query inputs. It returns a CSR matrix without
+accessing or mutating a `World` cache. `World` validates and resolves public
+arguments, starts visibility calculation, assigns each returned eye matrix to
+`_projection`, and assigns the sum of those matrices to `_P_matrix`.
+
+The established contiguous-voxel strategy remains in `World` for now because
+its adaptive-resolution scheduling, visibility callbacks, progress policy,
+and parallel task lifecycle are still tightly orchestrated there. The
+optical strategy is a complete independent builder rather than a cache-aware
+helper, providing a boundary for moving that remaining orchestration later.
+
 `set_projection_matrix(res, ...)` is the entry point that turns a `Voxel`
 grid and a set of visible voxels into the sparse matrix that maps voxel
 intensities to detector signal, for every camera and every

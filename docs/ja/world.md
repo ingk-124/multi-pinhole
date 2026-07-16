@@ -74,6 +74,19 @@ projection cache無効化は、引き続き `World` だけが担当します。
 
 ## 投影の組み立て
 
+projection設定とcache lifecycleは `World` が所有します。privateな
+`multi_pinhole._projection_matrix` moduleは、明示的な `Voxel`、`Camera`、
+voxel index、resolution、geometry queryを入力にできるoptical-bin
+quadratureとsparse assemblyを担当します。このbuilderは `World` cacheへ
+アクセスせずCSR matrixを返します。公開引数の検証と解決、visibility計算の
+開始、eyeごとの `_projection` とcamera合算 `_P_matrix` への代入は
+`World` に残ります。
+
+既存のcontiguous-voxel strategyは、adaptive-resolution scheduling、
+visibility callback、進捗policy、parallel task lifecycleがまだ密結合なため、
+今回は無理に移さず `World` に残します。optical strategy側はcache-awareな
+小helperではなく、独立した完全なbuilderとして分離されています。
+
 `set_projection_matrix(res, ...)` は、`Voxel` グリッドと可視ボクセルの情報を、すべてのカメラ・すべての eye についてボクセル強度を検出器信号へ写像する疎行列に変換するエントリポイントです。各 `(camera, eye)` の組について `_calc_voxel_image_for_eye` を呼び出し、その後1つのカメラ上のすべての eye をそのカメラのピクセル空間 `P_matrix` へ集約します。
 
 重い計算を開始する前に、同じsource resolution設定で `preflight_projection` を実行できます。
