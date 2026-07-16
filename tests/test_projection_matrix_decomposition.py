@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 from scipy import sparse
 
@@ -54,6 +56,8 @@ def test_optical_builder_preserves_world_binning_monkeypatch(monkeypatch):
 
 
 def test_projection_builder_api_has_no_world_or_cache_parameter():
-    names = _projection_matrix.build_optical_projection_matrix.__annotations__
+    names = inspect.signature(
+        _projection_matrix.build_optical_projection_matrix,
+    ).parameters
     assert "world" not in names
     assert "cache" not in names
