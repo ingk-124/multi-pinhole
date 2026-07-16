@@ -78,7 +78,19 @@ def projected_axis_spans(camera, eye_index: int, centers: np.ndarray,
 
 @dataclass(frozen=True)
 class SourceResolutionEstimate:
-    """Axis-wise source quadrature recommendation and its diagnostics."""
+    """Axis-wise source quadrature recommendation and diagnostics.
+
+    Attributes
+    ----------
+    resolution : ndarray
+        Selected integer axis resolutions, shape ``(n, 3)`` in ``x, y, z`` order.
+    projected_span_cells : ndarray
+        Estimated axis spans in detector-cell units, shape ``(n, 3)``.
+    uncapped_resolution : ndarray
+        Heuristic recommendation before the configured ceiling, shape ``(n, 3)``.
+    capped : ndarray
+        Boolean mask, shape ``(n, 3)``; true axes did not reach that recommendation.
+    """
 
     resolution: np.ndarray
     projected_span_cells: np.ndarray
@@ -88,7 +100,27 @@ class SourceResolutionEstimate:
 
 @dataclass(frozen=True)
 class PointSourceResolutionEstimate:
-    """Conservative circumsphere-based source quadrature recommendation."""
+    """Local-perspective source quadrature recommendation.
+
+    Attributes
+    ----------
+    resolution : ndarray
+        Selected integer resolution, shape ``(n, 3)`` in ``x, y, z`` order.
+    ratio : ndarray
+        Projected-diameter/reference-scale ratio, shape ``(n,)``, dimensionless.
+    projected_diameter, reference_size : ndarray
+        Local projected size and comparison scale, shape ``(n,)``, in detector
+        length units.
+    point_source : ndarray
+        Boolean sampling-policy decision, shape ``(n,)``; not an error test.
+    ideal_resolution : ndarray
+        Uncapped heuristic resolution, shape ``(n, 3)``; ``ideal`` does not
+        imply a numerical error guarantee.
+    capped : ndarray
+        Boolean axis mask, shape ``(n, 3)``.
+    valid : ndarray
+        Boolean geometry-valid mask, shape ``(n,)``; invalid rows use fallback.
+    """
 
     resolution: np.ndarray
     ratio: np.ndarray
@@ -102,7 +134,30 @@ class PointSourceResolutionEstimate:
 
 @dataclass(frozen=True)
 class EyeProjectionWorkEstimate:
-    """Preflight source-sample counts for one camera Eye."""
+    """Preflight source-sample counts for one camera Eye.
+
+    Attributes
+    ----------
+    camera_key : object
+        Camera mapping key.
+    eye_index : int
+        Zero-based Eye index.
+    full_voxels, partial_voxels : int
+        Exact counts from the cached corner-visibility classification.
+    full_samples : int
+        Exact scheduled sample count for fully visible voxels.
+    partial_samples_upper_bound : int
+        Count before sample-center inside/visibility masking.
+    full_resolution_buckets : tuple
+        ``((rx, ry, rz), count)`` groups in ``x, y, z`` order.
+    partial_resolution : tuple of int
+        Fixed partial-voxel resolution in ``x, y, z`` order.
+    ideal_p50, ideal_p95, ideal_max : tuple or None
+        Percentiles of uncapped heuristic axis resolutions.
+    point_source_voxels, capped_axes, invalid_voxels : int
+        Diagnostic counts; capped or invalid entries need not meet the
+        heuristic recommendation.
+    """
 
     camera_key: object
     eye_index: int
@@ -130,7 +185,13 @@ class EyeProjectionWorkEstimate:
 
 @dataclass(frozen=True)
 class ProjectionWorkEstimate:
-    """Projection preflight report across all cameras and Eyes."""
+    """Projection preflight report across all cameras and Eyes.
+
+    Attributes
+    ----------
+    eyes : tuple of EyeProjectionWorkEstimate
+        Per-Eye reports in camera iteration order.
+    """
 
     eyes: tuple[EyeProjectionWorkEstimate, ...]
 
@@ -183,15 +244,45 @@ def select_circumsphere_resolution(
         fallback_resolution=4,
         point_source_threshold: float = 1.0 / 8.0,
         ) -> PointSourceResolutionEstimate:
-    """Select ideal axis-wise res from a projected voxel circumsphere.
+    """Recommend axis-wise source resolution from a local circumsphere scale.
 
-    The local perspective Jacobian has maximum magnification
+    Parameters
+    ----------
+    points_in_eye : ndarray
+        Voxel centers in Eye coordinates, shape ``(n, 3)``, in a consistent
+        length unit (mm in project examples).
+    edge_lengths : ndarray
+        Positive voxel edge lengths, shape ``(n, 3)`` in ``x, y, z`` order,
+        in the same length unit.
+    focal_length : float
+        Nonzero Eye focal length in the same length unit.
+    reference_size : float or ndarray
+        Positive detector/PSF comparison scale, scalar or shape ``(n,)``, in
+        detector length units.
+    fallback_resolution : int or tuple of int or None, default=4
+        Axis-wise ``x, y, z`` ceiling and invalid-geometry fallback. ``None``
+        requests the uncapped heuristic and rejects invalid geometry.
+    point_source_threshold : float, default=1/8
+        Positive dimensionless sampling-policy threshold. It is not an image
+        error tolerance.
+
+    Returns
+    -------
+    PointSourceResolutionEstimate
+        Per-voxel resolutions and diagnostics in input order.
+
+    Notes
+    -----
+    The local perspective Jacobian has magnification
     ``abs(f) / (Z*cos(theta))``. Multiplying it by the voxel circumsphere
     diameter gives a rotation-independent, worst-direction projected size.
     The same scale determines a near-cubic ideal axis-wise resolution. The
-    caller's ``fallback_resolution`` is used as an axis-wise ceiling. Voxels
-    that are behind the Eye or whose circumsphere reaches the Eye plane are
-    conservatively assigned that ceiling.
+    caller's ``fallback_resolution`` is used as an axis-wise ceiling. This is
+    a voxel-center heuristic, not a rigorous projected-size upper bound over a
+    finite voxel; it can underestimate a large voxel close to the Eye. Voxels
+    behind the Eye or whose circumsphere reaches the Eye plane are invalid and
+    use the fallback. A capped axis may not reach the heuristic recommendation,
+    and the field named ``ideal_resolution`` is uncapped—not an error guarantee.
     """
     points_in_eye = np.asarray(points_in_eye, dtype=float)
     edge_lengths = np.asarray(edge_lengths, dtype=float)
@@ -394,6 +485,22 @@ def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
 class OpticalBinning:
     """Packed visible-sample ordering for independent optical bins.
 
+    Attributes
+    ----------
+    order : ndarray
+        Input sample indices in packed order, shape ``(n_samples,)``.
+    scope_offsets : ndarray
+        Integer offsets, shape ``(n_scopes + 1,)``.
+    scope_keys : ndarray
+        Integer optical-bin keys in detector ``(u, v)`` order, shape
+        ``(n_scopes, 2)``.
+    scope_costs : ndarray
+        Expanded sample cost per scope, shape ``(n_scopes,)``.
+    bin_width_uv : ndarray
+        Physical bin width in detector ``(u, v)`` order, shape ``(2,)``.
+
+    Notes
+    -----
     ``order`` contains indices into the input point array.  Each consecutive
     interval ``scope_offsets[i]:scope_offsets[i + 1]`` is one independent
     compression scope.  A very large optical bin may be represented by
@@ -477,6 +584,12 @@ def make_optical_binning(camera, eye_index: int, points: np.ndarray,
     sample_costs : ndarray of int, shape (n,), optional
         Expanded sub-voxel count represented by each input point.  Defaults to
         one, as used when the input points are already sub-voxel samples.
+
+    Returns
+    -------
+    OpticalBinning
+        Packed sample order and independent optical scopes. Empty input returns
+        zero scopes with a single zero offset.
     """
     points = np.asarray(points, dtype=float)
     if points.ndim != 2 or points.shape[1] != 3:

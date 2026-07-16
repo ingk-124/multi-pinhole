@@ -15,7 +15,7 @@ algorithm in detail, plus the simpler collection and logging helpers.
 arguments into lists while validating element types. It also accepts a
 default fallback when `None` is provided, allowing world and camera
 constructors to treat single objects and lists
-uniformly.【F:multi_pinhole/utils/__init__.py†L24-L54】
+uniformly.
 
 ## Console Wrappers
 `multi_pinhole.utils.my_stdio` wraps common iteration primitives with
@@ -35,9 +35,9 @@ by apertures and world walls.
 `shape_check(shape, size)` normalizes a shape keyword (`circle`, `ellipse`,
 `rectangle`, `square`) and its size specification into a canonical
 `(shape, (height, width))` pair, expanding a bare scalar to both
-axes.【F:multi_pinhole/utils/stl_utils.py†L49-L111】
+axes.
 `generate_aperture_stl(shape, size, resolution, max_size)` then builds an
-actual flat mesh in the `z = 0` plane:【F:multi_pinhole/utils/stl_utils.py†L114-L171】
+actual flat mesh in the `z = 0` plane:
 
 1. Sample `resolution` points along the shape's boundary (a parametric
    ellipse `(a·cos t, b·sin t)`, or the four edges of a rectangle).
@@ -50,11 +50,11 @@ actual flat mesh in the `z = 0` plane:【F:multi_pinhole/utils/stl_utils.py†L1
    triangles whose centroid lies **outside** the aperture opening (the
    `condition` predicate) — i.e. the mesh models the *opaque* material
    around the hole, not the hole itself. Rays that reach the hole simply
-   never intersect any triangle in this mesh.【F:multi_pinhole/utils/stl_utils.py†L1139-L1161】
+   never intersect any triangle in this mesh.
 
 `rotate_model` and `copy_model` duplicate meshes and apply translations or
 Euler-angle rotations without mutating the
-originals.【F:multi_pinhole/utils/stl_utils.py†L174-L231】
+originals.
 
 ### Visibility / occlusion testing
 
@@ -72,7 +72,7 @@ every triangle for every point:
 half-spaces they define agree with the triangle's own third vertex. A
 candidate point lies inside the cone spanned by that triangle exactly when
 it is on the same side of all three planes as the triangle interior
-(`p · n ≥ 0` for all three oriented normals).【F:multi_pinhole/utils/stl_utils.py†L328-L554】
+(`p · n ≥ 0` for all three oriented normals).
 This is a cheap, batched (`einsum`/matrix-multiply) test that can rule out
 the vast majority of (triangle, point) pairs — a point can only possibly be
 occluded by a triangle if it lies inside that triangle's cone from the
@@ -88,7 +88,7 @@ coordinates `(u, v)` and the parametric distance `t` via
 `u = (r·(d×e₂))/det`, `v = (r·(e₁×d))/det`, `t = (r·(e₁×e₂))/det`, where
 `det = −d·(e₁×e₂)`. The segment crosses the triangle iff
 `u ≥ 0`, `v ≥ 0`, `u+v ≤ 1`, and `0 < t ≤ 1` (numerical tolerance `eps` is
-applied to all comparisons).【F:multi_pinhole/utils/stl_utils.py†L235-L326】
+applied to all comparisons).
 The `behind_start_included` flag relaxes the `t > 0` lower bound — either
 to `-inf` (a `True` boolean, used so aperture occlusion also blocks light
 paths that would pass through the aperture plane *behind* the eye, matching
@@ -102,7 +102,7 @@ each triangle that has any candidate points inside its cone, runs
 `check_intersection` against just those candidates, marking any point that
 intersects **any** triangle as occluded (`visible=False`). A point that
 never falls inside any triangle's cone is visible without ever running the
-exact intersection test.【F:multi_pinhole/utils/stl_utils.py†L593-L669】 This
+exact intersection test. This
 is what `Camera.calc_image_vec` (per-aperture occlusion, `docs/core.md`)
 and `World.find_visible_points` (per-aperture and per-wall occlusion,
 `docs/world.md`) both call.

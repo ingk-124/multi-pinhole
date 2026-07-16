@@ -1233,27 +1233,41 @@ class Screen:
 
     def ray2image_grid(self, eye: Eye, rays: Rays, verbose=0,
                        etendue_per_subpixel=None):
-        """Convert rays to image vectors (grid-localized; consistent with ray2image)
+        """Integrate finite-Eye ray footprints on the detector grid.
 
         Parameters
         ----------
-        eye : Eye object
-            eye projecting the rays to the screen
-        rays : Rays object
-            rays from the light source to the eye
-        verbose : int, optional (default is 0)
-            verbose level for parallel calculation
-        etendue_per_subpixel : np.ndarray, optional
+        eye : Eye
+            Eye projecting the rays to the screen.
+        rays : Rays
+            Source rays in camera coordinates.
+        verbose : int, default=0
+            Verbosity level.
+        etendue_per_subpixel : ndarray, optional
             Deprecated compatibility argument.  Local etendue now depends on
             both the source ray and the position inside the finite Eye, so a
             detector-only cache is no longer used by this calculation.
-        parallel : int, optional (default is 0)
-            number of parallel processes for parallel calculation (0: no parallel calculation)
-
         Returns
         -------
-        image_vectors : sparse.csr_matrix
-            Spot position matrix (shape: (N_subpixel, n)) in compressed sparse row format.
+        scipy.sparse.csr_matrix
+            Local-etendue weights, shape ``(N_subpixel, n_rays)``. Rows are
+            detector subpixels and columns are input rays.
+
+        Notes
+        -----
+        Ellipse/cell overlap area is analytic, so spots smaller than a cell do
+        not disappear. Rectangle density uses 2-by-2 Gauss quadrature. An
+        ellipse wholly contained in one cell uses 2 radial by 8 angular
+        quadrature; clipped ellipse boundary cells use a 4-by-4 masked
+        midpoint approximation for the local density average. The latter has
+        no strict error guarantee, and detector subpixel refinement can affect
+        local PSF accuracy. A spot clipped by the screen boundary contributes
+        less total signal.
+
+        For a finite Eye, every detector integration point is mapped back to
+        a position in the Eye. The source-to-detector Jacobian and local
+        solid-angle-normalized density are therefore source- and
+        Eye-position-dependent rather than a detector-only cached factor.
         """
         if rays.n == 0:
             # if no rays, return empty matrix (N_subpixel, 0)

@@ -1147,11 +1147,11 @@ class World:
             point_source_threshold: float = 1.0 / 8.0,
             detector_grid: str = "psf",
             batch_size: int = 100_000) -> PointSourceResolutionEstimate:
-        """Select res=1 using a conservative projected circumsphere test.
+        """Recommend source resolution using a local perspective heuristic.
 
         This diagnostic does not alter the voxel grid or a cached projection.
-        It compares a worst-direction projected voxel circumsphere with the
-        selected detector/PSF scale. The same threshold gives an ideal
+        It compares a voxel-center local-perspective circumsphere scale with
+        the selected detector/PSF scale. The same threshold gives an uncapped
         near-cubic axis-wise resolution, clipped by ``max_resolution``.
 
         Parameters
@@ -1180,6 +1180,15 @@ class World:
         -------
         PointSourceResolutionEstimate
             Diagnostics in the same order as ``voxel_indices``.
+
+        Notes
+        -----
+        This is not a rigorous upper bound for projection over the complete
+        finite voxel. Large voxels near an Eye can be underestimated. The
+        point-source threshold is a sampling policy, not an image-error
+        tolerance; ``ideal_resolution`` likewise carries no error guarantee.
+        Invalid geometry uses ``max_resolution`` as a fallback, and capped
+        axes may not reach the heuristic recommendation.
         """
         if camera_idx not in self.cameras:
             raise KeyError(f"unknown camera key: {camera_idx!r}")
@@ -1358,19 +1367,45 @@ class World:
             point_source_threshold: float = 1.0 / 8.0,
             force_visibility: bool = False,
             verbose: int = 0) -> ProjectionWorkEstimate:
-        """Estimate projection source-sample work without constructing P.
+        """Estimate projection source-sample work without constructing ``P``.
 
+        Parameters
+        ----------
+        res : int or tuple of int or None
+            Full-voxel resolution. Required for ``"fixed"`` and ``"auto"``;
+            use ``None`` only with uncapped ``"ideal"``.
+        res_mode : {"fixed", "auto", "ideal"}, default="fixed"
+            Fully-visible source sampling policy.
+        partial_res : int or tuple of int, optional
+            Partial-voxel resolution. If ``None``, use ``res``. An explicit
+            value is required for ``res_mode="ideal"``.
+        point_source_threshold : float, default=1/8
+            Dimensionless sampling threshold, not an image-error tolerance.
+        force_visibility : bool, default=False
+            Recompute rather than reuse voxel visibility.
+        verbose : int, default=0
+            Verbosity level.
+
+        Returns
+        -------
+        ProjectionWorkEstimate
+            Per-Eye sample counts and heuristic resolution diagnostics.
+
+        Notes
+        -----
         Parameters match :meth:`set_projection_matrix` for source quadrature.
         ``fixed`` uses the mandatory ``res`` directly. ``auto`` selects a
         geometric ideal per fully-visible voxel and clips it axis-wise by
         ``res``. The explicitly requested ``ideal`` mode is uncapped and
         therefore requires ``res=None`` plus a fixed ``partial_res``.
 
+        Fully-visible scheduled counts are exact for this sampling policy.
         Partial-voxel samples are reported before point visibility and inside
-        masks, so totals are conservative upper bounds. Visibility is cached
+        masks, so those counts are upper bounds. Visibility is cached
         by :meth:`find_visible_voxels` and can be reused by the subsequent
         projection calculation. This method does not build or modify a
-        projection matrix.
+        projection matrix. ``ideal`` means uncapped heuristic work, not a
+        numerical error guarantee.
         """
         full_resolution, partial_resolution, adaptive = (
             self._resolve_projection_resolutions(
@@ -2000,14 +2035,14 @@ class World:
             Mandatory source resolution. ``fixed`` uses it directly and
             ``auto`` treats it as an axis-wise ceiling. Pass ``None`` only
             with the explicitly uncapped ``res_mode='ideal'``.
-        res_mode : {"fixed", "auto", "ideal"}, optional
-            Fully-visible source-resolution policy. Defaults to ``"fixed"``.
-        verbose : int, optional
-            Verbosity level controlling progress logging. Defaults to ``1``.
-        parallel : int, optional
+        res_mode : {"fixed", "auto", "ideal"}, default="fixed"
+            Fully-visible source-resolution policy.
+        verbose : int, default=1
+            Verbosity level controlling progress logging.
+        parallel : int, default=-1
             Degree of parallelism forwarded to
             :meth:`_calc_voxel_image_for_eye`. Negative values are interpreted
-            relative to available CPU cores. Defaults to ``-1``.
+            relative to available CPU cores.
         partial_res : int or (int, int, int), optional
             Sub-voxel resolution used only for partially visible voxels.
             ``None`` reuses ``res``.
