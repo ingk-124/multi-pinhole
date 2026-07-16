@@ -41,6 +41,10 @@ from .projection import (
     make_optical_binning,
     select_circumsphere_resolution,
 )
+from ._projection_matrix import (
+    build_optical_projection_matrix,
+    sum_eye_projections,
+)
 from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
@@ -969,148 +973,25 @@ class World:
             full_subvoxel_res, partial_subvoxel_res,
             max_nnz: int, max_working_memory: int,
             optical_bin_width_pixels, verbose: int):
-        """Build ordinary sparse P using visible-voxel optical bins.
-
-        This experimental path bins visible voxel centers, packs complete bins
-        into work chunks, and only then expands those voxels into sub-voxel
-        samples. Detector subpixels remain transient quadrature samples; each
-        chunk is binned to physical pixels before persistent sparse assembly.
-        """
-        camera = self.cameras[camera_idx]
-        screen = camera.screen
-        n_vox = self.voxel.N
-        index_start = time.perf_counter()
-        full_resolution = tuple(int(r) for r in np.broadcast_to(full_subvoxel_res, 3))
-        partial_resolution = tuple(int(r) for r in np.broadcast_to(partial_subvoxel_res, 3))
-        full_cost = int(np.prod(full_resolution))
-        partial_cost = int(np.prod(partial_resolution))
-        visible_voxels = np.concatenate((full_voxels, partial_voxels))
-        sample_costs = np.concatenate((
-            np.full(full_voxels.size, full_cost, dtype=np.int64),
-            np.full(partial_voxels.size, partial_cost, dtype=np.int64),
-        ))
-        voxel_centers = self.voxel.get_gravity_center(visible_voxels)
-        if visible_voxels.size == 0:
-            return sparse.csr_matrix((screen.N_pixel, n_vox))
-
-        def _sparse_nbytes(matrix):
-            matrix = matrix.tocsr()
-            return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
-
-        if full_voxels.size:
-            sample_voxels = full_voxels[:min(full_voxels.size, 20)]
-            sample_resolution = full_resolution
-        else:
-            sample_voxels = partial_voxels[:min(partial_voxels.size, 20)]
-            sample_resolution = partial_resolution
-        sample_points = self.voxel.get_sub_voxel_centers(
-            sample_voxels, res=sample_resolution,
+        """Build ordinary sparse P using visible-voxel optical bins."""
+        return build_optical_projection_matrix(
+            voxel=self.voxel,
+            camera=self.cameras[camera_idx],
+            eye_idx=eye_idx,
+            full_voxels=full_voxels,
+            partial_voxels=partial_voxels,
+            full_subvoxel_res=full_subvoxel_res,
+            partial_subvoxel_res=partial_subvoxel_res,
+            max_nnz=max_nnz,
+            max_working_memory=max_working_memory,
+            optical_bin_width_pixels=optical_bin_width_pixels,
+            verbose=verbose,
+            point_visibility=lambda points: self.find_visible_points(
+                points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
+            ),
+            inside_points=self._inside_points,
+            make_binning=make_optical_binning,
         )
-        sample_S = self.voxel.sub_voxel_interpolator_from_centers(
-            sample_voxels, res=sample_resolution, points=sample_points,
-        )
-        sample_I = camera.calc_image_vec(
-            eye_idx, points=sample_points, verbose=0, check_visibility=False,
-        )
-        sample_result = screen.transform_matrix @ (sample_I @ sample_S)
-        sample_count = sample_points.shape[0]
-        transient_bytes = (
-            sample_points.nbytes + _sparse_nbytes(sample_I) + _sparse_nbytes(sample_S)
-            + _sparse_nbytes(sample_result)
-        )
-        bytes_per_sample = max(1.0, transient_bytes / sample_count)
-        memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
-        nnz_per_sample = sample_I.nnz / sample_count
-        if nnz_per_sample == 0.0:
-            nnz_per_sample = screen.N_subpixel * 0.01
-        nnz_samples = max(1, int(np.ceil(max_nnz / nnz_per_sample)))
-        max_samples = min(memory_samples, nnz_samples, int(sample_costs.sum()))
-        del sample_I, sample_S, sample_result
-
-        binning = make_optical_binning(
-            camera, eye_idx, voxel_centers,
-            bin_width_pixels=optical_bin_width_pixels,
-            max_scope_samples=max_samples,
-            sample_costs=sample_costs,
-        )
-        work_chunks = binning.work_chunks(max_samples=max_samples)
-        index_elapsed = time.perf_counter() - index_start
-        my_print(
-            f"Processing {visible_voxels.size} visible voxels "
-            f"({sample_costs.sum()} sub-voxel samples before partial masking) in "
-            f"{binning.n_scopes} optical scopes and {len(work_chunks)} work chunks "
-            f"(max_samples={max_samples})",
-            show=verbose > 0,
-        )
-
-        projection_start = time.perf_counter()
-        result = sparse.csr_matrix((screen.N_pixel, n_vox))
-        data_buf, row_buf, col_buf = [], [], []
-        buffer_nbytes = 0
-        result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
-
-        def _flush():
-            nonlocal result, data_buf, row_buf, col_buf, buffer_nbytes
-            if not data_buf:
-                return
-            block = sparse.coo_matrix(
-                (np.concatenate(data_buf),
-                 (np.concatenate(row_buf), np.concatenate(col_buf))),
-                shape=result.shape,
-            ).tocsr()
-            result += block
-            data_buf, row_buf, col_buf = [], [], []
-            buffer_nbytes = 0
-
-        def _project_voxels(owners, resolution, check_point_visibility):
-            if owners.size == 0:
-                return None
-            points = self.voxel.get_sub_voxel_centers(owners, res=resolution)
-            S = self.voxel.sub_voxel_interpolator_from_centers(
-                owners, res=resolution, points=points,
-            )
-            if check_point_visibility:
-                mask = self.find_visible_points(
-                    points, camera_idx=camera_idx, eye_idx=eye_idx, verbose=0,
-                ).reshape(-1)
-                mask &= self._inside_points(points)
-                if not np.any(mask):
-                    return None
-                points = points[mask]
-                S = S[mask]
-            I_subpixel = camera.calc_image_vec(
-                eye_idx, points=points, verbose=0, check_visibility=False,
-            )
-            # Integrate source samples first, then bin detector quadrature
-            # samples. Only the physical-pixel matrix is retained.
-            return (screen.transform_matrix @ (I_subpixel @ S)).tocoo()
-
-        for chunk in my_tqdm(work_chunks, desc="Processing optical work chunks",
-                             disable=verbose <= 0):
-            ordered_voxels = visible_voxels[chunk]
-            is_full = chunk < full_voxels.size
-            chunk_results = (
-                _project_voxels(ordered_voxels[is_full], full_resolution, False),
-                _project_voxels(ordered_voxels[~is_full], partial_resolution, True),
-            )
-            for P_chunk in chunk_results:
-                if P_chunk is None:
-                    continue
-                data_buf.append(P_chunk.data)
-                row_buf.append(P_chunk.row)
-                col_buf.append(P_chunk.col)
-                buffer_nbytes += (P_chunk.data.nbytes + P_chunk.row.nbytes
-                                  + P_chunk.col.nbytes)
-            if buffer_nbytes >= result_buffer_limit:
-                _flush()
-        _flush()
-        projection_elapsed = time.perf_counter() - projection_start
-        my_print(
-            f"Optical sparse-P timing: index={index_elapsed:.3f}s, "
-            f"projection={projection_elapsed:.3f}s",
-            show=verbose > 1,
-        )
-        return result
 
     def estimate_source_resolution(
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
@@ -2079,9 +1960,9 @@ class World:
                     (self._P_matrix[_c].shape != (self.cameras[_c].screen.N_pixel, self.voxel.N)):
                 # at least one eye is recalculated
                 # Per-eye matrices already share physical pixel coordinates.
-                self._P_matrix[_c] = sum(
+                self._P_matrix[_c] = sum_eye_projections(
                     self._projection[_c],
-                    sparse.csr_matrix((self.cameras[_c].screen.N_pixel, self.voxel.N)),
+                    (self.cameras[_c].screen.N_pixel, self.voxel.N),
                 )
                 my_print(f"Projection matrix for camera {_c!r} is calculated.", show=verbose > 0)
             else:
