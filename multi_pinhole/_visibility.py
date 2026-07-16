@@ -1,4 +1,8 @@
-"""Private, state-free visibility calculations used by :mod:`world`.
+"""Private visibility calculations used by :mod:`world`.
+
+The helpers do not own or mutate ``World`` or projection-cache state.  They
+may, however, trigger lazy geometry preparation on objects supplied by the
+caller, such as :meth:`multi_pinhole.aperture.Aperture.set_model`.
 
 The helpers in this module consume prepared geometry and return masks.  Cache
 ownership, camera-key resolution, and scene mutation remain responsibilities
