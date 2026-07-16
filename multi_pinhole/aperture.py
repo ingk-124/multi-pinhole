@@ -154,4 +154,3 @@ class Aperture:
         print("position:", self.position)
         print("shape:", self.shape)
         print("size:", self.size)
-

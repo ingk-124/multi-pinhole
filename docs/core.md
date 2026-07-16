@@ -1,15 +1,21 @@
 # Core Module Reference
 
-This document explains the classes defined in `multi_pinhole.core` and, more
+This document explains the optics classes re-exported by `multi_pinhole.core` and, more
 importantly, *how* they compute what they compute: the coordinate-frame
 conventions, the pinhole projection formula, the rasterization algorithm that
 turns a ray into subpixel weights, and the aperture-occlusion check. For the
-full API surface, read the docstrings in `multi_pinhole/core.py` directly —
+Implementations are organized by responsibility: `multi_pinhole.eye` owns
+`Eye` and ray generation, `multi_pinhole.aperture` owns aperture/STL geometry,
+`multi_pinhole.screen` owns detector overlap, etendue quadrature, and
+rasterization, and `multi_pinhole.camera` owns composition, coordinate
+transforms, orientation, and drawing. `multi_pinhole.core` is a compatibility
+facade; both the old imports and the direct module imports return the same
+class objects. For the full API surface, read the class docstrings —
 this document focuses on the underlying process.
 
 ## The four coordinate systems
 
-Every calculation in `core.py` moves points between four coordinate systems,
+The core optics modules move points between four coordinate systems,
 laid out in a comment block at the top of the module.
 Understanding the chain is the key to reading the rest of this document:
 

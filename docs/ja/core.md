@@ -12,11 +12,13 @@ clipped ellipse の境界 cell で 4×4 masked midpoint により評価します
 有限 Eye では detector 点を Eye 上へ戻す Jacobian と source/Eye 位置に
 依存する局所立体角正規化密度を用います。
 
-このドキュメントは `multi_pinhole.core` に定義されたクラスを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。API 全体の詳細は `multi_pinhole/core.py` のドキュメント文字列を直接参照してください。本ドキュメントはあくまで背後にある計算過程に焦点を当てます。
+このドキュメントは `multi_pinhole.core` から再エクスポートされるクラスを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。
+
+実装は責務別に、`multi_pinhole.eye`（Eye と ray 生成）、`multi_pinhole.aperture`（aperture／STL geometry）、`multi_pinhole.screen`（detector overlap、etendue quadrature、rasterizer）、`multi_pinhole.camera`（構成、座標変換、姿勢、描画）へ分割されています。`multi_pinhole.core` は後方互換 facade であり、旧import pathと新moduleから得られるclassは同一objectです。
 
 ## 4つの座標系
 
-`core.py` のあらゆる計算は、モジュール冒頭のコメントブロックにまとめられた4つの座標系の間で点を移動させています。この連鎖を理解することが、本ドキュメントの残りを読み解く鍵になります。
+コア光学moduleの計算は、4つの座標系の間で点を移動させています。この連鎖を理解することが、本ドキュメントの残りを読み解く鍵になります。
 
 ```
 world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  screen/image (u, v)

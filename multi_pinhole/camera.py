@@ -45,7 +45,7 @@ class Camera:
                  rotation_matrix: np.ndarray = None,
                  camera_name: str = None):
         """Camera
-        
+
         Parameters
         ----------
         eyes : List[Eye]
@@ -565,7 +565,7 @@ class Camera:
             Manual bounds for the y-axis of the plot.
         Z_lim : Tuple[float, float], optional
             Manual bounds for the z-axis of the plot.
-        
+
         Returns
         -------
         matplotlib.axes.Axes
@@ -784,4 +784,3 @@ class Camera:
         print(f"Aperture position: {[aperture.position for aperture in self._apertures]}")
         print(f"Aperture shape: {[aperture.shape for aperture in self._apertures]}")
         print(f"Aperture size: {[aperture.size for aperture in self._apertures]}")
-

@@ -20,11 +20,13 @@ frames; `docs/core.md` walks through that chain in detail.
 
 ## Key Components
 
-- **Core optics** (`multi_pinhole.core`) — `Eye` (a single pinhole/lens
+- **Core optics** (`multi_pinhole.eye`, `multi_pinhole.aperture`,
+  `multi_pinhole.screen`, and `multi_pinhole.camera`) — `Eye` (a single pinhole/lens
   channel), `Aperture` (an occluding shape, analytic or STL), `Screen` (the
   pixelated detector plane and its rasterizer), and `Camera` (which groups
   eyes/apertures/screen and places them in world space). See
-  `docs/core.md`.
+  `docs/core.md`. `multi_pinhole.core` remains the compatibility facade for
+  all historical imports.
 - **Voxel modeling** (`multi_pinhole.voxel`) — a Cartesian voxel grid
   (`Voxel`) plus synthetic-profile helpers for toroidal plasma emission. See
   the "Voxel grid geometry" section below.

@@ -274,4 +274,3 @@ class Eye:
         print("eye_size:", self.eye_size)
         print("eye_shape:", self.eye_shape)
         print("principal_point:", self.principal_point)
-
