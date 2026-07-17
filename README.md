@@ -101,3 +101,21 @@ For `coordinate_type="torus"`, `theta=0` is the outboard midplane and `phi`
 increases clockwise when viewed from `+z`, making `(r, theta, phi)` right-handed.
 Use `coordinate_type="torus_inverse"` when both angular directions should be
 reversed: `theta=0` at the inboard midplane and counter-clockwise `phi`.
+
+Reusable profiles use normalized poloidal Cartesian coordinates. Convert
+explicitly so the coordinate convention remains visible at the call site:
+
+```python
+from multi_pinhole import profiles
+
+x, y, phi = voxel.to_coordinates(
+    "poloidal_cartesian_inverse",
+    normalized=True,
+    major_radius=1500,
+    minor_radius=500,
+).T
+shape = profiles.kinked_profile(
+    x, y, A=1.0, delta=0.1, alpha=2, beta=3,
+    xi_0=0.1, rho_s=0.5, d=2, phi=phi,
+)
+```

@@ -163,7 +163,7 @@ optionally *reinterprets* Cartesian points (by default, the voxel gravity
 centers) in a different coordinate system, purely so that profile functions
 can be written in terms that are natural for the device's symmetry.
 
-`multi_pinhole.coordinates` implements five such transforms (all taking
+`multi_pinhole.coordinates` implements seven such transforms (all taking
 Cartesian `(x, y, z)` and returning normalized coordinates):
 
 * **Cartesian** — just rescales each axis by half its configured extent.
@@ -177,6 +177,12 @@ Cartesian `(x, y, z)` and returning normalized coordinates):
   in sign/reference (`theta` referenced to the inboard midplane, `phi`
   counter-clockwise) — both conventions are right-handed
   `(r, theta, phi)`.
+* **Poloidal Cartesian** `(x, y, phi)` — `x = R−R_0` points outwards and
+  `y = z` points upwards. With normalization, both are divided by `a`.
+  `poloidal_cartesian` uses the clockwise toroidal angle of `torus`, while
+  `poloidal_cartesian_inverse` uses counter-clockwise `phi`; the direction of
+  poloidal `x` is unchanged. Both conversions accept keyword components for
+  the inverse mapping back to Cartesian coordinates.
 * **Spherical** `(r, theta, phi)` — let
   `distance = sqrt(x² + y² + z²)`. Then `r = distance / a`,
   `theta = arccos(z / distance)`, and `phi = atan2(y, x)`. The reference
@@ -206,13 +212,13 @@ value shapes are supported. This ordinary interpolation API is distinct from
 the private, volume-weighted source-quadrature matrices used by projection
 assembly.
 
-`multi_pinhole.profiles` provides composable helpers for evaluating synthetic
-toroidal and poloidal profiles on top of these coordinates, including shifted
-polar coordinates, kinked/flattened radial coordinates, and thin wrappers that
-evaluate profile functions directly on torus-coordinate `Voxel` instances.
-These helpers are meant for test profiles and reusable profile models; plotting,
-fitting, and experiment-specific diagnostics should live outside the core
-profile API.
+`multi_pinhole.profiles` provides composable, physical-quantity-independent
+helpers on normalized poloidal Cartesian `(x, y)` coordinates. Non-axisymmetric
+models additionally accept `phi`. Convert points explicitly with
+`Voxel.to_coordinates()`, then pass `x`, `y`, and where needed `phi` to the
+axisymmetric, kinked, or flattening profile. This keeps coordinate conventions
+out of the profile equations. Plotting, fitting, and experiment-specific
+diagnostics should live outside the core profile API.
 
 ## Notable Capabilities
 

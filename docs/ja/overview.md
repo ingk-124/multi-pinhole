@@ -75,18 +75,19 @@ eye_image = world.projection[0][0] @ emission   # eye 0、形状 (N_pixel,)
 
 ### プロファイル評価のための座標変換
 
-グリッド自体は常にデカルト座標です。`Voxel.normalized_coordinates()` は、デカルト座標の点（デフォルトではボクセルの重心）を任意で別の座標系に**再解釈**します。これはトーラス座標や円筒座標で書いたプロファイル関数を、その装置の対称性に自然な形で評価できるようにするためです。`multi_pinhole.coordinates` はそのような変換を5種類実装しており、いずれもデカルト座標 `(x, y, z)` を受け取って正規化座標を返します。
+グリッド自体は常にデカルト座標です。`Voxel.normalized_coordinates()` は、デカルト座標の点（デフォルトではボクセルの重心）を任意で別の座標系に**再解釈**します。これはトーラス座標や円筒座標で書いたプロファイル関数を、その装置の対称性に自然な形で評価できるようにするためです。`multi_pinhole.coordinates` はそのような変換を7種類実装しており、いずれもデカルト座標 `(x, y, z)` を受け取って正規化座標を返します。
 
 * **cartesian（デカルト）** —— 各軸を、その設定された半分の範囲でスケーリングするだけです。
 * **cylindrical（円筒）** `(r, theta, z)` —— `r = sqrt(x²+y²)/a`、`theta = atan2(y, x)`、`z` は `h/2` でスケーリングされます。
 * **torus（トーラス）** `(r, theta, phi)` —— 主半径 `R_0`、副半径 `a` のトーラスに対して：`R = sqrt(x²+y²)`、`r = sqrt((R−R_0)² + z²)/a`、`theta = atan2(z, R−R_0)`（poloidal 角、outboard 中間面で `0`）、`phi = atan2(−y, x)`（toroidal 角、`+z` 側から見て時計回りに増加）。`torus_inverse` は同じ構成で両方の角度の符号／基準を反転したもの（`theta` は inboard 中間面基準、`phi` は反時計回り）で、いずれも右手系の `(r, theta, phi)` です。
+* **poloidal Cartesian** `(x, y, phi)` —— `x=R−R_0`は常にR外向き、`y=z`は上向きで、正規化時は両方を`a`で割ります。`poloidal_cartesian`の`phi`は`torus`と同じ時計回り、`poloidal_cartesian_inverse`は反時計回りです。inverseでもpoloidal `x`の向きは変わりません。どちらもkeyword成分からCartesianへの逆変換に対応します。
 * **spherical（球）** `(r, theta, phi)` —— `distance = sqrt(x²+y²+z²)`、`r = distance/a`、`theta = arccos(z/distance)`（`+z` から測る `[0, pi]` の極角）、`phi = atan2(y, x)`（`+x` から反時計回りの `[-pi, pi]` の方位角）。reference radius `a` は `r` だけをscaleし、角度には影響しません。原点では `theta=nan`、z軸上の `phi` は数学的には未定義ですが NumPy `atan2` の結果に従います。
 
 解析時には `Voxel.to_coordinates()` により、Voxelに設定されたprofile用座標系を変更せず、任意の規約を都度選択できます。`points="centers"`、`points="vertices"`、または任意のCartesian配列を受け取り、`normalized=True`を指定しない限り物理座標を返します。逆変換にはkeyword-only成分を受け取る`Voxel.from_coordinates()`を使用します（例：`from_coordinates("cylindrical", R=..., Z=..., phi=...)`）。各成分はNumPy規則でbroadcastされ、最後にCartesianの3成分軸が追加されます。新APIで`normalized=True`を使う場合、必要なscale parameterはすべて明示する必要があり、暗黙のunit scaleは使われません。使用可能な規約は`voxel.available_coordinate_types`からimmutable tupleとして取得できます。座標規約を追加してもVoxel methodを増やす必要はありません。従来の`normalized_coordinates()`はprofile設定との互換APIとして維持されます。
 
 Cartesian voxel重心上の値は`Voxel.center_interpolator(values, **interpolator_kwargs)`で再利用できます。返されたcallableはCartesianの`points`、または明示的な`coordinate_type`とkeyword成分を受け取ります。named成分はCartesianへ逆変換され、NumPy規則でbroadcastされた後に補間されます。scalar値に加えて末尾にvector/tensor shapeを持つ値も扱えます。この通常補間APIは、projection組立で使うprivateな体積重み付きsource quadrature行列とは別物です。
 
-`multi_pinhole.profiles` は、これらの座標系の上で合成プロファイルを評価するための、組み合わせ可能なヘルパー関数を提供します。shifted polar 座標、kinked/flattened な径方向座標、そして torus 座標の `Voxel` から直接 profile 関数を評価する薄い wrapper を含みます。描画、フィッティング、実験固有の診断は core profile API の外側に置く想定です。
+`multi_pinhole.profiles` は、正規化poloidal Cartesian `(x, y)`を入力とする、物理量に依存しない組み合わせ可能なprofile helperを提供します。非軸対称modelだけ`phi`も受け取ります。点は`Voxel.to_coordinates()`で明示的に変換し、`x`, `y`と必要なら`phi`をaxisymmetric、kinked、flattening profileへ渡します。これにより座標規約をprofile数式から分離します。描画、フィッティング、実験固有の診断はcore profile APIの外側に置く想定です。
 
 ## 注目すべき機能
 

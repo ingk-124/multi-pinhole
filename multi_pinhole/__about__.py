@@ -5,5 +5,5 @@ This module is the single source of truth for the version string consumed by
 here) and is re-exported for runtime introspection.
 """
 
-__version__ = "0.8.3"
+__version__ = "0.8.4"
 __author__ = "Shinichiro Inagaki"

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.4
+
+- Added bidirectional `poloidal_cartesian` and
+  `poloidal_cartesian_inverse` conversions. Both use outward
+  `x = R - R0` and upward `y = Z`; the inverse convention reverses only the
+  toroidal angle. Normalized coordinates divide `x` and `y` by the supplied
+  minor radius.
+- Standardized reusable scalar profiles on normalized poloidal Cartesian
+  inputs `(x, y)` with `phi` supplied only for non-axisymmetric models.
+- Added generic minimum-flattening coordinate and profile models based on the
+  current MST parameterization, without density- or temperature-specific API
+  names.
+- Removed the unused Voxel-coupled profile evaluators. Convert points with
+  `Voxel.to_coordinates()` and pass the resulting components explicitly to a
+  profile function.
+- Preserved existing coordinate conventions, Voxel serialization state,
+  projection cache schema, and numerical projection behavior.
+
 ## 0.8.3
 
 - Fixed camera-key reassignment when cached visibility values are NumPy
