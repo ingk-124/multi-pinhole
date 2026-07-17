@@ -32,9 +32,20 @@ def make_double_pinhole_aperture(size=0.8, offset=1.2, max_size=6.0, resolution=
 
 
 def make_test_profile(voxel):
-    return profiles.evaluate_poloidal_profile(
-        voxel,
-        profiles.flattening_profile,
+    coordinate_type = (
+        "poloidal_cartesian"
+        if voxel.coordinate_type == "torus"
+        else "poloidal_cartesian_inverse"
+    )
+    x, y, phi = voxel.to_coordinates(
+        coordinate_type,
+        normalized=True,
+        **voxel.coordinate_parameters,
+    ).T
+    return profiles.flattening_profile(
+        x,
+        y,
+        phi=phi,
         A=1.0,
         delta=0.1,
         alpha=2,

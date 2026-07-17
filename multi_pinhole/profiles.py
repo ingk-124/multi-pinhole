@@ -1,9 +1,9 @@
-"""Synthetic emission-profile helper functions.
+"""Generic scalar-profile helper functions.
 
 These functions are intentionally separate from :mod:`multi_pinhole.voxel` so
 the voxel grid container can stay focused on geometry and interpolation.  They
 operate on normalized coordinates such as those returned by
-``Voxel.normalized_coordinates()``.
+``Voxel.to_coordinates()``.
 """
 
 import numpy as np
@@ -77,100 +77,6 @@ def helical_poloidal_coordinates(r, theta, phi, m_, n_, phi_0=0):
     x, y, _ = torus_to_poloidal_cartesian(r, theta, phi)
     psi = helical_phase(theta, phi, m_=m_, n_=n_, phi_0=phi_0)
     return x, y, psi
-
-
-def torus_coordinates_from_voxel(voxel, points=None):
-    """Return ``(r, theta, phi)`` from a torus-coordinate voxel.
-
-    Parameters
-    ----------
-    voxel : Voxel
-        Voxel whose ``coordinate_type`` is ``"torus"`` or ``"torus_inverse"``.
-    points : ndarray, optional
-        Cartesian points, shape ``(n, 3)``. ``None`` uses voxel centers.
-
-    Returns
-    -------
-    r, theta, phi : tuple of ndarray
-        Arrays with shape ``(n,)``. ``r`` is dimensionless and angles are radians.
-
-    Raises
-    ------
-    ValueError
-        If the voxel is not configured for torus coordinates.
-
-    Notes
-    -----
-    ``voxel`` must be configured with ``coordinate_type`` equal to ``"torus"``
-    or ``"torus_inverse"``.  The optional ``points`` argument is passed through
-    to ``voxel.normalized_coordinates(points)``.
-    """
-    if voxel.coordinate_type not in ("torus", "torus_inverse"):
-        raise ValueError(
-            "voxel.coordinate_type must be 'torus' or 'torus_inverse' "
-            f"for torus profile evaluation, got {voxel.coordinate_type!r}."
-        )
-    r, theta, phi = voxel.normalized_coordinates(points).T
-    return r, theta, phi
-
-
-def evaluate_torus_profile(voxel, profile_func, *args, points=None, **kwargs):
-    """Evaluate a toroidal-coordinate callable on a voxel.
-
-    Parameters
-    ----------
-    voxel : Voxel
-        Voxel configured as ``"torus"`` or ``"torus_inverse"``.
-    profile_func : callable
-        Callable with signature ``(r, theta, phi, *args, **kwargs)``.
-    points : ndarray, optional
-        Cartesian points, shape ``(n, 3)``. ``None`` uses voxel centers.
-
-    Returns
-    -------
-    ndarray
-        Profile result with the callable's broadcast shape.
-    """
-    r, theta, phi = torus_coordinates_from_voxel(voxel, points=points)
-    return profile_func(r, theta, phi, *args, **kwargs)
-
-
-def evaluate_poloidal_profile(voxel, profile_func, *args, points=None, pass_phi=True, **kwargs):
-    """Evaluate a ``profile_func(x, y, ...)`` directly on a torus-coordinate voxel.
-
-    Parameters
-    ----------
-    voxel : Voxel
-        Voxel configured for ``"torus"`` or ``"torus_inverse"`` coordinates.
-    profile_func : callable
-        Callable with signature ``(x, y, *args, **kwargs)``. With
-        ``pass_phi=True`` it must accept keyword ``phi`` or ``**kwargs``.
-    *args : tuple
-        Additional positional arguments forwarded to ``profile_func``.
-    points : ndarray, optional
-        Cartesian points, shape ``(n, 3)``. ``None`` uses voxel centers.
-    pass_phi : bool, default=True
-        Inject the toroidal angle as keyword ``phi`` unless supplied explicitly.
-    **kwargs : dict
-        Keyword arguments forwarded to ``profile_func``; an explicit ``phi`` wins.
-
-    Returns
-    -------
-    ndarray
-        Callable result with its broadcast shape.
-
-    Notes
-    -----
-    When ``pass_phi`` is true, the toroidal angle is passed as a keyword
-    argument ``phi`` unless the caller already supplied ``phi`` in ``kwargs``.
-    This matches the non-axisymmetric profile helpers in this module while
-    still allowing axisymmetric helpers to ignore ``phi`` through ``**kwargs``.
-    """
-    r, theta, phi = torus_coordinates_from_voxel(voxel, points=points)
-    x, y, phi = torus_to_poloidal_cartesian(r, theta, phi)
-    if pass_phi and "phi" not in kwargs:
-        kwargs = kwargs | {"phi": phi}
-    return profile_func(x, y, *args, **kwargs)
 
 
 def shifted_polar(x, y, cx, cy, normalize_boundary=True):
@@ -438,6 +344,39 @@ def flattening_rho(x, y, delta, xi_0, rho_s, d, w, gamma=0, lam_0=1,
     return rho_merged, theta_distorted
 
 
+def flattening_rho_min(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
+    """Return the minimum-model flattened polar coordinates.
+
+    Parameters
+    ----------
+    x, y : array-like
+        Dimensionless poloidal Cartesian coordinates.
+    delta, xi_0, rho_s : scalar or array-like
+        Dimensionless static shift, kink amplitude, and flattening radius.
+    d : scalar or array-like
+        Radial decay exponent; positive values are intended.
+    phi, psi_0 : scalar or array-like, default=0
+        Toroidal angle and phase origin in radians. Inputs broadcast.
+
+    Returns
+    -------
+    rho, theta : tuple of ndarray
+        Minimum-merged dimensionless radius and kinked angle in radians.
+
+    Notes
+    -----
+    This is the sharp minimum variant of :func:`flattening_rho`: it merges
+    the kinked radius with ``smooth_maximum(rho_s, rho_shifted)`` using an
+    exact minimum. It therefore has no Gaussian width or angular blend.
+    """
+    rho_shifted, _ = shifted_polar(x, y, delta, 0)
+    rho_kinked, theta_kinked = kinked_rho(
+        x, y, delta, xi_0, rho_s, d, phi=phi, psi_0=psi_0,
+    )
+    rho_flat = smooth_maximum(rho_s, rho_shifted)
+    return np.minimum(rho_kinked, rho_flat), theta_kinked
+
+
 def axisymmetric_profile(x, y, A, delta, alpha, beta, **kwargs):
     """Evaluate an axisymmetric two-power profile on poloidal coordinates.
 
@@ -521,4 +460,34 @@ def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
     rho_flattened, _ = flattening_rho(x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
                                       w=w, gamma=gamma, lam_0=lam_0,
                                       phi=phi, psi_0=psi_0, psi_1=psi_1)
+    return A * two_power(rho_flattened, alpha, beta)
+
+
+def flattening_profile_min(x, y, A, delta, alpha, beta, xi_0, rho_s, d,
+                           phi=0, psi_0=0):
+    """Evaluate a two-power profile on minimum-flattened coordinates.
+
+    Parameters
+    ----------
+    x, y : array-like
+        Dimensionless poloidal Cartesian coordinates.
+    A : scalar or array-like
+        Generic profile amplitude; it may carry application-defined units.
+    delta, xi_0, rho_s : scalar or array-like
+        Dimensionless static shift, kink amplitude, and flattening radius.
+    alpha, beta, d : scalar or array-like
+        Two-power and radial-decay exponents; positive values are intended.
+    phi, psi_0 : scalar or array-like, default=0
+        Toroidal angle and phase origin in radians. Inputs broadcast.
+
+    Returns
+    -------
+    ndarray
+        Broadcast generic profile evaluated using
+        :func:`flattening_rho_min`.
+    """
+    rho_flattened, _ = flattening_rho_min(
+        x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
+        phi=phi, psi_0=psi_0,
+    )
     return A * two_power(rho_flattened, alpha, beta)

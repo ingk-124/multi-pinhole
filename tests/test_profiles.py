@@ -1,7 +1,4 @@
 import numpy as np
-import pytest
-
-from multi_pinhole import Voxel
 from multi_pinhole import profiles
 from multi_pinhole.coordinates import spherical_coordinates
 
@@ -62,64 +59,6 @@ def test_helical_poloidal_coordinates_use_displacement_phase_convention():
     np.testing.assert_allclose(x, r * np.cos(theta), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(y, r * np.sin(theta), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(psi, 2 * theta - (-3) * (phi - 0.4), rtol=1e-12, atol=1e-12)
-
-
-def make_torus_voxel(coordinate_type="torus"):
-    return Voxel(
-        x_axis=np.linspace(0.8, 1.2, 3),
-        y_axis=np.linspace(-0.2, 0.2, 3),
-        z_axis=np.linspace(-0.2, 0.2, 3),
-        coordinate_type=coordinate_type,
-        coordinate_parameters={"major_radius": 1.0, "minor_radius": 0.2},
-    )
-
-
-def test_torus_coordinates_from_voxel_accepts_torus_and_torus_inverse():
-    for coordinate_type in ("torus", "torus_inverse"):
-        voxel = make_torus_voxel(coordinate_type=coordinate_type)
-
-        r, theta, phi = profiles.torus_coordinates_from_voxel(voxel)
-
-        assert r.shape == (voxel.N_voxel,)
-        assert theta.shape == (voxel.N_voxel,)
-        assert phi.shape == (voxel.N_voxel,)
-        np.testing.assert_allclose(np.stack([r, theta, phi], axis=1), voxel.normalized_coordinates())
-
-
-def test_torus_coordinates_from_voxel_rejects_non_torus_voxel():
-    voxel = Voxel(
-        x_axis=np.linspace(-1.0, 1.0, 3),
-        y_axis=np.linspace(-1.0, 1.0, 3),
-        z_axis=np.linspace(-1.0, 1.0, 3),
-    )
-
-    with pytest.raises(ValueError, match="torus"):
-        profiles.torus_coordinates_from_voxel(voxel)
-
-
-def test_evaluate_torus_profile_matches_direct_profile_call():
-    voxel = make_torus_voxel()
-    r, theta, phi = voxel.normalized_coordinates().T
-
-    def torus_profile(r, theta, phi, A):
-        return A * r * np.cos(theta - phi)
-
-    wrapped = profiles.evaluate_torus_profile(voxel, torus_profile, A=2.0)
-    direct = torus_profile(r, theta, phi, A=2.0)
-
-    np.testing.assert_allclose(wrapped, direct, rtol=1e-12, atol=1e-12)
-
-
-def test_evaluate_poloidal_profile_matches_direct_profile_call():
-    voxel = make_torus_voxel(coordinate_type="torus_inverse")
-    r, theta, phi = voxel.normalized_coordinates().T
-    x, y, phi = profiles.torus_to_poloidal_cartesian(r, theta, phi)
-    params = dict(A=2.0, delta=0.1, alpha=2, beta=3, xi_0=0.1, rho_s=0.5, d=2)
-
-    wrapped = profiles.evaluate_poloidal_profile(voxel, profiles.kinked_profile, **params)
-    direct = profiles.kinked_profile(x, y, phi=phi, **params)
-
-    np.testing.assert_allclose(wrapped, direct, rtol=1e-12, atol=1e-12)
 
 
 def test_shifted_polar_keeps_original_boundary_at_unit_radius():
@@ -192,3 +131,48 @@ def test_profiles_accept_arrays_and_scalars_without_global_constants():
     assert np.isfinite(kinked).all()
     assert np.isfinite(flattened).all()
     assert np.isfinite(scalar)
+
+
+def test_kinked_profile_axisymmetric_limit_and_phase_periodicity():
+    x = np.linspace(-0.7, 0.7, 15)
+    y = np.linspace(0.3, -0.3, 15)
+    parameters = dict(A=2.0, delta=0.1, alpha=2.5, beta=3.0)
+
+    axisymmetric = profiles.axisymmetric_profile(x, y, **parameters)
+    kink_limit = profiles.kinked_profile(
+        x, y, **parameters, xi_0=0.0, rho_s=0.4, d=2.0, phi=0.7,
+    )
+    kink = profiles.kinked_profile(
+        x, y, **parameters, xi_0=0.15, rho_s=0.4, d=2.0, phi=0.7,
+        psi_0=-0.2,
+    )
+    periodic = profiles.kinked_profile(
+        x, y, **parameters, xi_0=0.15, rho_s=0.4, d=2.0,
+        phi=0.7 + 2 * np.pi, psi_0=-0.2,
+    )
+
+    np.testing.assert_allclose(kink_limit, axisymmetric, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(periodic, kink, rtol=1e-12, atol=1e-12)
+
+
+def test_minimum_flattening_matches_independent_reference_formula():
+    x = np.linspace(-0.6, 0.8, 17)
+    y = np.linspace(0.2, -0.4, 17)
+    parameters = dict(delta=0.08, xi_0=0.12, rho_s=0.45, d=2.3,
+                      phi=0.6, psi_0=-0.1)
+
+    rho_shifted, _ = profiles.shifted_polar(x, y, parameters["delta"], 0)
+    rho_kinked, theta_kinked = profiles.kinked_rho(x, y, **parameters)
+    expected_rho = np.minimum(
+        rho_kinked,
+        np.logaddexp(parameters["rho_s"] / 0.03, rho_shifted / 0.03) * 0.03,
+    )
+    rho, theta = profiles.flattening_rho_min(x, y, **parameters)
+
+    np.testing.assert_allclose(rho, expected_rho, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(theta, theta_kinked, rtol=1e-12, atol=1e-12)
+    expected_profile = 1.7 * profiles.two_power(expected_rho, 2.0, 3.0)
+    actual_profile = profiles.flattening_profile_min(
+        x, y, A=1.7, alpha=2.0, beta=3.0, **parameters,
+    )
+    np.testing.assert_allclose(actual_profile, expected_profile, rtol=1e-12, atol=1e-12)
