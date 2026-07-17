@@ -93,15 +93,3 @@ def test_center_interpolator_rejects_ambiguous_queries():
         )
     with pytest.raises(ValueError, match="explicit coordinate_type"):
         interpolator(points=[[1.0, 0.0, 12.0]], R=1.0)
-
-
-def test_legacy_source_interpolator_is_compatibility_wrapper():
-    voxel = _voxel()
-    indices = np.array([0, 1])
-
-    legacy = voxel.sub_voxel_interpolator_from_centers(indices, res=2)
-    internal = voxel._build_source_quadrature_matrix(indices, res=2)
-
-    np.testing.assert_array_equal(legacy.indptr, internal.indptr)
-    np.testing.assert_array_equal(legacy.indices, internal.indices)
-    np.testing.assert_allclose(legacy.data, internal.data)

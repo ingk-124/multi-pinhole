@@ -628,29 +628,6 @@ class Voxel:
             shape=(expected_points, self.N_voxel),
         ).tocsr()
 
-    def sub_voxel_interpolator_from_centers(self, n=None, res=None, points=None):
-        """Compatibility wrapper for the internal source-quadrature matrix.
-
-        This method returns interpolation rows already scaled for projection
-        integration; it is not a general-purpose field interpolator. New user
-        code should use :meth:`center_interpolator` for ordinary point queries.
-
-        Parameters
-        ----------
-        n : int or array-like of int, optional
-            Owning voxel indices.
-        res : int or (int, int, int), optional
-            Source quadrature resolution.
-        points : np.ndarray, optional
-            Precomputed source sample points.
-
-        Returns
-        -------
-        scipy.sparse.csr_matrix
-            Volume-weighted source quadrature matrix.
-        """
-        return self._build_source_quadrature_matrix(n=n, res=res, points=points)
-
     @property
     def volume(self):
         """

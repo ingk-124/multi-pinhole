@@ -204,8 +204,7 @@ explicit `coordinate_type`; named components are converted back to Cartesian
 and NumPy-broadcast before interpolation. Scalar and trailing vector/tensor
 value shapes are supported. This ordinary interpolation API is distinct from
 the private, volume-weighted source-quadrature matrices used by projection
-assembly. The historical `sub_voxel_interpolator_from_centers()` name remains
-only as a compatibility wrapper for that projection-specific matrix.
+assembly.
 
 `multi_pinhole.profiles` provides composable helpers for evaluating synthetic
 toroidal and poloidal profiles on top of these coordinates, including shifted

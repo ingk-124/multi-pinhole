@@ -61,7 +61,7 @@ def test_anisotropic_source_quadrature_weights_sum_to_voxel_volume():
         shape=(1, 1, 1),
     )
     points = voxel.get_sub_voxel_centers(n=np.array([0]), res=(2, 3, 4))
-    weights = voxel.sub_voxel_interpolator_from_centers(
+    weights = voxel._build_source_quadrature_matrix(
         np.array([0]), res=(2, 3, 4), points=points,
     )
 

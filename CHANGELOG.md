@@ -8,8 +8,7 @@
   `normalized_coordinates()` profile API.
 - Added `Voxel.center_interpolator()` for scalar or vector fields sampled at
   gravity centers. Projection-specific volume-weighted source quadrature now
-  uses a private builder; the former public-looking method remains as a
-  compatibility wrapper.
+  uses a private builder instead of exposing an interpolation-like user API.
 
 ## 0.8.0
 
