@@ -300,6 +300,32 @@ def test_world_accepts_keyed_camera_dict_and_preserves_keys_after_removal():
     assert list(world.P_matrix) == ["right"]
 
 
+def test_world_camera_rekey_preserves_array_caches():
+    left = make_camera()
+    right = make_camera().set_camera_position([1.0, 0.0, 0.0])
+    world = World(cameras={"left": left, "right": right}, verbose=0)
+    left_visibility = np.array([[True, False]])
+    right_visibility = np.array([[False, True]])
+    left_projection = sparse.csr_matrix([[1.0, 2.0]])
+    right_projection = sparse.csr_matrix([[3.0, 4.0]])
+    world._visible_voxels["left"] = left_visibility
+    world._visible_voxels["right"] = right_visibility
+    world._projection["left"] = [left_projection]
+    world._projection["right"] = [right_projection]
+    world._P_matrix["left"] = left_projection
+    world._P_matrix["right"] = right_projection
+
+    world.cameras = {"Poly": left, "Al": right}
+
+    assert list(world.cameras) == ["Poly", "Al"]
+    assert world.visible_voxels["Poly"] is left_visibility
+    assert world.visible_voxels["Al"] is right_visibility
+    assert world.projection["Poly"][0] is left_projection
+    assert world.projection["Al"][0] is right_projection
+    assert world.P_matrix["Poly"] is left_projection
+    assert world.P_matrix["Al"] is right_projection
+
+
 def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
     voxel = Voxel(
         x_axis=np.array([0.0, 1.0]), y_axis=np.array([0.0, 1.0]),

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.3
+
+- Fixed camera-key reassignment when cached visibility values are NumPy
+  arrays. Re-registering the same `Camera` instances under new keys now
+  preserves visibility and projection caches without an ambiguous array
+  truth-value error.
+
 ## 0.8.2
 
 - Standardized toroidal inverse-coordinate input components as

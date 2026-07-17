@@ -589,9 +589,9 @@ class World:
         self._projection = projection
         self._projection_settings = projection_settings
         self._P_matrix = P_matrix
-        if all([_ is None for _ in visible_voxels.values()]):
+        if all(value is None for value in visible_voxels.values()):
             print("Notice: All cameras are updated.")
-        elif None in visible_voxels.values():
+        elif any(value is None for value in visible_voxels.values()):
             reused_index = [repr(key) for key in visible_voxels if visible_voxels[key] is not None]
             xth = ", ".join(reused_index[:-1]) + " and " + reused_index[-1] if \
                 len(reused_index) > 1 else f"{reused_index[0]}"
