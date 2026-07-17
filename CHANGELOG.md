@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1
+
+- Added stateless physical/normalized coordinate queries on `Voxel`, inverse
+  keyword-coordinate conversion with NumPy broadcasting, and a shared
+  immutable coordinate-type registry while preserving the configured
+  `normalized_coordinates()` profile API.
+- Added `Voxel.center_interpolator()` for scalar or vector fields sampled at
+  gravity centers. Projection-specific volume-weighted source quadrature now
+  uses a private builder instead of exposing an interpolation-like user API.
+
 ## 0.8.0
 
 - Split the optics implementation into responsibility-focused modules:

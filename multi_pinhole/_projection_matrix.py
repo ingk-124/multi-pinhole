@@ -66,7 +66,7 @@ def build_optical_projection_matrix(
     sample_points = voxel.get_sub_voxel_centers(
         sample_voxels, res=sample_resolution,
     )
-    sample_S = voxel.sub_voxel_interpolator_from_centers(
+    sample_S = voxel._build_source_quadrature_matrix(
         sample_voxels, res=sample_resolution, points=sample_points,
     )
     sample_I = camera.calc_image_vec(
@@ -126,7 +126,7 @@ def build_optical_projection_matrix(
         if owners.size == 0:
             return None
         points = voxel.get_sub_voxel_centers(owners, res=resolution)
-        interpolator = voxel.sub_voxel_interpolator_from_centers(
+        interpolator = voxel._build_source_quadrature_matrix(
             owners, res=resolution, points=points,
         )
         if check_point_visibility:

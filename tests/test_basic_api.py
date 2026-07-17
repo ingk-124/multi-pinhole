@@ -1101,7 +1101,7 @@ def test_get_sub_voxel_centers_does_not_mutate_voxel_resolution():
 def test_center_sub_voxel_interpolator_preserves_constants_and_is_sparse():
     voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
     voxel_indices = np.array([0, 13, 26])
-    matrix = voxel.sub_voxel_interpolator_from_centers(n=voxel_indices, res=2)
+    matrix = voxel._build_source_quadrature_matrix(n=voxel_indices, res=2)
     expected_scale = np.repeat(voxel.volume[voxel_indices] / 2 ** 3, 2 ** 3)
 
     np.testing.assert_allclose(matrix @ np.ones(voxel.N), expected_scale,
@@ -1115,7 +1115,7 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     voxel = Voxel.uniform_voxel(ranges=((0.0, 3.0),) * 3, shape=(3, 3, 3))
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
     points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
-    matrix = voxel.sub_voxel_interpolator_from_centers(
+    matrix = voxel._build_source_quadrature_matrix(
         n=np.array([center_voxel]), res=3, points=points,
     )
     center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
@@ -1134,7 +1134,7 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_on_nonuniform_g
     )
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
     points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
-    matrix = voxel.sub_voxel_interpolator_from_centers(
+    matrix = voxel._build_source_quadrature_matrix(
         n=np.array([center_voxel]), res=3, points=points,
     )
     center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \

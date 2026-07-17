@@ -183,6 +183,29 @@ Cartesian `(x, y, z)` and returning normalized coordinates):
   radius `a` scales only `r` and does not affect either angle. At the origin,
   `theta = nan`.
 
+For ad-hoc analysis, `Voxel.to_coordinates()` can query any of these
+conventions without changing the voxel's configured profile coordinate type.
+It accepts `points="centers"`, `points="vertices"`, or an explicit Cartesian
+array, and returns physical coordinates unless `normalized=True` is requested.
+`Voxel.from_coordinates()` performs the inverse conversion from keyword-only
+components, for example `from_coordinates("cylindrical", R=..., Z=...,
+phi=...)`. Component arrays are NumPy-broadcast before a final Cartesian axis
+is appended. Normalized conversions require all relevant scale parameters
+explicitly; no implicit unit scale is used by the new API. The immutable
+registry is available as `voxel.available_coordinate_types`. Adding a new
+convention therefore does not require another Voxel method. The older
+`normalized_coordinates()` method remains the configured-profile compatibility
+API.
+
+Values sampled at Cartesian voxel gravity centers can be reused through
+`Voxel.center_interpolator(values, **interpolator_kwargs)`. The returned
+callable accepts either Cartesian `points` or keyword components with an
+explicit `coordinate_type`; named components are converted back to Cartesian
+and NumPy-broadcast before interpolation. Scalar and trailing vector/tensor
+value shapes are supported. This ordinary interpolation API is distinct from
+the private, volume-weighted source-quadrature matrices used by projection
+assembly.
+
 `multi_pinhole.profiles` provides composable helpers for evaluating synthetic
 toroidal and poloidal profiles on top of these coordinates, including shifted
 polar coordinates, kinked/flattened radial coordinates, and thin wrappers that

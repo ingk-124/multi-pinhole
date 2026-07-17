@@ -210,7 +210,7 @@ def build_problem(world: World, resolution: int, max_chunk_size: int = 256,
     samples_per_voxel = resolution ** 3
     points = world.voxel.get_sub_voxel_centers(voxel_indices, res=resolution)
     owner_voxel = np.repeat(voxel_indices, samples_per_voxel)
-    S_all = world.voxel.sub_voxel_interpolator_from_centers(
+    S_all = world.voxel._build_source_quadrature_matrix(
         voxel_indices, res=resolution, points=points,
     ).tocsr()
 
