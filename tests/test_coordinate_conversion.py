@@ -91,6 +91,25 @@ def test_from_coordinates_broadcasts_cylindrical_keyword_components():
     np.testing.assert_allclose(xyz[..., 2], np.broadcast_to(Z, (2, 3)))
 
 
+def test_from_coordinates_missing_component_error_lists_complete_signature():
+    voxel = _voxel()
+
+    with pytest.raises(
+        ValueError,
+        match="torus_inverse coordinates require components rho, theta, phi; missing rho",
+    ):
+        voxel.from_coordinates(
+            "torus_inverse", theta=0.0, phi=0.0, major_radius=1.5,
+        )
+
+
+def test_from_coordinates_unsupported_error_lists_available_types():
+    voxel = _voxel()
+
+    with pytest.raises(ValueError, match="choose one of .*torus_inverse.*cylindrical"):
+        voxel.from_coordinates("toroidal_inverse", rho=1.0, theta=0.0, phi=0.0)
+
+
 def test_normalized_inverse_cylindrical_requires_scales():
     voxel = _voxel()
 

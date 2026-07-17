@@ -24,6 +24,24 @@ COORDINATE_PARAMETER_KEYS = {
     "spherical": [["radius"], ["a"]],
 }
 
+_COORDINATE_COMPONENT_KEYS = {
+    "cartesian": ("x", "y", "z"),
+    "torus": ("rho", "theta", "phi"),
+    "torus_inverse": ("rho", "theta", "phi"),
+    "cylindrical": ("R", "phi", "Z"),
+    "spherical": ("r", "theta", "phi"),
+}
+
+
+def _missing_component_error(coordinate_type, components):
+    """Return an informative error for an incomplete component set."""
+    required = _COORDINATE_COMPONENT_KEYS[coordinate_type]
+    missing = [name for name in required if name not in components]
+    return ValueError(
+        f"{coordinate_type} coordinates require components "
+        f"{', '.join(required)}; missing {', '.join(missing)}"
+    )
+
 
 def cartesian_coordinates(width: float, depth: float, height: float):
     """Build a normalized Cartesian-coordinate transform.
@@ -420,8 +438,8 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             x, y, z = np.broadcast_arrays(
                 components["x"], components["y"], components["z"],
             )
-        except KeyError as exc:
-            raise ValueError(f"{exc.args[0]} is required for cartesian coordinates") from None
+        except KeyError:
+            raise _missing_component_error("cartesian", components) from None
         x, y, z = (np.asarray(value, dtype=float) for value in (x, y, z))
         if normalized:
             width = _positive_scale(
@@ -441,8 +459,8 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             R, phi, Z = np.broadcast_arrays(
                 components["R"], components["phi"], components["Z"],
             )
-        except KeyError as exc:
-            raise ValueError(f"{exc.args[0]} is required for cylindrical coordinates") from None
+        except KeyError:
+            raise _missing_component_error("cylindrical", components) from None
         R, phi, Z = (np.asarray(value, dtype=float) for value in (R, phi, Z))
         if normalized:
             radius = _positive_scale(
@@ -459,8 +477,8 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             rho, theta, phi = np.broadcast_arrays(
                 components["rho"], components["theta"], components["phi"],
             )
-        except KeyError as exc:
-            raise ValueError(f"{exc.args[0]} is required for {coordinate_type} coordinates") from None
+        except KeyError:
+            raise _missing_component_error(coordinate_type, components) from None
         rho, theta, phi = (
             np.asarray(value, dtype=float) for value in (rho, theta, phi)
         )
@@ -486,8 +504,8 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             r, theta, phi = np.broadcast_arrays(
                 components["r"], components["theta"], components["phi"],
             )
-        except KeyError as exc:
-            raise ValueError(f"{exc.args[0]} is required for spherical coordinates") from None
+        except KeyError:
+            raise _missing_component_error("spherical", components) from None
         r, theta, phi = (
             np.asarray(value, dtype=float) for value in (r, theta, phi)
         )
@@ -503,4 +521,7 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             r * np.cos(theta),
         ], axis=-1)
 
-    raise ValueError(f"Unsupported coordinate_type: {coordinate_type}")
+    raise ValueError(
+        f"Unsupported coordinate_type: {coordinate_type!r}; "
+        f"choose one of {', '.join(COORDINATE_TYPES)}"
+    )

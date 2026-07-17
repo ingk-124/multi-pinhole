@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from itertools import chain
+from typing import Any, Literal, overload
 
 import numpy as np
 from numba import njit
@@ -833,6 +834,30 @@ class Voxel:
             **coordinate_parameters,
         )
 
+    @overload
+    def from_coordinates(self, coordinate_type: Literal["cartesian"], *,
+                         x: Any, y: Any, z: Any, normalized: bool = False,
+                         rotation=None, width: float = ..., depth: float = ...,
+                         height: float = ...) -> np.ndarray: ...
+
+    @overload
+    def from_coordinates(self, coordinate_type: Literal["cylindrical"], *,
+                         R: Any, phi: Any, Z: Any, normalized: bool = False,
+                         rotation=None, radius: float = ...,
+                         height: float = ...) -> np.ndarray: ...
+
+    @overload
+    def from_coordinates(self, coordinate_type: Literal["torus", "torus_inverse"], *,
+                         rho: Any, theta: Any, phi: Any, major_radius: float,
+                         normalized: bool = False, rotation=None,
+                         minor_radius: float = ...) -> np.ndarray: ...
+
+    @overload
+    def from_coordinates(self, coordinate_type: Literal["spherical"], *,
+                         r: Any, theta: Any, phi: Any,
+                         normalized: bool = False, rotation=None,
+                         radius: float = ...) -> np.ndarray: ...
+
     def from_coordinates(self, coordinate_type: str, *, normalized: bool = False,
                          rotation=None, **components):
         """Convert broadcastable keyword coordinate components to Cartesian.
@@ -850,7 +875,16 @@ class Voxel:
         rotation : scipy.spatial.transform.Rotation or array-like, optional
             Coordinate-frame rotation overriding the configured legacy frame.
         **components
-            Keyword-only coordinate components and required geometry/scales.
+            Keyword-only coordinate components and required geometry/scales:
+
+            * ``cartesian``: ``x``, ``y``, ``z``; when normalized, also
+              ``width``, ``depth``, and ``height``.
+            * ``cylindrical``: ``R``, ``phi``, ``Z``; when normalized, also
+              ``radius`` and ``height``.
+            * ``torus`` or ``torus_inverse``: ``rho``, ``theta``, ``phi``, and
+              ``major_radius``; when normalized, also ``minor_radius``.
+            * ``spherical``: ``r``, ``theta``, ``phi``; when normalized, also
+              ``radius``.
 
         Returns
         -------
@@ -861,6 +895,26 @@ class Voxel:
         ------
         ValueError
             If required components or parameters are missing or invalid.
+
+        Examples
+        --------
+        Build a normalized inverse-torus poloidal circle. Component arrays
+        follow NumPy broadcasting rules.
+
+        >>> theta = np.linspace(0.0, 2.0 * np.pi, 100)
+        >>> xyz = voxel.from_coordinates(
+        ...     "torus_inverse", rho=1.0, theta=theta, phi=0.0,
+        ...     major_radius=1.5, minor_radius=0.5, normalized=True,
+        ... )
+
+        Other coordinate conventions use the following call patterns::
+
+            voxel.from_coordinates("cartesian", x=x, y=y, z=z)
+            voxel.from_coordinates("cylindrical", R=R, phi=phi, Z=Z)
+            voxel.from_coordinates(
+                "torus", rho=rho, theta=theta, phi=phi, major_radius=R0
+            )
+            voxel.from_coordinates("spherical", r=r, theta=theta, phi=phi)
         """
         local_points = convert_to_cartesian(
             coordinate_type,
