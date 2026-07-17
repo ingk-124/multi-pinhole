@@ -37,7 +37,6 @@ class Rays:
         """int: Count of rays that are both in front of the eye and marked visible."""
         return self.front_and_visible.nonzero()[0].size
 
-    # allow indexing and slicing
     def __getitem__(self, key):
         """Rays: Return the subset of rays selected by ``key``.
 
@@ -60,4 +59,3 @@ class Rays:
     def __len__(self):
         """int: Total number of rays, same as :attr:`n`."""
         return self.n
-

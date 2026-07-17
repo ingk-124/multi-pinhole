@@ -9,14 +9,6 @@ operate on normalized coordinates such as those returned by
 import numpy as np
 
 
-# TODO: Add a magnetic-surface-based emission helper driven by a Fourier
-# spectrum of the flux-surface shape. Keep it as a pure profile model first:
-# map (r, theta, phi) to a surface label rho_surf(theta, phi) from configurable
-# Fourier coefficients, evaluate the radial emission on that label, then add a
-# thin Voxel wrapper through evaluate_torus_profile/evaluate_poloidal_profile.
-# Keep plotting, fitting, and diagnostics outside this core profile API.
-
-
 def _as_array(value):
     return np.asarray(value, dtype=float)
 

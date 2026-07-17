@@ -1,20 +1,4 @@
-"""Multi-pinhole X-ray imaging simulation package.
-
-This top-level package re-exports the public classes and helper functions
-needed to build multi-pinhole camera simulations, so most users only need
-``from multi_pinhole import ...``:
-
-* Optics: :class:`~multi_pinhole.eye.Eye`, :class:`~multi_pinhole.aperture.Aperture`,
-  :class:`~multi_pinhole.screen.Screen`, :class:`~multi_pinhole.camera.Camera`, and the
-  :class:`~multi_pinhole.rays.Rays` data container returned by ray tracing.
-* Scene modeling: :class:`~multi_pinhole.voxel.Voxel` (the Cartesian voxel grid)
-  and :mod:`multi_pinhole.profiles` helpers for evaluating synthetic toroidal
-  and poloidal profiles.
-* Orchestration: :class:`~multi_pinhole.world.World`, which binds voxels, cameras,
-  and optional walls into a simulation-ready scene.
-
-See ``docs/overview.md`` for a walkthrough of the typical workflow.
-"""
+"""Public optics, voxel, projection, and scene-orchestration API."""
 
 from .core import Rays, Eye, Aperture, Screen, Camera
 from .projection import EyeProjectionWorkEstimate, ProjectionWorkEstimate

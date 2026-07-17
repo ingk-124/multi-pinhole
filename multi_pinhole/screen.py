@@ -448,7 +448,6 @@ class Screen:
         else:
             return False
 
-    #  properties
     @property
     def screen_shape(self):
         """str: Geometric outline of the active display surface."""
@@ -567,7 +566,6 @@ class Screen:
         """sparse.csr_matrix or None: Mapping from subpixels to their parent pixels."""
         return self._transform_matrix
 
-    #  methods
     def _set_variables(self):
         """None: Populate cached geometry derived from the current subpixel resolution."""
         # set the subpixel shape, subpixel size and subpixel position
@@ -898,12 +896,6 @@ class Screen:
             raise ValueError(f"image size must be {self._subpixel_shape}")
 
         # Convert subpixel image to pixel image by averaging subpixels
-        # pixel_image = np.zeros((*self._pixel_shape, 3) if color_flag else self._pixel_shape)
-        # for i in range(self._subpixel_resolution):
-        #     for j in range(self._subpixel_resolution):
-        #         pixel_image += subpixel_image[i::self._subpixel_resolution, j::self._subpixel_resolution]
-        # pixel_image /= self._subpixel_resolution ** 2
-        # return pixel_image
         return self._transform_matrix.dot(subpixel_image)
 
     def show_image(self, image: np.ndarray = None, ax: plt.Axes = None,

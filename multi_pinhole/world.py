@@ -1,16 +1,8 @@
-"""World container that ties voxels, cameras, and walls into a scene.
+"""Scene orchestration and cache ownership for voxel-camera simulations.
 
-:class:`World` is the top-level orchestration object: it owns a
-:class:`~multi_pinhole.voxel.Voxel` grid, one or more
-:class:`~multi_pinhole.core.Camera` instances, and optional STL ``walls``
-that occlude visibility. It computes and caches per-camera, per-eye
-visibility masks (:meth:`World.find_visible_voxels`) and sparse
-voxel-to-screen projection matrices (:meth:`World.set_projection_matrix`),
-and provides persistence (:meth:`World.save_world` /
-:meth:`World.load_world`) and 3D visualization
-(:meth:`World.draw_camera_orientation`) helpers.
-
-See ``docs/world.md`` for a narrative overview of the module.
+``World`` owns scene objects and their visibility/projection caches. Private
+numerical helpers perform calculations without owning scene state. See
+``docs/world.md`` for workflow and persistence details.
 """
 
 import gc
@@ -221,21 +213,17 @@ class World:
         objects.
         """
 
-        # Voxel
         self._voxel = voxel if voxel is not None else Voxel()
         self._voxel.set_world(self)
 
-        # Cameras
         self._cameras = self._normalize_cameras(cameras)
         for _ in self._cameras.values():
             _.set_world(self)
 
-        # Walls
         self._walls = []
         self._wall_ranges = None
         self.walls = walls
 
-        # initialize other attributes
         self._inside_function = None
         self._inside_kwargs = {}
         self._inside_vertices = None
@@ -247,7 +235,6 @@ class World:
         self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
         self.verbose = verbose
 
-        # set inside vertices if inside_func is provided
         if inside_func is not None:
             self.set_inside_vertices(inside_func)
 
@@ -323,7 +310,6 @@ class World:
 
         return self.voxel.__repr__()
 
-    # MARK: Save and Load
     def save_world(self, filename):
         """Persist the world instance to disk.
 
@@ -358,7 +344,6 @@ class World:
         loaded_world._ensure_projection_cache_schema()
         return loaded_world
 
-    # MARK: Properties
     @property
     def cameras(self):
         """Mapping[Hashable, Camera]: Read-only stable-key camera mapping."""
@@ -373,20 +358,6 @@ class World:
     def walls(self):
         """list[mesh.Mesh]: Collection of STL meshes representing walls."""
         return self._walls
-
-    # TODO: この辺をうまく活用してinside_verticesを制御する
-    # future use
-    # @property
-    # def coordinate_type(self):
-    #     return self._coordinate_type
-
-    # @property
-    # def coordinate_parameters(self):
-    #     return self._coordinate_parameters
-
-    # @property
-    # def normalized_coordinates(self):
-    #     return (lambda x: x) if self._normalized_coordinates is None else self._normalized_coordinates
 
     @property
     def wall_ranges(self):
@@ -537,7 +508,6 @@ class World:
             self._invalidate_projection_cache()
             self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
 
-    # MARK: Setters
     @inside_vertices.setter
     def inside_vertices(self, inside_vertices: np.ndarray):
         """Validate and store the inside-vertex mask.
@@ -619,17 +589,14 @@ class World:
         self._projection = projection
         self._projection_settings = projection_settings
         self._P_matrix = P_matrix
-        # self._P_matrix = None
         if all([_ is None for _ in visible_voxels.values()]):
             print("Notice: All cameras are updated.")
         elif None in visible_voxels.values():
-            # Notice: *th, *th, and *th cameras are reused.
             reused_index = [repr(key) for key in visible_voxels if visible_voxels[key] is not None]
             xth = ", ".join(reused_index[:-1]) + " and " + reused_index[-1] if \
                 len(reused_index) > 1 else f"{reused_index[0]}"
             print(f"Notice: {xth} camera{'s are' if len(reused_index) > 1 else ' is'} reused.")
         else:
-            # All cameras are reused.
             print("Notice: All cameras are reused.")
         print(self.camera_info())
 
@@ -689,8 +656,6 @@ class World:
         self._projection_settings.pop(camera_key)
         self._P_matrix.pop(camera_key)
         removed_camera.unset_world(self)
-        # TODO: Add an explicit reset_camera_keys() helper if compact integer
-        # keys are ever needed. Automatic renumbering is intentionally avoided.
         print(self.camera_info())
 
     def change_camera(self, camera_key: Hashable, camera: Camera):
@@ -771,7 +736,6 @@ class World:
                 self._wall_ranges = zip(np.min([_.min_ for _ in self._walls], axis=0),
                                         np.max([_.max_ for _ in self._walls], axis=0))
 
-    # MARK: Methods
     def set_inside_vertices(self, function: callable, **kwargs) -> None:
         """Derive the inside-vertex mask via a user-provided function.
 
@@ -2021,13 +1985,9 @@ class World:
         ax.set_box_aspect((np.ptp(ax.get_xlim()),
                            np.ptp(ax.get_ylim()),
                            np.ptp(ax.get_zlim())))
-        # set axes labels
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_zlabel("z")
-        # draw camera coordinate system in the world coordinate system
-        # x, y, z axes in the world coordinate system is the same as axes in the figure
-        # draw camera position
         for camera in self.cameras.values():
             camera.draw_camera_orientation(ax=ax)
 
@@ -2038,291 +1998,3 @@ class World:
             ax.figure.show()
 
         return ax
-
-
-if __name__ == '__main__':
-
-    camera_1 = Camera(eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=20,
-                                position=[0, 0]),
-                            Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=20,
-                                position=[-5, 5]),
-                            # Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=15,
-                            #     position=[5, -5])
-                            ],
-                      screen=Screen(screen_shape="rectangle", screen_size=[15, 30], pixel_shape=(25, 50),
-                                    subpixel_resolution=15),
-                      apertures=[
-                          Aperture(shape="circle", size=10, position=[0, 0, 80]).set_model(resolution=40,
-                                                                                           max_size=200),
-                          # Aperture(shape="rectangle", size=(100, 10), position=[0, 0, 80]).set_model(
-                          #     resolution=40, max_size=100)
-                      ],
-                      camera_position=[670, 670, 0],
-                      # camera_position=[0, 300, 0],
-                      ).set_rotation_euler("xyz",
-                                            (-90, 45, 180),
-                                            # (-90, 0, 180),
-                                            degrees=True)
-    camera_2 = Camera(eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=20,
-                                position=[0, 0]),
-                            Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=20,
-                                position=[-5, 5]),
-                            # Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25, focal_length=15,
-                            #     position=[5, -5])
-                            ],
-                      screen=Screen(screen_shape="circle", screen_size=[17, 17], pixel_shape=(32, 32),
-                                    subpixel_resolution=15),
-                      apertures=[
-                          Aperture(shape="circle", size=10, position=[0, 0, 80]).set_model(resolution=40,
-                                                                                           max_size=200),
-                          # Aperture(shape="rectangle", size=(100, 10), position=[0, 0, 80]).set_model(
-                          #     resolution=40, max_size=100)
-                      ],
-                      camera_position=[670, -500, 0],
-                      # camera_position=[0, 300, 0],
-                      ).set_rotation_euler("xz",
-                                            (90, -90),
-                                            degrees=True)
-    # wall = mesh.Mesh.from_file("../relax.stl")
-    wall = mesh.Mesh.from_file("../RELAX_chamber.stl")
-    vox = Voxel(x_axis=np.hstack([np.linspace(-800, 0, 8, endpoint=False), np.linspace(0, 800, 17, endpoint=True)]),
-                y_axis=np.linspace(-800, 800, 33),
-                z_axis=np.linspace(-300, 300, 13))
-    # vox = Voxel().uniform_axes(ranges=[[-800, 800], [-800, 800], [-300, 300]],
-    #                            shape=[11, 11, 11], show_info=True)
-    world = World(cameras=[camera_1, camera_2],
-                  # voxel=Voxel().uniform_axes([[-780, 780], [-780, 780], [-270, 270]], (53, 19, 53)),
-                  voxel=vox,
-                  walls=wall
-                  )
-    # world.voxel.uniform_axes([[-40, 40], [-40, 40], [-40, 40]], (5, 5, 5))
-    # points = world.voxel.gravity_center
-    # points = points[points[:, 2] < 250]
-    print("set world")
-    print(world)
-    vox.set_coordinate("torus", major_radius=500, minor_radius=250)
-    # vox.set_coordinate("cylindrical", radius=50, height=100,
-    #                    rotation=Rotation.from_euler("yz", (-0, -90), degrees=True)
-    #                    )
-    # r, theta, Z = vox.normalized_coordinates().T
-    r, theta, phi = vox.normalized_coordinates().T
-    inside = r < 1
-
-    world.inside_voxels = inside
-    world.set_projection_matrix(res=5, verbose=1, parallel=3)
-
-    # f = torus_fourier_bessel(1, 1, 0)(r, theta, phi).real * (r < 1)
-    # fig = multi_volume_rendering([r * (r < 1), theta * (r < 1), f], vox.gravity_center,
-    #                              opacity=0.2,
-    #                              surface_count=11,  # keep low for big data
-    #                              # colorscale='Plasma',
-    #                              # isomin=-1.5, isomax=1.5,
-    #                              # where f around 0 -> opacity=0.1, f around maximum or minimum -> opacity=1
-    #                              opacityscale=[[0, 0.9], [0.25, 1], [0.5, 0.], [0.75, 1], [1, 0.9]],
-    #                              # opacityscale='extreme',
-    #                              # slices_z=dict(show=True, locations=[0.]),
-    #                              # slices_y=dict(show=True, locations=[0.]),
-    #                              # slices_x=dict(show=True, locations=[0.]),
-    #                              surface=dict(fill=1, pattern='all'),
-    #                              caps=dict(x_show=False, y_show=False, z_show=False),
-    #                              colorscale="RdBu_r",
-    #
-    #                              )
-    # fig.show()
-
-    visible = world.visible_voxels[0]
-    visible_vertices = stl_utils.check_visible(mesh_obj=camera_1.apertures[0].stl_model,
-                                               start=camera_1.eyes[0].position,
-                                               grid_points=camera_1.world2camera(world.voxel.grid))
-
-    print("--- camera orientation ---")
-    ax = plt.subplot(projection="3d", proj_type="ortho")
-    # ax.scatter(*world.voxel.grid[visible_vertices].T, s=10, c="g", alpha=1, ec="k", lw=0.1)
-    # ax.scatter(*world.voxel.grid[~visible_vertices].T, s=10, c="gray", alpha=0.1)
-
-    ax.scatter(*world.voxel.gravity_center[visible[0]].T, s=10, c="g", alpha=1, ec="k", lw=0.1)
-    ax.scatter(*world.voxel.gravity_center[~visible[0]].T, s=10, c="gray", alpha=0.1)
-    # ax.scatter(*world.voxel.gravity_center[~np.any(visible, axis=0)].T, s=10, c="gray", alpha=0.1)
-    camera_2.draw_camera_orientation(ax=ax)
-    # stl_utils.show_stl(obj, ax, facecolors="lightblue", edgecolors="k", alpha=0.5, linewidth=0.05)
-    ax.set_title("Rotation", fontsize='xx-large')
-    # ax.view_init(elev=60)
-    ax.view_init(elev=30, azim=30)
-    ax.figure.tight_layout()
-    plt.show()
-    # del ax
-
-    # obj.translate(my_camera.apertures[1].position)
-    # obj = stl_utils.rotate_model(obj, matrix=np.linalg.inv(my_camera.rotation_matrix))
-    #
-
-    ax = plt.subplot(projection="3d", proj_type="ortho")
-    ax.scatter(*camera_1.world2camera(world.voxel.gravity_center[visible[0]]).T, s=10,
-               zdir="x", alpha=1, c="g", ec="k", lw=0.1)
-    # ax.scatter(*my_camera.world2camera(world.voxel.gravity_center[visible[1]]).T, s=10,
-    #            zdir="x", alpha=0.1)
-    ax.scatter(*camera_1.world2camera(world.voxel.gravity_center[~visible[0]]).T, s=10,
-               zdir="x", alpha=0.1, c="gray")
-    Xlim, Ylim, Zlim = zip(np.min(camera_1.world2camera(world.voxel.grid), axis=0) * 1.1,
-                           np.max(camera_1.world2camera(world.voxel.grid), axis=0) * 1.1)
-    camera_1.draw_optical_system(ax=ax, X_lim=Xlim, Y_lim=Ylim, Z_lim=Zlim)
-    # stl_utils.show_stl(ax, my_camera.apertures[0].stl_model, facecolors="orange", edgecolors="k", alpha=0.5,
-    #                    linewidth=1)
-
-    # stl_utils.show_stl(obj, ax, facecolors="orange", edgecolors="k", alpha=0.5, linewidth=0.05)
-    #
-    # obj.translate(my_camera.apertures[0].position)
-    # obj = stl_utils.rotate_model(obj, "x", 10, degrees=True)
-    # obj = stl_utils.rotate_model(obj, matrix=[[0, 1, 0],
-    #                                           [0, 0, 1],
-    #                                           [1, 0, 0]])
-    # stl_utils.show_stl(obj, ax, facecolors="lightblue", edgecolors="k", alpha=0.8, linewidth=0.05, modify_axes=False)
-    ax.set_xlabel(ax.get_xlabel() + "(x)")
-    ax.set_ylabel(ax.get_ylabel() + "(y)")
-    ax.set_zlabel(ax.get_zlabel() + "(z)")
-    ax.view_init(elev=30, azim=30)
-    # axis limits
-    # ax.set_xlim(-10, 210)
-    # ax.set_ylim(100, -100)
-    # ax.set_zlim(-100, 100)
-    # ax.set_box_aspect((ax.get_xlim()[1] - ax.get_xlim()[0],
-    #                    ax.get_ylim()[1] - ax.get_ylim()[0],
-    #                    ax.get_zlim()[1] - ax.get_zlim()[0]))
-
-    # ax.view_init(azim=180, elev=0)
-    ax.figure.show()
-    del ax
-    plt.close("all")
-
-    ax = world.draw_camera_orientation(
-        # x_lim=(-760, 760), y_lim=(-760, 760), z_lim=(-260, 260),
-        show_fig=1, elev=60, azim=-30, alpha=0)
-    ax.scatter(*world.voxel.gravity_center[world.visible_voxels[0].sum(axis=0)].T, s=10, c="r", alpha=1,
-               ec="k", lw=0.1, zorder=0.1)
-    sub_voxels = world.voxel.get_sub_voxel(n=world.visible_voxels[0][0], res=(5, 5, 5))
-    points = np.concatenate([sub_voxel.gravity_center for sub_voxel in sub_voxels])
-    ax.scatter(*points.T, s=1, c="g", alpha=0.5, ec="k", lw=0.1, zorder=0.1)
-    camera_grid = world.cameras[0].world2camera(vox.grid)
-    cond = np.any(camera_grid[vox.vertices_indices, 2] > 0, axis=1)
-    # ax.scatter(*vox.gravity_center[cond].T, s=50, c="b", alpha=1, ec="k", lw=0.1, zorder=0.1)
-    # ax.scatter(*new_voxel.gravity_center[~visible].T, s=10, c="gray", alpha=0.1, zorder=0.1)
-    ax.set_title("Camera orientations")
-    ax.figure.show()
-
-    # fig = stl_utils.plotly_show_stl(world.walls[0], show_fig=0, show_edges=1)
-    # fig.add_trace(go.Volume(x=world.voxel.gravity_center[:, 0],
-    #                         y=world.voxel.gravity_center[:, 1],
-    #                         z=world.voxel.gravity_center[:, 2],
-    #                         value=sum(world.visible_voxels),
-    #                         slices_z=dict(show=True, locations=[0]),
-    #                         isomin=0.1, surface_count=15, colorscale="jet"))
-
-    # sub_voxels = world.voxel.get_sub_voxel(n=world.visible_voxels[0], res=2)
-    # points = np.concatenate([sub_voxel.gravity_center for sub_voxel in sub_voxels])
-    # image_array, visible = world.calc_image_vec(my_camera.eyes[0], points=points, verbose=1, parallel=True)
-    # voxel_index = np.tile(np.arange(world.voxel.N_voxel)[world.visible_voxels[0]],
-    #                       (sub_voxels[0].N_voxel, 1)).T.ravel()[visible.nonzero()[0]]
-    # im_vec_list = [image_array[:, voxel_index == _].sum(axis=1) for _ in np.arange(world.voxel.N_voxel)]
-
-    camera_1.screen.show_image(camera_1.screen.cosine(camera_1.eyes[0]) ** 4)
-    s_time = time.time()
-    im_vec_list_camera = world.im_vec_list_camera
-    im_vec_list = im_vec_list_camera[0]
-    print(f"calc_all_voxel_image: {time.time() - s_time} s")
-    #
-    #
-    #
-    camera_1.screen.show_image(sum(im_vec_list).sum(axis=1), block=False)
-    ax = plt.subplot()
-    camera_1.screen.show_image(camera_1.screen.subpixel_to_pixel(sum(im_vec_list).sum(axis=1)), block=False,
-                               ax=ax)
-    for i, eye in enumerate(camera_1.eyes):
-        c = camera_1.screen.xy2uv(eye.calc_rays(camera_1.apertures[0].position).XY)
-        r = eye.focal_length / (camera_1.apertures[0].position[-1] - eye.focal_length) * camera_1.apertures[
-            0].size
-        ax.plot(np.cos(np.linspace(0, 2 * np.pi)) * r[0] + c[0, 1],
-                np.sin(np.linspace(0, 2 * np.pi)) * r[1] + c[0, 0], c="r")
-        ax.scatter(*camera_1.screen.xy2uv(eye.position[:2]), ec="k", c="w", marker="*", s=50)
-        ax.scatter(c[0, 1], c[0, 0], c="k", marker="x", s=50)
-
-    ax.figure.show()
-
-    plt.close("all")
-
-    x_ = camera_1.screen.pixel_position.reshape(*camera_1.screen.pixel_shape, -1)[
-        camera_1.screen.pixel_shape[0] // 2, :, 1]
-    cosine = camera_1.screen.subpixel_to_pixel(camera_1.screen.cosine(camera_1.eyes[0])).reshape(
-        camera_1.screen.pixel_shape)[
-                 camera_1.screen.pixel_shape[0] // 2] / camera_1.screen.subpixel_resolution ** 2
-    ax = plt.subplot()
-    intensity1d = np.asarray(np.asarray(camera_1.screen.subpixel_to_pixel(im_vec_list[0]).sum(axis=1)).reshape(
-        camera_1.screen.pixel_shape)[camera_1.screen.pixel_shape[0] // 2])
-    ax.plot(x_, intensity1d / intensity1d.max())
-    ax.plot(x_, cosine)
-    ax.plot(x_, cosine ** 2)
-    ax.plot(x_, cosine ** 3)
-    ax.plot(x_, cosine ** 4)
-    ax.figure.show()
-
-    fig, axes = plt.subplots()
-    camera_1.screen.show_image(sum(im_vec_list) @ world.voxel.gravity_center[..., 0],
-                               block=False, ax=axes, cmap="RdBu_r", pm=True, pixel_image=True)
-
-    random_generator = np.random.default_rng(seed=1234)
-
-    voxel_val = random_generator.random(world.voxel.N_voxel)
-
-    # my_camera.screen.show_image(im_vec_list[1].sum(axis=1), block=False)
-    # my_camera.screen.show_image(sum(im_vec_list).sum(axis=1), block=False)
-    #
-    # print(world.voxel.N_voxel)
-    # points = world.voxel.gravity_center[visible[0]]
-    # print(points.shape)
-    # im_vec = world.calc_image_vec(world.cameras.eyes[0], points=points, verbose=1)
-    # print(im_vec)
-    # print(im_vec.shape)
-    # image = im_vec.sum(axis=1)
-    # rgb_image = np.array([image, image, image]).T
-    # world.cameras.screen.show_image(image, block=False)
-    # world.cameras.screen.show_image(world.cameras.screen.subpixel_to_pixel(image), block=False)
-    # world.cameras.screen.show_image(rgb_image / rgb_image.max(), block=False)
-    print("Done")
-
-    # points = np.stack(np.meshgrid(np.linspace(-50, 0, 21),
-    #                               np.linspace(0, 100, 21),
-    #                               np.linspace(0, 200, 21),
-    #                               indexing="ij")).reshape((3, -1)).T
-    # aperture = my_camera.apertures[0]
-    # res = stl_utils.check_visible(aperture.stl_model, my_camera.eyes[0].position,
-    #                               points, full_result=True)
-    # axes = plt.subplots(2, 3, subplot_kw=dict(projection='3d', proj_type='ortho'),
-    #                     figsize=(10, 5))[1].ravel()
-    # for i, [ax, cond, title] in enumerate(
-    #         zip(axes, res, ["inside_cone", "farther_points", "shadow", "check_list", "intersection", "visible"])):
-    #     cond_ = np.any(cond, axis=1) if cond.ndim == 2 else cond
-    #     ax.set_title(title)
-    #     ax.scatter(*my_camera.eyes[0].position, color="g", s=100, marker="*")
-    #     ax.scatter(*points[cond_.squeeze()].T, c="r", s=10, label="true", alpha=0.1)
-    #     ax.scatter(*points[~cond_.squeeze()].T, c="b", s=10, label="false", alpha=0.1)
-    #     ax.legend()
-    #     stl_utils.show_stl(aperture.stl_model, modify_axes=True, ax=ax, elev=0, azim=-90, edgecolors="k", lw=0.5)
-    #     # plot plane defined by the mesh and eye position
-    # axes[0].figure.tight_layout()
-    # axes[0].figure.show()
-
-    # vertices_visible = stl_utils.check_visible(my_camera.apertures[1].stl_model, my_camera.eyes[0].position,
-    #                                            my_camera.world2camera(world.voxel.gravity_center))
-    # ax = plt.subplot(projection="3d", proj_type="ortho")
-    # ax.scatter(*my_camera.world2camera(world.voxel.gravity_center).T, c=vertices_visible, zorder=2)
-    # ax.scatter(*my_camera.eyes[0].position, c="r", zorder=3)
-    # stl_utils.show_stl(my_camera.apertures[1].stl_model, ax=ax, modify_axes=True, edgecolors="k", lw=0.1)
-    # ax.view_init(azim=-90, elev=0)
-    # ax.figure.show()
-
-    # fig = stl_utils.plotly_show_stl(mesh.Mesh.from_file("../Stanford_Bunny.stl"), color="lightblue", opacity=0.8,
-    #                                 show_edges=True, show_fig=False)
-    # # orthographic
-    # fig.update_layout(scene=dict(camera=dict(eye=dict(x=0, y=0, z=0))))
-
-    # res = stl_utils.check_visible(mesh_obj=my_camera.apertures[0].stl_model, start=my_camera.eyes[0].position,
-    #                               grid_points=my_camera.world2camera(points))

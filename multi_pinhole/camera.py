@@ -536,9 +536,6 @@ class Camera:
         else:
             rays = eye.calc_rays(points_in_camera)
 
-        # print("ray2image start")
-        # res1 = self.screen.ray2image(eye, rays, parallel=parallel)
-        # res2 = self.screen.ray2image2(eye, rays, parallel=parallel)
         mat = self.screen.ray2image_grid(
             eye, rays, verbose=verbose,
             etendue_per_subpixel=etendue_per_subpixel,
@@ -681,10 +678,6 @@ class Camera:
                         # patch of ellipse
                         patch2d = Ellipse(aperture.position, *aperture.size * 2,
                                           facecolor="none", edgecolor="k", linewidth=2)
-                    # TODO: aperture rotation (allow to set arbitrary normal vector) (future work)
-                    # rotation matrix is not specified only one vector, so... how to rotate?
-                    # ->
-                    # transform patch to 3D
                     ax.add_patch(patch2d)
                     art3d.pathpatch_2d_to_3d(patch2d, z=aperture.position[2], zdir="x")
 
@@ -699,7 +692,6 @@ class Camera:
 
         return ax
 
-    # todo: make plotly version of draw_optical_system
 
     def draw_camera_orientation_plotly(self, fig=None, **kwargs):
         """go.Figure: Render camera axes within Plotly for interactive viewing.

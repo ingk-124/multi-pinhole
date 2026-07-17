@@ -62,7 +62,6 @@ class Aperture:
                 self._shape, self._size = stl_utils.shape_check(shape, size)
                 self.set_model(**stl_args)
 
-        # self._stl_model = stl_model
 
     def __eq__(self, other):
         """bool: Compare aperture geometry, ignoring linked STL mesh objects."""
@@ -98,7 +97,6 @@ class Aperture:
         self._stl_model = stl_utils.generate_aperture_stl(shape=self._shape, size=self._size,
                                                           resolution=resolution, max_size=max_size)
         self._stl_model.translate(self._position)
-        # self._stl_model.rotate([0, 0, 1], np.pi / 2)
         return self
 
     @property
@@ -122,7 +120,6 @@ class Aperture:
             self._frozen = True
         return self
 
-    #  properties
     @property
     def position(self):
         """np.ndarray: Aperture center in camera coordinates as ``(x, y, z)``."""
@@ -148,7 +145,6 @@ class Aperture:
         """mesh.Mesh or None: Triangulated aperture surface when generated from STL."""
         return self._stl_model
 
-    #  methods
     def print_info(self):
         """None: Print the aperture's spatial configuration and dimensions."""
         print("position:", self.position)

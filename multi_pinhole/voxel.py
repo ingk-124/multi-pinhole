@@ -1,13 +1,4 @@
-"""Cartesian voxel grid for multi-pinhole simulations.
-
-:class:`Voxel` is the primary Cartesian grid container used throughout the
-package: it stores axis coordinates, derives grid/voxel indexing, vertex
-positions, cell volumes, and sub-voxel interpolation matrices, and exposes
-:meth:`Voxel.normalized_coordinates` to evaluate profiles in a configured
-coordinate system (Cartesian, torus, torus-inverse, cylindrical, or
-spherical -- see :mod:`multi_pinhole.coordinates`) while the grid itself
-remains Cartesian.
-"""
+"""Cartesian voxel grids, indexing, subdivision, and interpolation."""
 
 from functools import lru_cache
 from itertools import chain
@@ -30,9 +21,6 @@ from .coordinates import (
     torus_inverse_coordinates,
 )
 from .utils.my_stdio import *
-
-# TODO: add docstring, type hints, and tests(<- additional, help me copilot!)
-# TODO: refactor variable names
 
 def interpolate_matrix_from_vertices(res=None):
     """Build an interpolation matrix from voxel vertex contributions.
@@ -419,7 +407,6 @@ class Voxel:
         -------
         np.ndarray (N_voxel, 3)
         """
-        # return self._gravity_center
         # calculate from cx, cy, cz_axis
         xxx, yyy, zzz = np.meshgrid(self.cx_axis, self.cy_axis, self.cz_axis, indexing="ij")
         return np.stack([xxx.ravel(), yyy.ravel(), zzz.ravel()], axis=1)
@@ -437,7 +424,6 @@ class Voxel:
         -------
         np.ndarray (n, 3)
         """
-        # return self.gravity_center[n]  # original <- this requires all gravity centers to be calculated
         # calculate only for the requested indices
         indices = self.get_voxel_position(n)
         cx = self.cx_axis[indices[:, 0]]
@@ -1151,10 +1137,6 @@ class Voxel:
             ii, jj, kk = np.meshgrid(np.arange(Vx), np.arange(Vy), np.arange(Vz), indexing="ij")
             self._voxel_indices = np.stack([ii, jj, kk], axis=-1).reshape(-1, 3).astype(np.uint64)  # (N_voxel, 3)
 
-            # voxel_numbers = np.arange(self._N_voxel)  # (N_voxel,)
-            # i_indices, j_indices, k_indices = self.get_voxel_position(voxel_numbers).T  # (N_voxel,) x3
-            # vertex linear index base (grid is in z->y->x order: n = k + Nz*(j + Ny*i))
-            # base = k_indices + Nz * (j_indices + Ny * i_indices)  # (N_voxel,)
             base = self._voxel_indices @ np.array([Gz * Gy, Gz, 1])  # (N_voxel,)
             # fixed offsets for the 8 vertex corners
             offset = np.array([0, 1, Gz, Gz + 1, Gz * Gy,
@@ -1163,14 +1145,6 @@ class Voxel:
 
             # Per-voxel cell sizes (N_voxel, 3) without building full 3D stacks
             # Use meshgrid on 1D diffs and 1D centers to create compact 3D then flatten.
-            # DX, DY, DZ = np.meshgrid(dx, dy, dz, indexing="ij")
-            # self._d = np.stack([DX, DY, DZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
-            #
-            # CX, CY, CZ = np.meshgrid(cx, cy, cz, indexing="ij")
-            # self._gravity_center = np.stack([CX, CY, CZ], axis=-1).reshape(-1, 3)  # (N_voxel,3)
-            #
-            # # Volumes (N_voxel,)
-            # self._volume = (DX * DY * DZ).reshape(-1)
 
         self._normalized_coordinates = coordinate_transform(self._coordinate_type, self._coordinate_parameters)
 
@@ -1191,12 +1165,6 @@ class Voxel:
             voxel position (i, j, k)
         """
         n = self._type_check_n_voxel(n)
-        # N_x, N_y, N_z = self.voxel_shape
-        # i = n // (N_y * N_z)
-        # j = (n % (N_y * N_z)) // N_z
-        # k = n % N_z
-        # return np.stack((i, j, k), axis=-1)  # (n_voxel, 3) or (3,)
-        # return np.array(np.unravel_index(n, self.voxel_shape)).T  # (n_voxel, 3) or (3,)
         return self._voxel_indices[n]  # (n_voxel, 3)
 
     def get_voxel_number(self, i, j, k):
@@ -1222,7 +1190,6 @@ class Voxel:
         n = k + N_z * (j + N_y * i)
         return n
 
-    # -------- Lightweight helper properties (computed from 1D data) --------------
     @property
     def dx_axis(self):
         """1D cell size along x (length N_x)."""
@@ -1277,11 +1244,6 @@ class Voxel:
         print(f"z_axis: {self.axes[2]}")
         print(f"grid_shape: {self.grid_shape} (N_grid={self.N_grid})")
         print(f"voxel_shape: {self.voxel_shape} (N_voxel={self.N_voxel})")
-        # print(f"{self.ranges}")
-        # print(f"{self.N_grid=}")
-        # print(f"{self.grid_shape=}")
-        # print(f"{self.N_voxel=}")
-        # print(f"{self.voxel_shape=}")
 
     def _type_check_n_voxel(self, n=None):
         """
@@ -1382,16 +1344,10 @@ class Voxel:
         """
         self.res = res
         n = self._type_check_n_voxel(n)
-        # self.set_voxel2vertices(exist_ok=True, n_jobs=0, verbose=0)
         if self.voxel2vertices is None:
             raise RuntimeError("voxel2vertices is not calculated. "
                                "Please run set_voxel2vertices() before calling sub_voxel_interpolator().")
 
-        # not necessary to check n because n is verified in set_voxel2vertices
-        # the return value of set_voxel2vertices is a list of lil_matrix (length = len(n) or 1 (when n is int))
-        # interpolator = [self._sub_voxel_matrix @ interpolate_vertices for interpolate_vertices in
-        #                 self.set_voxel2vertices(n)]
-        # voxel2vertices = self.set_voxel2vertices(verbose=verbose)  # (N_grid, N_voxel) or list of such matrices
 
         def _append_interpolator_matrix(vi):
             selector = sparse.coo_matrix((np.ones(8, dtype=bool), (np.arange(8), vi)),
@@ -1484,31 +1440,6 @@ class Voxel:
                 data.extend([1])
             return data
 
-        #
-        # vertices = self._vertices_indices[n]
-        # matrix_list = []
-        # for nth_vertices in vertices:
-        #     matrix = sparse.lil_matrix((8, self.N_voxel))
-        #     for i, v in enumerate(nth_vertices):
-        #         included_voxel = np.where(np.any(self.vertices_indices == v, axis=1))[0]
-        #         matrix[i, included_voxel] = _func(self.gravity_center[included_voxel], self.grid[v])
-        #     matrix_list.append(matrix.tocsr())
-        # return matrix_list
-        # data = []
-        # rows = []
-        # cols = []
-        # for v in my_range(self.N_grid, verbose=verbose, desc="Interpolating vertices"):
-        #     voxel_indices = included_vertices.indices[included_vertices.indptr[v]:included_vertices.indptr[v + 1]]
-        #     if len(voxel_indices) == 0:
-        #         continue
-        #     gc = self.get_gravity_center(voxel_indices)
-        #     i, j, k = np.unravel_index(v, self.grid_shape)
-        #     x, y, z = self.x_axis[i], self.y_axis[j], self.z_axis[k]
-        #     data.extend(_func(gc, np.array([x, y, z])))
-        #     rows.extend([v] * len(voxel_indices))
-        #     cols.extend(voxel_indices.tolist())
-
-        # parallel version
         def _process_vertex(v):
             voxel_indices = included_vertices.indices[included_vertices.indptr[v]:included_vertices.indptr[v + 1]]
             if len(voxel_indices) == 0:
@@ -1521,10 +1452,6 @@ class Voxel:
             cols_ = voxel_indices.tolist()
             return data_, rows_, cols_
 
-        # results = Parallel(n_jobs=n_jobs, verbose=0, backend="threading")(
-        #     [delayed(_process_vertex)(v) for v in my_range(self.N_grid,
-        #                                                    desc="Interpolating vertices", disable=verbose <= 0)])
-        # no parallel
         results = [_process_vertex(v) for v in my_range(self.N_grid,
                                                         desc="Interpolating vertices", disable=verbose <= 0)]
         data_list, rows_list, cols_list = zip(*results)
@@ -1534,19 +1461,3 @@ class Voxel:
 
         self._voxel2vertices = sparse.coo_matrix((data, (rows, cols)), shape=(self.N_grid, self.N_voxel)).tocsr()
         return None
-
-
-if __name__ == "__main__":
-    # obj = Voxel(*[[10, 20, 40, 50, 80], [10, 15, 25, 40, 60], [10, 25, 40, 60, 85, 100]])
-    obj = Voxel(coordinate_type="torus", coordinate_parameters={"major_radius": 100, "minor_radius": 50})
-    # obj = obj.uniform_axes(ranges=[[-750, 750], [-750, 750], [-250, 250]], shape=[5, 5, 5], show_info=True)
-    obj = obj.uniform_voxel(ranges=[[-1, 1], [-1, 1], [-1, 1]], shape=[49, 49, 49])
-    print(dir(obj))
-    _ = obj.sub_voxel_interpolator(n=0, res=5)
-    obj.get_sub_voxel(5)
-    obj.get_sub_voxel(np.array([0, 1, 2, 3, 4, 5]))
-    # obj.show_info()
-
-    # start = time.time()
-    # obj.set_voxel2vertices()
-    # print(time.time() - start)
