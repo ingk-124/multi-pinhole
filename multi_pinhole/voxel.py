@@ -17,6 +17,8 @@ from .coordinates import (
     convert_to_cartesian,
     coordinate_transform,
     cylindrical_coordinates,
+    poloidal_cartesian_coordinates,
+    poloidal_cartesian_inverse_coordinates,
     spherical_coordinates,
     torus_coordinates,
     torus_inverse_coordinates,
@@ -232,7 +234,7 @@ class Voxel:
             z axis for grid
         coordinate_type : str
             The type of coordinates.
-            The supported types are "cartesian", "torus", "torus_inverse", "cylindrical", and "spherical".
+            One of :attr:`available_coordinate_types`.
         coordinate_parameters : dict
             The parameters for the coordinates. If it is None, all parameters are set to 1.
 
@@ -241,6 +243,8 @@ class Voxel:
               Standard right-handed convention with theta from outboard to up and phi clockwise from +x.
             - torus_inverse: {"major_radius": float, "minor_radius": float} or {"R_0": float, "a": float}
               Inverse-angle right-handed convention with theta from inboard to up and phi counter-clockwise from +x.
+            - poloidal_cartesian / poloidal_cartesian_inverse:
+              {"major_radius": float, "minor_radius": float} or {"R_0": float, "a": float}
             - cylindrical: {"radius": float, "height": float} or {"a": float, "h": float}
             - spherical: {"radius": float} or {"a": float}
         """
@@ -673,7 +677,7 @@ class Voxel:
         ----------
         coordinate_type : str
             The type of coordinates.
-            The supported types are "cartesian", "torus", "torus_inverse", "cylindrical", and "spherical".
+            One of :attr:`available_coordinate_types`.
         rotation : Rotation | np.ndarray
             The Rotation object or rotation matrix (3, 3).
         show : bool
@@ -686,6 +690,8 @@ class Voxel:
               Standard right-handed convention with theta from outboard to up and phi clockwise from +x.
             - torus_inverse: {"major_radius": float, "minor_radius": float} (alias: {"R_0": float, "a": float})
               Inverse-angle right-handed convention with theta from inboard to up and phi counter-clockwise from +x.
+            - poloidal_cartesian / poloidal_cartesian_inverse:
+              {"major_radius": float, "minor_radius": float} (alias: {"R_0": float, "a": float})
             - cylindrical: {"radius": float, "height": float} (alias: {"a": float, "h": float})
             - spherical: {"radius": float} (alias: {"a": float})
 
@@ -853,6 +859,13 @@ class Voxel:
                          minor_radius: float = ...) -> np.ndarray: ...
 
     @overload
+    def from_coordinates(self, coordinate_type: Literal[
+            "poloidal_cartesian", "poloidal_cartesian_inverse"], *,
+                         x: Any, y: Any, phi: Any, major_radius: float,
+                         normalized: bool = False, rotation=None,
+                         minor_radius: float = ...) -> np.ndarray: ...
+
+    @overload
     def from_coordinates(self, coordinate_type: Literal["spherical"], *,
                          r: Any, theta: Any, phi: Any,
                          normalized: bool = False, rotation=None,
@@ -883,6 +896,9 @@ class Voxel:
               ``radius`` and ``height``.
             * ``torus`` or ``torus_inverse``: ``r``, ``theta``, ``phi``, and
               ``major_radius``; when normalized, also ``minor_radius``.
+            * ``poloidal_cartesian`` or ``poloidal_cartesian_inverse``:
+              ``x``, ``y``, ``phi``, and ``major_radius``; when normalized,
+              also ``minor_radius``.
             * ``spherical``: ``r``, ``theta``, ``phi``; when normalized, also
               ``radius``.
 

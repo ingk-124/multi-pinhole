@@ -13,6 +13,8 @@ COORDINATE_TYPES = (
     "cartesian",
     "torus",
     "torus_inverse",
+    "poloidal_cartesian",
+    "poloidal_cartesian_inverse",
     "cylindrical",
     "spherical",
 )
@@ -20,6 +22,8 @@ COORDINATE_PARAMETER_KEYS = {
     "cartesian": [["width", "depth", "height"], ["X", "Y", "Z"]],
     "torus": [["major_radius", "minor_radius"], ["R_0", "a"]],
     "torus_inverse": [["major_radius", "minor_radius"], ["R_0", "a"]],
+    "poloidal_cartesian": [["major_radius", "minor_radius"], ["R_0", "a"]],
+    "poloidal_cartesian_inverse": [["major_radius", "minor_radius"], ["R_0", "a"]],
     "cylindrical": [["radius", "height"], ["a", "h"]],
     "spherical": [["radius"], ["a"]],
 }
@@ -28,6 +32,8 @@ _COORDINATE_COMPONENT_KEYS = {
     "cartesian": ("x", "y", "z"),
     "torus": ("r", "theta", "phi"),
     "torus_inverse": ("r", "theta", "phi"),
+    "poloidal_cartesian": ("x", "y", "phi"),
+    "poloidal_cartesian_inverse": ("x", "y", "phi"),
     "cylindrical": ("R", "phi", "Z"),
     "spherical": ("r", "theta", "phi"),
 }
@@ -167,6 +173,75 @@ def torus_inverse_coordinates(major_radius: float, minor_radius: float):
     return normalized_coordinates
 
 
+def poloidal_cartesian_coordinates(major_radius: float, minor_radius: float):
+    """Build a normalized poloidal-Cartesian transform.
+
+    Parameters
+    ----------
+    major_radius : float
+        Major radius ``R0`` in the same length unit as input points.
+    minor_radius : float
+        Positive, nonzero minor-radius scale ``a``.
+
+    Returns
+    -------
+    callable
+        Function mapping Cartesian points with shape ``(n, 3)`` to normalized
+        ``(x, y, phi)`` coordinates with shape ``(n, 3)``.
+
+    Notes
+    -----
+    The returned components are ``x=(R-R0)/a``, ``y=z/a``, and
+    ``phi=atan2(-Y, X)``. Thus ``x`` points radially outwards, ``y`` points
+    upwards, and ``phi`` follows the clockwise convention of
+    :func:`torus_coordinates` when viewed from ``+z``.
+    """
+    R_0 = major_radius
+    a = minor_radius
+
+    def normalized_coordinates(points: np.ndarray):
+        R = np.linalg.norm(points[:, :2], axis=1)
+        x = (R - R_0) / a
+        y = points[:, 2] / a
+        phi = np.arctan2(-points[:, 1], points[:, 0])
+        return np.stack([x, y, phi], axis=1)
+
+    return normalized_coordinates
+
+
+def poloidal_cartesian_inverse_coordinates(
+        major_radius: float, minor_radius: float):
+    """Build a normalized poloidal-Cartesian transform with inverse azimuth.
+
+    Parameters
+    ----------
+    major_radius : float
+        Major radius ``R0`` in the same length unit as input points.
+    minor_radius : float
+        Positive, nonzero minor-radius scale ``a``.
+
+    Returns
+    -------
+    callable
+        Function mapping Cartesian points with shape ``(n, 3)`` to normalized
+        ``(x, y, phi)`` coordinates with shape ``(n, 3)``.
+
+    Notes
+    -----
+    This uses the same outward ``x=(R-R0)/a`` and upward ``y=z/a`` as
+    :func:`poloidal_cartesian_coordinates`, but returns
+    ``phi=atan2(Y, X)``, increasing counter-clockwise when viewed from ``+z``.
+    """
+    transform = poloidal_cartesian_coordinates(major_radius, minor_radius)
+
+    def normalized_coordinates(points: np.ndarray):
+        coordinates = transform(points)
+        coordinates[:, 2] = np.arctan2(points[:, 1], points[:, 0])
+        return coordinates
+
+    return normalized_coordinates
+
+
 def cylindrical_coordinates(radius: float, height: float):
     """Build a normalized cylindrical-coordinate transform.
 
@@ -248,7 +323,7 @@ def coordinate_transform(coordinate_type: str, coordinate_parameters: dict):
 
     Parameters
     ----------
-    coordinate_type : {"cartesian", "torus", "torus_inverse", "cylindrical", "spherical"}
+    coordinate_type : str
         Coordinate convention to construct.
     coordinate_parameters : dict
         Keyword arguments required by the selected factory: ``width``,
@@ -276,6 +351,10 @@ def coordinate_transform(coordinate_type: str, coordinate_parameters: dict):
         return torus_coordinates(**coordinate_parameters)
     if coordinate_type == "torus_inverse":
         return torus_inverse_coordinates(**coordinate_parameters)
+    if coordinate_type == "poloidal_cartesian":
+        return poloidal_cartesian_coordinates(**coordinate_parameters)
+    if coordinate_type == "poloidal_cartesian_inverse":
+        return poloidal_cartesian_inverse_coordinates(**coordinate_parameters)
     if coordinate_type == "cylindrical":
         return cylindrical_coordinates(**coordinate_parameters)
     if coordinate_type == "spherical":
@@ -312,7 +391,7 @@ def convert_from_cartesian(points, coordinate_type: str, *, normalized=False,
     ----------
     points : array-like
         Cartesian coordinates with shape ``(..., 3)``.
-    coordinate_type : {"cartesian", "torus", "torus_inverse", "cylindrical", "spherical"}
+    coordinate_type : str
         Convention of the returned coordinates.
     normalized : bool, default=False
         Whether to divide physical radial/axial components by their supplied
@@ -387,6 +466,26 @@ def convert_from_cartesian(points, coordinate_type: str, *, normalized=False,
             phi = np.arctan2(y, x)
         return np.stack([rho, theta, phi], axis=-1)
 
+    if coordinate_type in (
+            "poloidal_cartesian", "poloidal_cartesian_inverse"):
+        major_radius = _parameter(
+            coordinate_parameters, "major_radius", "R_0", required=True,
+        )
+        poloidal_x = R - major_radius
+        poloidal_y = z
+        if normalized:
+            minor_radius = _positive_scale(
+                _parameter(coordinate_parameters, "minor_radius", "a"),
+                "minor_radius",
+            )
+            poloidal_x = poloidal_x / minor_radius
+            poloidal_y = poloidal_y / minor_radius
+        if coordinate_type == "poloidal_cartesian":
+            phi = np.arctan2(-y, x)
+        else:
+            phi = np.arctan2(y, x)
+        return np.stack([poloidal_x, poloidal_y, phi], axis=-1)
+
     if coordinate_type == "spherical":
         distance = np.linalg.norm(points, axis=-1)
         radial = distance
@@ -412,7 +511,7 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
 
     Parameters
     ----------
-    coordinate_type : {"cartesian", "torus", "torus_inverse", "cylindrical", "spherical"}
+    coordinate_type : str
         Convention of the keyword coordinate components.
     normalized : bool, default=False
         Whether radial/axial inputs are dimensionless normalized components.
@@ -420,7 +519,8 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
     **components
         Broadcastable keyword components. Cylindrical inputs are ``R``,
         ``phi``, and ``Z``; spherical inputs are ``r``, ``theta``, and
-        ``phi``; toroidal inputs are ``r``, ``theta``, and ``phi``.
+        ``phi``; toroidal inputs are ``r``, ``theta``, and ``phi``;
+        poloidal-Cartesian inputs are ``x``, ``y``, and ``phi``.
 
     Returns
     -------
@@ -498,6 +598,35 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             x, y = R * np.cos(phi), R * np.sin(phi)
         z = r * np.sin(theta)
         return np.stack([x, y, z], axis=-1)
+
+    if coordinate_type in (
+            "poloidal_cartesian", "poloidal_cartesian_inverse"):
+        try:
+            poloidal_x, poloidal_y, phi = np.broadcast_arrays(
+                components["x"], components["y"], components["phi"],
+            )
+        except KeyError:
+            raise _missing_component_error(coordinate_type, components) from None
+        poloidal_x, poloidal_y, phi = (
+            np.asarray(value, dtype=float)
+            for value in (poloidal_x, poloidal_y, phi)
+        )
+        major_radius = float(_parameter(
+            components, "major_radius", "R_0", required=True,
+        ))
+        if normalized:
+            minor_radius = _positive_scale(
+                _parameter(components, "minor_radius", "a"), "minor_radius",
+            )
+            poloidal_x = poloidal_x * minor_radius
+            poloidal_y = poloidal_y * minor_radius
+        R = major_radius + poloidal_x
+        x = R * np.cos(phi)
+        if coordinate_type == "poloidal_cartesian":
+            y = -R * np.sin(phi)
+        else:
+            y = R * np.sin(phi)
+        return np.stack([x, y, poloidal_y], axis=-1)
 
     if coordinate_type == "spherical":
         try:

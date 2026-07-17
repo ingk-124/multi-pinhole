@@ -20,7 +20,8 @@ def test_available_coordinate_types_comes_from_coordinates_registry():
 
     assert voxel.available_coordinate_types is COORDINATE_TYPES
     assert voxel.available_coordinate_types == (
-        "cartesian", "torus", "torus_inverse", "cylindrical", "spherical",
+        "cartesian", "torus", "torus_inverse", "poloidal_cartesian",
+        "poloidal_cartesian_inverse", "cylindrical", "spherical",
     )
 
 
@@ -64,6 +65,8 @@ def test_cylindrical_normalization_preserves_existing_scale_definition():
         ("spherical", {}, "radius"),
         ("torus", {"major_radius": 3.0}, "minor_radius"),
         ("torus_inverse", {"major_radius": 3.0}, "minor_radius"),
+        ("poloidal_cartesian", {"major_radius": 3.0}, "minor_radius"),
+        ("poloidal_cartesian_inverse", {"major_radius": 3.0}, "minor_radius"),
     ],
 )
 def test_normalized_forward_conversion_requires_every_scale(
@@ -169,6 +172,75 @@ def test_torus_roundtrip_for_both_angle_conventions(coordinate_type, normalized)
     )
 
     np.testing.assert_allclose(reconstructed, points, rtol=1e-14, atol=1e-14)
+
+
+@pytest.mark.parametrize(
+    ("coordinate_type", "phi_sign"),
+    [("poloidal_cartesian", -1.0),
+     ("poloidal_cartesian_inverse", 1.0)],
+)
+@pytest.mark.parametrize("normalized", [False, True])
+def test_poloidal_cartesian_definition_and_roundtrip(
+        coordinate_type, phi_sign, normalized):
+    voxel = _voxel()
+    points = np.array([
+        [3.0, 4.0, 2.0],
+        [-4.0, 3.0, -1.0],
+    ])
+    parameters = {"major_radius": 4.0}
+    scale = 1.0
+    if normalized:
+        parameters["minor_radius"] = 2.0
+        scale = 2.0
+
+    coordinates = voxel.to_coordinates(
+        coordinate_type, points=points, normalized=normalized, **parameters,
+    )
+
+    np.testing.assert_allclose(coordinates[:, 0], (5.0 - 4.0) / scale)
+    np.testing.assert_allclose(coordinates[:, 1], points[:, 2] / scale)
+    np.testing.assert_allclose(
+        coordinates[:, 2],
+        np.arctan2(phi_sign * points[:, 1], points[:, 0]),
+    )
+    reconstructed = voxel.from_coordinates(
+        coordinate_type, x=coordinates[:, 0], y=coordinates[:, 1],
+        phi=coordinates[:, 2], normalized=normalized, **parameters,
+    )
+    np.testing.assert_allclose(reconstructed, points, rtol=1e-14, atol=1e-14)
+
+
+def test_poloidal_cartesian_from_coordinates_broadcasts_components():
+    voxel = _voxel()
+    x = np.array([[-0.5], [0.5]])
+    y = np.array([-0.25, 0.0, 0.25])
+
+    points = voxel.from_coordinates(
+        "poloidal_cartesian_inverse", x=x, y=y, phi=np.pi / 2,
+        major_radius=4.0, minor_radius=2.0, normalized=True,
+    )
+
+    assert points.shape == (2, 3, 3)
+    np.testing.assert_allclose(points[..., 0], 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        points[..., 1], np.broadcast_to(4.0 + 2.0 * x, (2, 3)),
+    )
+    np.testing.assert_allclose(points[..., 2], np.broadcast_to(2.0 * y, (2, 3)))
+
+
+def test_poloidal_cartesian_configured_normalized_coordinates():
+    voxel = Voxel.uniform_voxel(
+        ranges=((4.0, 6.0), (-1.0, 1.0), (-2.0, 2.0)),
+        shape=(1, 1, 1),
+        coordinate_type="poloidal_cartesian_inverse",
+        coordinate_parameters={"major_radius": 4.0, "minor_radius": 2.0},
+    )
+
+    expected = voxel.to_coordinates(
+        "poloidal_cartesian_inverse", normalized=True,
+        major_radius=4.0, minor_radius=2.0,
+    )
+    np.testing.assert_allclose(voxel.normalized_coordinates(), expected)
 
 
 @pytest.mark.parametrize("normalized", [False, True])
