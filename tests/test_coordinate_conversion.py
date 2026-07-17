@@ -96,7 +96,7 @@ def test_from_coordinates_missing_component_error_lists_complete_signature():
 
     with pytest.raises(
         ValueError,
-        match="torus_inverse coordinates require components rho, theta, phi; missing rho",
+        match="torus_inverse coordinates require components r, theta, phi; missing r",
     ):
         voxel.from_coordinates(
             "torus_inverse", theta=0.0, phi=0.0, major_radius=1.5,
@@ -107,7 +107,7 @@ def test_from_coordinates_unsupported_error_lists_available_types():
     voxel = _voxel()
 
     with pytest.raises(ValueError, match="choose one of .*torus_inverse.*cylindrical"):
-        voxel.from_coordinates("toroidal_inverse", rho=1.0, theta=0.0, phi=0.0)
+        voxel.from_coordinates("toroidal_inverse", r=1.0, theta=0.0, phi=0.0)
 
 
 def test_normalized_inverse_cylindrical_requires_scales():
@@ -164,7 +164,7 @@ def test_torus_roundtrip_for_both_angle_conventions(coordinate_type, normalized)
     )
     reconstructed = voxel.from_coordinates(
         coordinate_type,
-        rho=coordinates[:, 0], theta=coordinates[:, 1], phi=coordinates[:, 2],
+        r=coordinates[:, 0], theta=coordinates[:, 1], phi=coordinates[:, 2],
         normalized=normalized, **parameters,
     )
 

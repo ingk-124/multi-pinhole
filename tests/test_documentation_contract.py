@@ -1,4 +1,4 @@
-"""Lightweight regressions for the 0.8.1 public documentation contract."""
+"""Lightweight regressions for the 0.8.2 public documentation contract."""
 
 import ast
 import inspect
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_release_and_top_level_public_import_contract():
-    assert __version__ == "0.8.1"
+    assert __version__ == "0.8.2"
     expected = {
         "Rays", "Eye", "Aperture", "Screen", "Camera", "Voxel", "World",
         "EyeProjectionWorkEstimate", "ProjectionWorkEstimate",
@@ -115,5 +115,5 @@ def test_readme_projection_workflow_executes():
 
 
 def test_release_schema_contract():
-    assert __version__ == "0.8.1"
+    assert __version__ == "0.8.2"
     assert PROJECTION_CACHE_SCHEMA_VERSION == 3

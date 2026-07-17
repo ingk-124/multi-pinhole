@@ -848,7 +848,7 @@ class Voxel:
 
     @overload
     def from_coordinates(self, coordinate_type: Literal["torus", "torus_inverse"], *,
-                         rho: Any, theta: Any, phi: Any, major_radius: float,
+                         r: Any, theta: Any, phi: Any, major_radius: float,
                          normalized: bool = False, rotation=None,
                          minor_radius: float = ...) -> np.ndarray: ...
 
@@ -881,7 +881,7 @@ class Voxel:
               ``width``, ``depth``, and ``height``.
             * ``cylindrical``: ``R``, ``phi``, ``Z``; when normalized, also
               ``radius`` and ``height``.
-            * ``torus`` or ``torus_inverse``: ``rho``, ``theta``, ``phi``, and
+            * ``torus`` or ``torus_inverse``: ``r``, ``theta``, ``phi``, and
               ``major_radius``; when normalized, also ``minor_radius``.
             * ``spherical``: ``r``, ``theta``, ``phi``; when normalized, also
               ``radius``.
@@ -903,7 +903,7 @@ class Voxel:
 
         >>> theta = np.linspace(0.0, 2.0 * np.pi, 100)
         >>> xyz = voxel.from_coordinates(
-        ...     "torus_inverse", rho=1.0, theta=theta, phi=0.0,
+        ...     "torus_inverse", r=1.0, theta=theta, phi=0.0,
         ...     major_radius=1.5, minor_radius=0.5, normalized=True,
         ... )
 
@@ -912,7 +912,7 @@ class Voxel:
             voxel.from_coordinates("cartesian", x=x, y=y, z=z)
             voxel.from_coordinates("cylindrical", R=R, phi=phi, Z=Z)
             voxel.from_coordinates(
-                "torus", rho=rho, theta=theta, phi=phi, major_radius=R0
+                "torus", r=r, theta=theta, phi=phi, major_radius=R0
             )
             voxel.from_coordinates("spherical", r=r, theta=theta, phi=phi)
         """

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2
+
+- Standardized toroidal inverse-coordinate input components as
+  `r`, `theta`, and `phi`, matching the output of `Voxel.to_coordinates()`.
+  The short-lived `rho` keyword from 0.8.1 is no longer accepted.
+- Improved coordinate-conversion parameter discovery in IDEs and error
+  messages, with coordinate-specific overloads and copyable examples.
+
 ## 0.8.1
 
 - Added stateless physical/normalized coordinate queries on `Voxel`, inverse

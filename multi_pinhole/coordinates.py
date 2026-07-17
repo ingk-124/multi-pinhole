@@ -26,8 +26,8 @@ COORDINATE_PARAMETER_KEYS = {
 
 _COORDINATE_COMPONENT_KEYS = {
     "cartesian": ("x", "y", "z"),
-    "torus": ("rho", "theta", "phi"),
-    "torus_inverse": ("rho", "theta", "phi"),
+    "torus": ("r", "theta", "phi"),
+    "torus_inverse": ("r", "theta", "phi"),
     "cylindrical": ("R", "phi", "Z"),
     "spherical": ("r", "theta", "phi"),
 }
@@ -420,7 +420,7 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
     **components
         Broadcastable keyword components. Cylindrical inputs are ``R``,
         ``phi``, and ``Z``; spherical inputs are ``r``, ``theta``, and
-        ``phi``; toroidal inputs are ``rho``, ``theta``, and ``phi``.
+        ``phi``; toroidal inputs are ``r``, ``theta``, and ``phi``.
 
     Returns
     -------
@@ -474,13 +474,13 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
 
     if coordinate_type in ("torus", "torus_inverse"):
         try:
-            rho, theta, phi = np.broadcast_arrays(
-                components["rho"], components["theta"], components["phi"],
+            r, theta, phi = np.broadcast_arrays(
+                components["r"], components["theta"], components["phi"],
             )
         except KeyError:
             raise _missing_component_error(coordinate_type, components) from None
-        rho, theta, phi = (
-            np.asarray(value, dtype=float) for value in (rho, theta, phi)
+        r, theta, phi = (
+            np.asarray(value, dtype=float) for value in (r, theta, phi)
         )
         major_radius = float(_parameter(
             components, "major_radius", "R_0", required=True,
@@ -489,14 +489,14 @@ def convert_to_cartesian(coordinate_type: str, *, normalized=False,
             minor_radius = _positive_scale(
                 _parameter(components, "minor_radius", "a"), "minor_radius",
             )
-            rho = rho * minor_radius
+            r = r * minor_radius
         if coordinate_type == "torus":
-            R = major_radius + rho * np.cos(theta)
+            R = major_radius + r * np.cos(theta)
             x, y = R * np.cos(phi), -R * np.sin(phi)
         else:
-            R = major_radius - rho * np.cos(theta)
+            R = major_radius - r * np.cos(theta)
             x, y = R * np.cos(phi), R * np.sin(phi)
-        z = rho * np.sin(theta)
+        z = r * np.sin(theta)
         return np.stack([x, y, z], axis=-1)
 
     if coordinate_type == "spherical":
