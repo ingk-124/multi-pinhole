@@ -84,6 +84,8 @@ eye_image = world.projection[0][0] @ emission   # eye 0、形状 (N_pixel,)
 
 解析時には `Voxel.to_coordinates()` により、Voxelに設定されたprofile用座標系を変更せず、任意の規約を都度選択できます。`points="centers"`、`points="vertices"`、または任意のCartesian配列を受け取り、`normalized=True`を指定しない限り物理座標を返します。逆変換にはkeyword-only成分を受け取る`Voxel.from_coordinates()`を使用します（例：`from_coordinates("cylindrical", R=..., Z=..., phi=...)`）。各成分はNumPy規則でbroadcastされ、最後にCartesianの3成分軸が追加されます。新APIで`normalized=True`を使う場合、必要なscale parameterはすべて明示する必要があり、暗黙のunit scaleは使われません。使用可能な規約は`voxel.available_coordinate_types`からimmutable tupleとして取得できます。座標規約を追加してもVoxel methodを増やす必要はありません。従来の`normalized_coordinates()`はprofile設定との互換APIとして維持されます。
 
+Cartesian voxel重心上の値は`Voxel.center_interpolator(values, **interpolator_kwargs)`で再利用できます。返されたcallableはCartesianの`points`、または明示的な`coordinate_type`とkeyword成分を受け取ります。named成分はCartesianへ逆変換され、NumPy規則でbroadcastされた後に補間されます。scalar値に加えて末尾にvector/tensor shapeを持つ値も扱えます。この通常補間APIは、projection組立で使う体積重み付きsource quadrature行列とは別物です。従来の`sub_voxel_interpolator_from_centers()`は、そのprojection専用行列の互換wrapperとしてのみ維持されます。
+
 `multi_pinhole.profiles` は、これらの座標系の上で合成プロファイルを評価するための、組み合わせ可能なヘルパー関数を提供します。shifted polar 座標、kinked/flattened な径方向座標、そして torus 座標の `Voxel` から直接 profile 関数を評価する薄い wrapper を含みます。描画、フィッティング、実験固有の診断は core profile API の外側に置く想定です。
 
 ## 注目すべき機能

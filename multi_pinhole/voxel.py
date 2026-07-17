@@ -527,8 +527,8 @@ class Voxel:
         fraction[above] = 0.0
         return lower, upper, 1.0 - fraction, fraction
 
-    def sub_voxel_interpolator_from_centers(self, n=None, res=None, points=None):
-        """Map voxel-center values directly to weighted sub-voxel samples.
+    def _build_source_quadrature_matrix(self, n=None, res=None, points=None):
+        """Map voxel-center values to volume-weighted source samples.
 
         Each interior sample uses trilinear interpolation from at most eight
         neighboring voxel centers.  Samples outside the center-coordinate
@@ -627,6 +627,29 @@ class Voxel:
              (np.concatenate(row_parts), np.concatenate(col_parts))),
             shape=(expected_points, self.N_voxel),
         ).tocsr()
+
+    def sub_voxel_interpolator_from_centers(self, n=None, res=None, points=None):
+        """Compatibility wrapper for the internal source-quadrature matrix.
+
+        This method returns interpolation rows already scaled for projection
+        integration; it is not a general-purpose field interpolator. New user
+        code should use :meth:`center_interpolator` for ordinary point queries.
+
+        Parameters
+        ----------
+        n : int or array-like of int, optional
+            Owning voxel indices.
+        res : int or (int, int, int), optional
+            Source quadrature resolution.
+        points : np.ndarray, optional
+            Precomputed source sample points.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+            Volume-weighted source quadrature matrix.
+        """
+        return self._build_source_quadrature_matrix(n=n, res=res, points=points)
 
     @property
     def volume(self):
@@ -883,6 +906,28 @@ class Voxel:
         )
         matrix = self._coordinate_rotation_matrix(rotation)
         return local_points @ matrix
+
+    def center_interpolator(self, values, **interpolator_kwargs):
+        """Build an interpolator for values sampled at voxel gravity centers.
+
+        Parameters
+        ----------
+        values : array-like
+            Values with shape ``voxel_shape + value_shape`` or
+            ``(N_voxel,) + value_shape``.
+        **interpolator_kwargs
+            Options forwarded to :class:`scipy.interpolate.RegularGridInterpolator`,
+            such as ``method``, ``bounds_error``, and ``fill_value``.
+
+        Returns
+        -------
+        multi_pinhole.interpolation.VoxelCenterInterpolator
+            Callable accepting Cartesian ``points`` or named coordinate
+            components through ``coordinate_type=...``.
+        """
+        from .interpolation import VoxelCenterInterpolator
+
+        return VoxelCenterInterpolator(self, values, **interpolator_kwargs)
 
     @property
     def axes(self):

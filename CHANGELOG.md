@@ -6,6 +6,10 @@
   keyword-coordinate conversion with NumPy broadcasting, and a shared
   immutable coordinate-type registry while preserving the configured
   `normalized_coordinates()` profile API.
+- Added `Voxel.center_interpolator()` for scalar or vector fields sampled at
+  gravity centers. Projection-specific volume-weighted source quadrature now
+  uses a private builder; the former public-looking method remains as a
+  compatibility wrapper.
 
 ## 0.8.0
 

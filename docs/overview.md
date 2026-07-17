@@ -197,6 +197,16 @@ convention therefore does not require another Voxel method. The older
 `normalized_coordinates()` method remains the configured-profile compatibility
 API.
 
+Values sampled at Cartesian voxel gravity centers can be reused through
+`Voxel.center_interpolator(values, **interpolator_kwargs)`. The returned
+callable accepts either Cartesian `points` or keyword components with an
+explicit `coordinate_type`; named components are converted back to Cartesian
+and NumPy-broadcast before interpolation. Scalar and trailing vector/tensor
+value shapes are supported. This ordinary interpolation API is distinct from
+the private, volume-weighted source-quadrature matrices used by projection
+assembly. The historical `sub_voxel_interpolator_from_centers()` name remains
+only as a compatibility wrapper for that projection-specific matrix.
+
 `multi_pinhole.profiles` provides composable helpers for evaluating synthetic
 toroidal and poloidal profiles on top of these coordinates, including shifted
 polar coordinates, kinked/flattened radial coordinates, and thin wrappers that

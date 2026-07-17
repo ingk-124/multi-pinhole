@@ -1500,7 +1500,7 @@ class World:
 
         def _sub_voxel_interpolator_matrix(voxel_indices, subvoxel_res, points=None):
             """Build direct center-to-sub-voxel interpolation for a chunk."""
-            return self.voxel.sub_voxel_interpolator_from_centers(
+            return self.voxel._build_source_quadrature_matrix(
                 n=voxel_indices, res=subvoxel_res, points=points,
             )
 
