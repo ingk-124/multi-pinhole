@@ -21,6 +21,8 @@ from .coordinates import (
     COORDINATE_PARAMETER_KEYS,
     COORDINATE_TYPES,
     cartesian_coordinates,
+    convert_from_cartesian,
+    convert_to_cartesian,
     coordinate_transform,
     cylindrical_coordinates,
     spherical_coordinates,
@@ -643,6 +645,11 @@ class Voxel:
         return self._coordinate_type
 
     @property
+    def available_coordinate_types(self):
+        """tuple[str, ...]: Coordinate conventions supported by conversion APIs."""
+        return COORDINATE_TYPES
+
+    @property
     def res(self):
         """tuple[int, int, int]: Current sub-voxel resolution ``(x_res, y_res, z_res)``."""
         return self._res
@@ -767,9 +774,150 @@ class Voxel:
             Normalized coordinates with shape ``(n_points, 3)``.
         """
         if points is None:
-            return self._normalized_coordinates(self.gravity_center.dot(self._rotation_matrix.T))
+            points = self.gravity_center
+        return self._normalized_coordinates(
+            np.asarray(points).dot(self._rotation_matrix.T),
+        )
+
+    def _coordinate_rotation_matrix(self, rotation=None):
+        """Resolve an optional coordinate-frame rotation matrix."""
+        if rotation is None:
+            return self._rotation_matrix
+        if isinstance(rotation, Rotation):
+            return rotation.as_matrix()
+        matrix = np.asarray(rotation, dtype=float)
+        if matrix.shape != (3, 3):
+            raise ValueError("rotation must be a Rotation or an array with shape (3, 3)")
+        return matrix
+
+    def to_coordinates(self, coordinate_type: str, points="centers", *,
+                       normalized: bool = False, rotation=None,
+                       **coordinate_parameters):
+        """Convert Cartesian points to an arbitrary coordinate convention.
+
+        This query does not modify the configured :attr:`coordinate_type`.
+        ``points`` may be ``"centers"``/``"gravity_center"``,
+        ``"vertices"``/``"grid"``, or an array with shape ``(..., 3)``.
+        Physical coordinates are returned by default. When ``normalized`` is
+        true, every scale parameter required by the selected convention must
+        be supplied explicitly.
+
+        Parameters
+        ----------
+        coordinate_type : str
+            One of :attr:`available_coordinate_types`.
+        points : {"centers", "gravity_center", "vertices", "grid"} or array-like
+            Built-in Voxel points or Cartesian points with shape ``(..., 3)``.
+        normalized : bool, default=False
+            Whether to return dimensionless radial/axial components.
+        rotation : scipy.spatial.transform.Rotation or array-like, optional
+            Coordinate-frame rotation overriding the configured legacy frame.
+        **coordinate_parameters
+            Geometry and normalization scales for the selected convention.
+
+        Returns
+        -------
+        np.ndarray
+            Coordinates with the input leading shape and final axis length three.
+
+        Raises
+        ------
+        ValueError
+            If the point selector, shape, convention, or parameters are invalid.
+        """
+        if isinstance(points, str):
+            if points in ("centers", "gravity_center"):
+                selected = self.gravity_center
+            elif points in ("vertices", "grid"):
+                selected = self.grid
+            else:
+                raise ValueError(
+                    "points must be 'centers', 'vertices', or an array with shape (..., 3)"
+                )
         else:
-            return self._normalized_coordinates(points.dot(self._rotation_matrix.T))
+            selected = np.asarray(points, dtype=float)
+        if selected.ndim == 0 or selected.shape[-1] != 3:
+            raise ValueError("points must have shape (..., 3)")
+        matrix = self._coordinate_rotation_matrix(rotation)
+        local_points = selected @ matrix.T
+        return convert_from_cartesian(
+            local_points,
+            coordinate_type,
+            normalized=normalized,
+            **coordinate_parameters,
+        )
+
+    def from_coordinates(self, coordinate_type: str, *, normalized: bool = False,
+                         rotation=None, **components):
+        """Convert broadcastable keyword coordinate components to Cartesian.
+
+        The returned array has shape ``broadcast_shape + (3,)``. The inverse
+        of the selected coordinate-frame rotation is applied before returning
+        world-space Cartesian points.
+
+        Parameters
+        ----------
+        coordinate_type : str
+            One of :attr:`available_coordinate_types`.
+        normalized : bool, default=False
+            Whether supplied radial/axial components are dimensionless.
+        rotation : scipy.spatial.transform.Rotation or array-like, optional
+            Coordinate-frame rotation overriding the configured legacy frame.
+        **components
+            Keyword-only coordinate components and required geometry/scales.
+
+        Returns
+        -------
+        np.ndarray
+            Broadcast Cartesian coordinates with final axis length three.
+
+        Raises
+        ------
+        ValueError
+            If required components or parameters are missing or invalid.
+        """
+        local_points = convert_to_cartesian(
+            coordinate_type,
+            normalized=normalized,
+            **components,
+        )
+        matrix = self._coordinate_rotation_matrix(rotation)
+        return local_points @ matrix
+
+    def from_cylindrical(self, *, R, Z, phi, normalized: bool = False,
+                         radius=None, height=None, rotation=None):
+        """Convert broadcastable cylindrical ``(R, phi, Z)`` to Cartesian."""
+        return self.from_coordinates(
+            "cylindrical", R=R, Z=Z, phi=phi, normalized=normalized,
+            radius=radius, height=height, rotation=rotation,
+        )
+
+    def from_spherical(self, *, r, theta, phi, normalized: bool = False,
+                       radius=None, rotation=None):
+        """Convert broadcastable spherical ``(r, theta, phi)`` to Cartesian."""
+        return self.from_coordinates(
+            "spherical", r=r, theta=theta, phi=phi, normalized=normalized,
+            radius=radius, rotation=rotation,
+        )
+
+    def from_torus(self, *, rho, theta, phi, major_radius,
+                   normalized: bool = False, minor_radius=None, rotation=None):
+        """Convert broadcastable standard torus coordinates to Cartesian."""
+        return self.from_coordinates(
+            "torus", rho=rho, theta=theta, phi=phi,
+            major_radius=major_radius, minor_radius=minor_radius,
+            normalized=normalized, rotation=rotation,
+        )
+
+    def from_torus_inverse(self, *, rho, theta, phi, major_radius,
+                           normalized: bool = False, minor_radius=None,
+                           rotation=None):
+        """Convert broadcastable inverse-angle torus coordinates to Cartesian."""
+        return self.from_coordinates(
+            "torus_inverse", rho=rho, theta=theta, phi=phi,
+            major_radius=major_radius, minor_radius=minor_radius,
+            normalized=normalized, rotation=rotation,
+        )
 
     @property
     def axes(self):

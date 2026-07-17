@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+- Added stateless physical/normalized coordinate queries on `Voxel`, inverse
+  keyword-coordinate conversion with NumPy broadcasting, and a shared
+  immutable coordinate-type registry while preserving the configured
+  `normalized_coordinates()` profile API.
+
 ## 0.8.0
 
 - Split the optics implementation into responsibility-focused modules:
