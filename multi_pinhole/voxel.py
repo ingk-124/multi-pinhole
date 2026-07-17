@@ -884,41 +884,6 @@ class Voxel:
         matrix = self._coordinate_rotation_matrix(rotation)
         return local_points @ matrix
 
-    def from_cylindrical(self, *, R, Z, phi, normalized: bool = False,
-                         radius=None, height=None, rotation=None):
-        """Convert broadcastable cylindrical ``(R, phi, Z)`` to Cartesian."""
-        return self.from_coordinates(
-            "cylindrical", R=R, Z=Z, phi=phi, normalized=normalized,
-            radius=radius, height=height, rotation=rotation,
-        )
-
-    def from_spherical(self, *, r, theta, phi, normalized: bool = False,
-                       radius=None, rotation=None):
-        """Convert broadcastable spherical ``(r, theta, phi)`` to Cartesian."""
-        return self.from_coordinates(
-            "spherical", r=r, theta=theta, phi=phi, normalized=normalized,
-            radius=radius, rotation=rotation,
-        )
-
-    def from_torus(self, *, rho, theta, phi, major_radius,
-                   normalized: bool = False, minor_radius=None, rotation=None):
-        """Convert broadcastable standard torus coordinates to Cartesian."""
-        return self.from_coordinates(
-            "torus", rho=rho, theta=theta, phi=phi,
-            major_radius=major_radius, minor_radius=minor_radius,
-            normalized=normalized, rotation=rotation,
-        )
-
-    def from_torus_inverse(self, *, rho, theta, phi, major_radius,
-                           normalized: bool = False, minor_radius=None,
-                           rotation=None):
-        """Convert broadcastable inverse-angle torus coordinates to Cartesian."""
-        return self.from_coordinates(
-            "torus_inverse", rho=rho, theta=theta, phi=phi,
-            major_radius=major_radius, minor_radius=minor_radius,
-            normalized=normalized, rotation=rotation,
-        )
-
     @property
     def axes(self):
         """

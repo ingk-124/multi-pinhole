@@ -77,13 +77,13 @@ def test_normalized_forward_conversion_requires_every_scale(
         )
 
 
-def test_from_cylindrical_broadcasts_keyword_components():
+def test_from_coordinates_broadcasts_cylindrical_keyword_components():
     voxel = _voxel()
     R = np.array([1.0, 2.0, 3.0])
     Z = np.array([[-1.0], [1.0]])
     phi = np.pi / 2
 
-    xyz = voxel.from_cylindrical(R=R, Z=Z, phi=phi)
+    xyz = voxel.from_coordinates("cylindrical", R=R, Z=Z, phi=phi)
 
     assert xyz.shape == (2, 3, 3)
     np.testing.assert_allclose(xyz[..., 0], 0.0, atol=1e-15)
@@ -95,12 +95,14 @@ def test_normalized_inverse_cylindrical_requires_scales():
     voxel = _voxel()
 
     with pytest.raises(ValueError, match="radius"):
-        voxel.from_cylindrical(
-            R=1.0, Z=0.0, phi=0.0, normalized=True, height=2.0,
+        voxel.from_coordinates(
+            "cylindrical", R=1.0, Z=0.0, phi=0.0,
+            normalized=True, height=2.0,
         )
     with pytest.raises(ValueError, match="height"):
-        voxel.from_cylindrical(
-            R=1.0, Z=0.0, phi=0.0, normalized=True, radius=2.0,
+        voxel.from_coordinates(
+            "cylindrical", R=1.0, Z=0.0, phi=0.0,
+            normalized=True, radius=2.0,
         )
 
 
@@ -159,8 +161,9 @@ def test_spherical_roundtrip(normalized):
     coordinates = voxel.to_coordinates(
         "spherical", points=points, normalized=normalized, **parameters,
     )
-    reconstructed = voxel.from_spherical(
-        r=coordinates[:, 0], theta=coordinates[:, 1], phi=coordinates[:, 2],
+    reconstructed = voxel.from_coordinates(
+        "spherical", r=coordinates[:, 0], theta=coordinates[:, 1],
+        phi=coordinates[:, 2],
         normalized=normalized, **parameters,
     )
 
@@ -176,8 +179,9 @@ def test_coordinate_roundtrip_respects_voxel_rotation():
         "cylindrical", points=points, normalized=True,
         radius=3.0, height=4.0,
     )
-    reconstructed = voxel.from_cylindrical(
-        R=coordinates[:, 0], phi=coordinates[:, 1], Z=coordinates[:, 2],
+    reconstructed = voxel.from_coordinates(
+        "cylindrical", R=coordinates[:, 0], phi=coordinates[:, 1],
+        Z=coordinates[:, 2],
         normalized=True, radius=3.0, height=4.0,
     )
 
