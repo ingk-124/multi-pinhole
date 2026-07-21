@@ -19,6 +19,7 @@ def plot_radial_cross_sections(x, parameters):
     axisymmetric = parameters["axisymmetric"]
     kinked = parameters["kinked"]
     flattened = parameters["flattened"]
+    full_flattening = parameters["full_flattening"]
 
     rho_shifted, _ = profiles.shifted_polar(
         x, 0, cx=axisymmetric["delta"], cy=0,
@@ -44,9 +45,26 @@ def plot_radial_cross_sections(x, parameters):
         profiles.axisymmetric_profile(x, 0, **axisymmetric),
         profiles.kinked_profile(x, 0, **kinked, phi=0),
         profiles.flattening_profile(x, 0, **flattened, phi=0),
+        profiles.flattening_profile(x, 0, **full_flattening, phi=0),
     ]
-    radii = [rho_shifted, rho_kinked, rho_flattened]
-    labels = ["Shifted axisymmetric", "Kinked", "Flattened"]
+    rho_full_flattening, _ = profiles.flattening_rho(
+        x,
+        0,
+        **{
+            key: full_flattening[key]
+            for key in ("delta", "xi_0", "rho_s", "d", "w", "gamma", "lam_0")
+        },
+        phi=0,
+        psi_0=full_flattening["psi_0"],
+        psi_1=full_flattening["psi_1"],
+    )
+    radii = [rho_shifted, rho_kinked, rho_flattened, rho_full_flattening]
+    labels = [
+        "Shifted axisymmetric",
+        "Kinked",
+        r"Flattened ($\lambda_0=0.5$)",
+        r"Full flattening ($\lambda_0=1$)",
+    ]
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, layout="constrained")
     for radius, value, label in zip(radii, values, labels):
@@ -74,6 +92,10 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
     elif profile_name == "flattened":
         values = profiles.flattening_profile(
             xx, yy, **parameters["flattened"], phi=pp,
+        )
+    elif profile_name == "full flattening":
+        values = profiles.flattening_profile(
+            xx, yy, **parameters["full_flattening"], phi=pp,
         )
     else:
         raise ValueError(f"Unknown profile name: {profile_name}")
@@ -133,16 +155,19 @@ def main():
 
     axisymmetric = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
     kinked = axisymmetric | dict(xi_0=0.4, rho_s=0.3, d=2.0, psi_0=0.0)
-    flattened = kinked | dict(w=0.4, gamma=0.1, lam_0=0.6, psi_1=np.pi)
+    flattened = kinked | dict(w=0.4, gamma=0.1, lam_0=0.5, psi_1=np.pi)
+    full_flattening = flattened | dict(lam_0=1.0)
     parameters = {
         "axisymmetric": axisymmetric,
         "kinked": kinked,
         "flattened": flattened,
+        "full_flattening": full_flattening,
     }
 
     plot_radial_cross_sections(x, parameters)
     plot_phase_slices(x, y, phi, parameters, "kinked")
     plot_phase_slices(x, y, phi, parameters, "flattened")
+    plot_phase_slices(x, y, phi, parameters, "full flattening")
     plt.show()
 
 
