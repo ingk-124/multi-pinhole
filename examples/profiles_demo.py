@@ -48,7 +48,7 @@ def plot_radial_cross_sections(x, parameters):
     radii = [rho_shifted, rho_kinked, rho_flattened]
     labels = ["Shifted axisymmetric", "Kinked", "Flattened"]
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, layout="constrained")
     for radius, value, label in zip(radii, values, labels):
         axes[0].plot(x, radius, label=label)
         axes[1].plot(x, value, label=label)
@@ -58,8 +58,7 @@ def plot_radial_cross_sections(x, parameters):
     axes[1].set_xlabel("Normalized poloidal coordinate x")
     axes[0].legend()
     axes[1].legend()
-    fig.suptitle("Poloidal profiles along y = 0 at phi = 0")
-    fig.tight_layout()
+    fig.suptitle(r"Poloidal profiles along $y=0$ at $\phi=0$")
     return fig
 
 
@@ -82,8 +81,13 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
     ncols = 4
     nrows = int(np.ceil(phi.size / ncols))
     fig, axes = plt.subplots(
-        nrows, ncols, figsize=(3 * ncols, 2.8 * nrows), sharex=True, sharey=True,
+        nrows,
+        ncols,
+        figsize=(3 * ncols + 1, 2.8 * nrows),
+        sharex=True,
+        sharey=True,
         squeeze=False,
+        layout="constrained",
     )
     levels = np.linspace(0, parameters["axisymmetric"]["A"], 16)
     contour = None
@@ -91,7 +95,9 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
         if index >= phi.size:
             ax.set_visible(False)
             continue
-        contour = ax.contourf(x, y, values[:, :, index].T, levels=levels, cmap="viridis")
+        contour = ax.contourf(
+            x, y, values[:, :, index].T, levels=levels, cmap="viridis",
+        )
         ax.contour(
             x,
             y,
@@ -110,8 +116,13 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
     for ax in axes[:, 0]:
         ax.set_ylabel("y")
     fig.suptitle(f"{profile_name.capitalize()} profile over toroidal phase")
-    fig.colorbar(contour, ax=axes, label="Profile amplitude", shrink=0.85)
-    fig.subplots_adjust(top=0.88, right=0.9, hspace=0.25, wspace=0.15)
+    fig.colorbar(
+        contour,
+        ax=axes,
+        label="Profile amplitude",
+        shrink=0.9,
+        pad=0.02,
+    )
     return fig
 
 
@@ -120,9 +131,9 @@ def main():
     y = np.linspace(-1, 1, 101)
     phi = np.linspace(-np.pi, np.pi, 8, endpoint=False)
 
-    axisymmetric = dict(A=1.0, delta=0.2, alpha=3.0, beta=5.0)
-    kinked = axisymmetric | dict(xi_0=0.3, rho_s=0.5, d=3.0, psi_0=0.0)
-    flattened = kinked | dict(w=0.15, gamma=0.1, lam_0=0.7, psi_1=np.pi)
+    axisymmetric = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
+    kinked = axisymmetric | dict(xi_0=0.4, rho_s=0.3, d=2.0, psi_0=0.0)
+    flattened = kinked | dict(w=0.4, gamma=0.1, lam_0=0.6, psi_1=np.pi)
     parameters = {
         "axisymmetric": axisymmetric,
         "kinked": kinked,
