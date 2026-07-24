@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5
+
+- Add a common ``edge_value`` boundary value to all generic profile models
+  while preserving their previous behavior when ``edge_value=0``.
+
 ## 0.8.4
 
 - Added bidirectional `poloidal_cartesian` and
