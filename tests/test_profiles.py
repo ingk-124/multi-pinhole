@@ -201,7 +201,7 @@ def test_all_generic_profiles_apply_edge_value_to_their_effective_radius():
         old = profile(x, y, **common, **parameters)
         with_zero_edge = profile(x, y, **common, **parameters, edge_value=0)
         expected = np.where(
-            rho <= 1,
+            x ** 2 + y ** 2 <= 1,
             edge_value + (common["A"] - edge_value)
             * profiles.two_power(rho, common["alpha"], common["beta"]),
             0,
