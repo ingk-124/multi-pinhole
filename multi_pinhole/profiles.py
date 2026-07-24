@@ -377,7 +377,17 @@ def flattening_rho_min(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
     return np.minimum(rho_kinked, rho_flat), theta_kinked
 
 
-def axisymmetric_profile(x, y, A, delta, alpha, beta, **kwargs):
+def _profile_from_rho(rho, A, alpha, beta, edge_value=0):
+    """Scale a two-power shape between its central and boundary values."""
+    shape = two_power(rho, alpha, beta)
+    return np.where(
+        np.asarray(rho) <= 1,
+        edge_value + (A - edge_value) * shape,
+        0,
+    )
+
+
+def axisymmetric_profile(x, y, A, delta, alpha, beta, edge_value=0, **kwargs):
     """Evaluate an axisymmetric two-power profile on poloidal coordinates.
 
     Parameters
@@ -390,6 +400,9 @@ def axisymmetric_profile(x, y, A, delta, alpha, beta, **kwargs):
         Dimensionless horizontal shift.
     alpha, beta : scalar or array-like
         Two-power exponents. Positive values are intended but unchecked.
+    edge_value : scalar or array-like, default=0
+        Profile value at ``rho=1``. The central value remains ``A`` and
+        the profile is zero for ``rho>1``.
     **kwargs : dict
         Ignored compatibility keywords, including an injected toroidal ``phi``.
 
@@ -399,10 +412,11 @@ def axisymmetric_profile(x, y, A, delta, alpha, beta, **kwargs):
         Broadcast profile. Radius behavior and singularities follow :func:`two_power`.
     """
     rho_shifted, _ = shifted_polar(x, y, delta, 0)
-    return A * two_power(rho_shifted, alpha, beta)
+    return _profile_from_rho(rho_shifted, A, alpha, beta, edge_value)
 
 
-def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0):
+def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0,
+                   edge_value=0):
     """Evaluate a two-power profile on kink-displaced coordinates.
 
     Parameters
@@ -417,6 +431,9 @@ def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0):
         Two-power and decay exponents; positive values are intended.
     phi, psi_0 : scalar or array-like, default=0
         Toroidal angle and phase origin in radians. Inputs broadcast.
+    edge_value : scalar or array-like, default=0
+        Profile value at ``rho=1``. The central value remains ``A`` and
+        the profile is zero for ``rho>1``.
 
     Returns
     -------
@@ -425,11 +442,12 @@ def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0):
         :func:`kinked_rho` and :func:`two_power`.
     """
     rho_kinked, _ = kinked_rho(x, y, delta, xi_0, rho_s, d, phi=phi, psi_0=psi_0)
-    return A * two_power(rho_kinked, alpha, beta)
+    return _profile_from_rho(rho_kinked, A, alpha, beta, edge_value)
 
 
 def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
-                       gamma=0, lam_0=1, phi=0, psi_0=0, psi_1=np.pi):
+                       gamma=0, lam_0=1, phi=0, psi_0=0, psi_1=np.pi,
+                       edge_value=0):
     """Evaluate a two-power profile on kinked and flattened coordinates.
 
     Parameters
@@ -450,6 +468,9 @@ def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
         Toroidal angle and phase origin in radians.
     psi_1 : scalar or array-like, default=pi
         Flattening offset in radians. Inputs broadcast.
+    edge_value : scalar or array-like, default=0
+        Profile value at ``rho=1``. The central value remains ``A`` and
+        the profile is zero for ``rho>1``.
 
     Returns
     -------
@@ -460,11 +481,11 @@ def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
     rho_flattened, _ = flattening_rho(x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
                                       w=w, gamma=gamma, lam_0=lam_0,
                                       phi=phi, psi_0=psi_0, psi_1=psi_1)
-    return A * two_power(rho_flattened, alpha, beta)
+    return _profile_from_rho(rho_flattened, A, alpha, beta, edge_value)
 
 
 def flattening_profile_min(x, y, A, delta, alpha, beta, xi_0, rho_s, d,
-                           phi=0, psi_0=0):
+                           phi=0, psi_0=0, edge_value=0):
     """Evaluate a two-power profile on minimum-flattened coordinates.
 
     Parameters
@@ -479,6 +500,9 @@ def flattening_profile_min(x, y, A, delta, alpha, beta, xi_0, rho_s, d,
         Two-power and radial-decay exponents; positive values are intended.
     phi, psi_0 : scalar or array-like, default=0
         Toroidal angle and phase origin in radians. Inputs broadcast.
+    edge_value : scalar or array-like, default=0
+        Profile value at ``rho=1``. The central value remains ``A`` and
+        the profile is zero for ``rho>1``.
 
     Returns
     -------
@@ -490,4 +514,4 @@ def flattening_profile_min(x, y, A, delta, alpha, beta, xi_0, rho_s, d,
         x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
         phi=phi, psi_0=psi_0,
     )
-    return A * two_power(rho_flattened, alpha, beta)
+    return _profile_from_rho(rho_flattened, A, alpha, beta, edge_value)

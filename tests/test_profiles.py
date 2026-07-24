@@ -155,6 +155,63 @@ def test_kinked_profile_axisymmetric_limit_and_phase_periodicity():
     np.testing.assert_allclose(periodic, kink, rtol=1e-12, atol=1e-12)
 
 
+def test_profile_edge_value_preserves_center_boundary_and_vacuum_values():
+    x = np.array([0.0, 0.5, 1.0, 1.2])
+    actual = profiles.axisymmetric_profile(
+        x, 0.0, A=5.0, delta=0.0, alpha=2.0, beta=1.0, edge_value=2.0,
+    )
+    expected = np.array([5.0, 4.25, 2.0, 0.0])
+
+    np.testing.assert_allclose(actual, expected)
+
+
+def test_all_generic_profiles_apply_edge_value_to_their_effective_radius():
+    x = np.linspace(-0.8, 1.2, 19)
+    y = np.linspace(0.3, -0.2, 19)
+    common = dict(A=4.0, alpha=2.0, beta=3.0)
+    edge_value = 0.7
+    cases = [
+        (
+            profiles.axisymmetric_profile,
+            profiles.shifted_polar(x, y, 0.1, 0)[0],
+            dict(delta=0.1),
+        ),
+        (
+            profiles.kinked_profile,
+            profiles.kinked_rho(x, y, 0.1, 0.12, 0.45, 2.0, phi=0.3)[0],
+            dict(delta=0.1, xi_0=0.12, rho_s=0.45, d=2.0, phi=0.3),
+        ),
+        (
+            profiles.flattening_profile,
+            profiles.flattening_rho(
+                x, y, 0.1, 0.12, 0.45, 2.0, 0.2, phi=0.3,
+            )[0],
+            dict(delta=0.1, xi_0=0.12, rho_s=0.45, d=2.0, w=0.2, phi=0.3),
+        ),
+        (
+            profiles.flattening_profile_min,
+            profiles.flattening_rho_min(
+                x, y, 0.1, 0.12, 0.45, 2.0, phi=0.3,
+            )[0],
+            dict(delta=0.1, xi_0=0.12, rho_s=0.45, d=2.0, phi=0.3),
+        ),
+    ]
+
+    for profile, rho, parameters in cases:
+        old = profile(x, y, **common, **parameters)
+        with_zero_edge = profile(x, y, **common, **parameters, edge_value=0)
+        expected = np.where(
+            rho <= 1,
+            edge_value + (common["A"] - edge_value)
+            * profiles.two_power(rho, common["alpha"], common["beta"]),
+            0,
+        )
+        actual = profile(x, y, **common, **parameters, edge_value=edge_value)
+
+        np.testing.assert_array_equal(with_zero_edge, old)
+        np.testing.assert_allclose(actual, expected)
+
+
 def test_minimum_flattening_matches_independent_reference_formula():
     x = np.linspace(-0.6, 0.8, 17)
     y = np.linspace(0.2, -0.4, 17)
