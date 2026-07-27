@@ -1,13 +1,13 @@
 """Eye geometry and ray generation."""
 from numbers import Number
-from typing import List, Tuple, Union
+from typing import List, Literal, Tuple, Union
 
 import numpy as np
-from typing_extensions import Literal
 
 from .rays import Rays
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
+
 
 class Eye:
     """A single pinhole or concave-lens optical channel of a camera.
@@ -26,7 +26,7 @@ class Eye:
                  eye_size: Union[float, Vector2DLike] = 0.5,
                  eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
                  wavelength_range: Tuple[float, float] = (0.01, 0.1), ):
-        """Eye class
+        """Create an optical Eye.
 
         Eye class is used to calculate matrices for transportation and projection.
 
@@ -38,7 +38,8 @@ class Eye:
             if eye_type is "concave_lens", focal length is the lens's focal length (negative value)
         position : Tuple[float, float, float]
             3D vector (X_eye, Y_eye, focal_length) from the origin of the camera coordinate system
-            If the eye_type is "pinhole", the position of the eye will be set to (X_eye, Y_eye, focal_length) automatically.
+            If the eye_type is "pinhole", the position of the eye will be set to
+            (X_eye, Y_eye, focal_length) automatically.
 
         eye_type : Literal["pinhole", "concave_lens", 1, 2], optional (default is 1)
             type of the eye ('pinhole'(1) or 'concave_lens'(2))
@@ -140,8 +141,8 @@ class Eye:
         else:
             return False
 
-    def camera2eye(self, points_in_camera: np.ndarray):
-        """Convert points in camera coordinate to eye coordinate
+    def camera2eye(self, points_in_camera: np.ndarray) -> np.ndarray:
+        """Convert points from camera coordinates to Eye coordinates.
 
         Parameters
         ----------
@@ -156,7 +157,12 @@ class Eye:
 
         return points_in_camera - self.position.reshape((1, 3))  # (n, 3)
 
-    def calc_rays(self, points_in_camera: np.ndarray, visible: np.ndarray = None, front_only: bool = True):
+    def calc_rays(
+            self,
+            points_in_camera: np.ndarray,
+            visible: np.ndarray | None = None,
+            front_only: bool = True
+    ) -> Rays:
         """Rays: Project world points through the eye onto the screen plane.
 
         Parameters
@@ -202,7 +208,7 @@ class Eye:
 
         return Rays(Z=Z, XY=XY, zoom_rate=zoom_rate, front_and_visible=front_and_visible)
 
-    def set_camera(self, camera_obj):
+    def set_camera(self, camera_obj: object) -> None:
         """None: Register the parent :class:`Camera` that owns this eye.
 
         Parameters
@@ -213,11 +219,11 @@ class Eye:
         self._camera = camera_obj
 
     @property
-    def frozen(self):
+    def frozen(self) -> bool:
         """bool: Whether this eye's geometry is immutable."""
         return self._frozen
 
-    def freeze(self):
+    def freeze(self) -> "Eye":
         """Freeze the eye geometry and make its public arrays read-only."""
         if not self._frozen:
             self._position.setflags(write=False)
@@ -227,46 +233,46 @@ class Eye:
         return self
 
     @property
-    def eye_type(self):
+    def eye_type(self) -> str:
         """str: Kind of optical element (``"pinhole"`` or ``"concave_lens"``)."""
         return self._eye_type
 
     @property
-    def eye_size(self):
+    def eye_size(self) -> np.ndarray:
         """np.ndarray: Aperture extents along the camera ``x`` and ``y`` axes in millimeters."""
         return self._eye_size
 
     @property
-    def eye_shape(self):
+    def eye_shape(self) -> str:
         """str: Geometric outline applied when rasterizing the pupil."""
         return self._eye_shape
 
     @property
-    def focal_length(self):
+    def focal_length(self) -> float:
         """float: Signed focal length measured along the optical axis in millimeters."""
         return self._focal_length
 
     @property
-    def position(self):
+    def position(self) -> np.ndarray:
         """np.ndarray: Eye origin expressed as ``(x, y, z)`` in camera coordinates."""
         return self._position
 
     @property
-    def principal_point(self):
+    def principal_point(self) -> np.ndarray:
         """np.ndarray: Principal point location ``(x, y, z)`` defining the imaging center."""
         return self._principal_point
 
     @property
-    def camera(self):
+    def camera(self) -> object | None:
         """Camera or None: Parent camera providing transforms, or ``None`` if detached."""
         return self._camera
 
     @property
-    def wavelength_range(self):
+    def wavelength_range(self) -> tuple[float, float]:
         """Tuple[float, float]: Minimum and maximum supported wavelengths in meters."""
         return self._wavelength_range
 
-    def print_settings(self):
+    def print_settings(self) -> None:
         """None: Print the configured eye properties for debugging."""
         print("eye_type:", self.eye_type)
         print("position:", self.position)

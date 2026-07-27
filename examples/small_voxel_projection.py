@@ -8,9 +8,9 @@ It writes PNG files instead of opening GUI windows so it can also run under
 pytest or on a headless machine.
 """
 
-from pathlib import Path
 import os
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
 os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
@@ -114,7 +114,8 @@ def draw_projection_result(world, emission, output_path):
 
 def run(output_dir=None):
     """Run the full tiny projection workflow and save figures."""
-    output_dir = Path(output_dir) if output_dir is not None else Path(tempfile.gettempdir()) / "multi_pinhole_small_voxel"
+    output_dir = Path(output_dir) if output_dir is not None else Path(
+        tempfile.gettempdir()) / "multi_pinhole_small_voxel"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     world = build_small_world()

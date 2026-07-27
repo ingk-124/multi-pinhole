@@ -5,27 +5,32 @@ numerical helpers perform calculations without owning scene state. See
 ``docs/world.md`` for workflow and persistence details.
 """
 
-import gc
 import os
 import time
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import FIRST_COMPLETED, wait
 from concurrent.futures.thread import ThreadPoolExecutor
 from types import MappingProxyType
-from typing import Literal, Tuple, List
+from typing import Any, Literal, Tuple, List
 
 import dill
 import numpy as np
 from matplotlib import pyplot as plt
+from numpy.typing import ArrayLike
 from scipy import sparse
 from stl import mesh
+from tqdm import tqdm
 
-from .core import Aperture, Camera, Eye, Screen
+from ._projection_matrix import (
+    build_optical_projection_matrix,
+    sum_eye_projections,
+)
 from ._visibility import (
     calculate_point_visibility,
     calculate_visible_vertex_mask,
     classify_visible_voxels,
 )
+from .core import Camera
 from .projection import (
     EyeProjectionWorkEstimate,
     PointSourceResolutionEstimate,
@@ -33,15 +38,10 @@ from .projection import (
     make_optical_binning,
     select_circumsphere_resolution,
 )
-from ._projection_matrix import (
-    build_optical_projection_matrix,
-    sum_eye_projections,
-)
-from .voxel import Voxel
 from .utils import stl_utils
 from .utils import type_check_and_list
-from .utils.my_stdio import *
-
+from .utils.my_stdio import my_print, my_tqdm
+from .voxel import Voxel
 
 # Increment when a serialized projection representation or its numerical
 # meaning becomes incompatible with an older cached matrix. Legacy pickles do
@@ -49,7 +49,7 @@ from .utils.my_stdio import *
 PROJECTION_CACHE_SCHEMA_VERSION = 3
 
 
-def type_list(obj, type_):
+def type_list(obj: object, type_: type) -> list[object]:
     """Normalize an input object into a list of a specific type.
 
     Note
@@ -176,10 +176,10 @@ class World:
     """
 
     def __init__(self,
-                 voxel: Voxel = None,
-                 cameras: Mapping[Hashable, Camera] | list[Camera] | Camera = None,
-                 walls: list[mesh.Mesh] | mesh.Mesh = None,
-                 inside_func: callable = None,
+                 voxel: Voxel | None = None,
+                 cameras: Mapping[Hashable, Camera] | list[Camera] | Camera | None = None,
+                 walls: list[mesh.Mesh] | mesh.Mesh | None = None,
+                 inside_func: Callable[..., np.ndarray] | None = None,
                  verbose: int = 1
                  ):
         """Instantiate the world container and initialize linked components.
@@ -281,7 +281,7 @@ class World:
 
         return World(cameras=self.cameras, voxel=self.voxel)
 
-    def camera_info(self):
+    def camera_info(self) -> str:
         """Summarize currently registered cameras.
 
         Returns
@@ -298,7 +298,7 @@ class World:
         txt = txt.rstrip("\n")
         return txt
 
-    def voxel_info(self):
+    def voxel_info(self) -> str:
         """Describe the voxel grid configuration.
 
         Returns
@@ -310,7 +310,10 @@ class World:
 
         return self.voxel.__repr__()
 
-    def save_world(self, filename):
+    def save_world(
+            self,
+            filename: str | os.PathLike[str]
+    ) -> None:
         """Persist the world instance to disk.
 
         Parameters
@@ -323,7 +326,7 @@ class World:
             dill.dump(self, f)
 
     @staticmethod
-    def load_world(filename):
+    def load_world(filename: str | os.PathLike[str]) -> "World":
         """Deserialize a world instance from disk.
 
         Parameters
@@ -345,22 +348,22 @@ class World:
         return loaded_world
 
     @property
-    def cameras(self):
+    def cameras(self) -> Mapping[Hashable, Camera]:
         """Mapping[Hashable, Camera]: Read-only stable-key camera mapping."""
         return MappingProxyType(self._cameras)
 
     @property
-    def voxel(self):
+    def voxel(self) -> Voxel:
         """Voxel: Primary voxel model used for visibility and projection."""
         return self._voxel
 
     @property
-    def walls(self):
+    def walls(self) -> list[mesh.Mesh]:
         """list[mesh.Mesh]: Collection of STL meshes representing walls."""
         return self._walls
 
     @property
-    def wall_ranges(self):
+    def wall_ranges(self) -> zip | None:
         """zip[tuple[float, float]]: Axis-aligned bounds for registered walls."""
         if not self.walls:
             return None
@@ -370,17 +373,21 @@ class World:
         return self._wall_ranges
 
     @property
-    def visible_voxels(self):
+    def visible_voxels(self) -> dict[Hashable, np.ndarray | None]:
         """dict[int, np.ndarray]: Visibility state of each voxel per camera."""
         return self._visible_voxels
 
     @property
-    def P_matrix(self):
+    def P_matrix(
+            self
+    ) -> dict[Hashable, sparse.csr_matrix | None]:
         """dict[int, sparse.csr_matrix]: Cached voxel-to-pixel projection matrices."""
         return self._P_matrix
 
     @property
-    def projection(self):
+    def projection(
+            self
+    ) -> dict[Hashable, list[sparse.csr_matrix | None]]:
         """dict[int, list[sparse.csr_matrix]]: Pixel-space projection matrices per eye."""
         return self._projection
 
@@ -412,7 +419,12 @@ class World:
             )
         return operator
 
-    def project(self, emission, camera_idx: Hashable, eye_idx: int | None = None):
+    def project(
+            self,
+            emission: ArrayLike,
+            camera_idx: Hashable,
+            eye_idx: int | None = None
+    ) -> np.ndarray:
         """Apply a cached voxel-to-pixel projection matrix.
 
         Parameters
@@ -434,6 +446,15 @@ class World:
         -----
         This method never constructs a projection implicitly. Call
         :meth:`set_projection_matrix` before projecting.
+
+        Raises
+        ------
+        ValueError
+            If ``emission`` does not have shape ``(N_voxel,)``.
+        KeyError, IndexError, TypeError
+            If the camera or eye selector is invalid.
+        RuntimeError
+            If the selected projection matrix has not been constructed.
         """
         emission = np.asarray(emission)
         if emission.ndim != 1 or emission.shape[0] != self.voxel.N:
@@ -443,7 +464,12 @@ class World:
         operator = self._projection_operator(camera_idx, eye_idx)
         return np.asarray(operator @ emission).reshape(-1)
 
-    def backproject(self, image, camera_idx: Hashable, eye_idx: int | None = None):
+    def backproject(
+            self,
+            image: ArrayLike,
+            camera_idx: Hashable,
+            eye_idx: int | None = None
+    ) -> np.ndarray:
         """Apply the transpose of a cached voxel-to-pixel projection matrix.
 
         Parameters
@@ -465,6 +491,15 @@ class World:
         -----
         Backprojection is the linear adjoint, not an inverse reconstruction.
         This method never constructs a projection implicitly.
+
+        Raises
+        ------
+        ValueError
+            If ``image`` does not match the selected camera's pixel count.
+        KeyError, IndexError, TypeError
+            If the camera or eye selector is invalid.
+        RuntimeError
+            If the selected projection matrix has not been constructed.
         """
         operator = self._projection_operator(camera_idx, eye_idx)
         image = np.asarray(image)
@@ -476,7 +511,7 @@ class World:
         return np.asarray(operator.T @ image).reshape(-1)
 
     @property
-    def inside_vertices(self):
+    def inside_vertices(self) -> np.ndarray:
         """np.ndarray: Boolean mask indicating which voxel vertices lie inside the world."""
         if self._inside_vertices is None:
             return np.ones(self.voxel.N_grid, dtype=bool)
@@ -509,7 +544,7 @@ class World:
             self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
 
     @inside_vertices.setter
-    def inside_vertices(self, inside_vertices: np.ndarray):
+    def inside_vertices(self, inside_vertices: np.ndarray) -> None:
         """Validate and store the inside-vertex mask.
 
         Parameters
@@ -535,7 +570,10 @@ class World:
         self._invalidate_visibility_cache()
 
     @cameras.setter
-    def cameras(self, cameras: Mapping[Hashable, Camera] | list[Camera] | Camera):
+    def cameras(
+            self,
+            cameras: Mapping[Hashable, Camera] | list[Camera] | Camera
+    ) -> None:
         """Register or replace cameras managed by the world.
 
         Parameters
@@ -600,7 +638,11 @@ class World:
             print("Notice: All cameras are reused.")
         print(self.camera_info())
 
-    def add_camera(self, camera_key: Hashable, new_camera: Camera):
+    def add_camera(
+            self,
+            camera_key: Hashable,
+            new_camera: Camera
+    ) -> None:
         """Register one Camera under an explicit stable key.
 
         Parameters
@@ -614,6 +656,16 @@ class World:
         -----
         Newly inserted cameras start without cached visibility or projection
         data until recomputation is triggered.
+
+        Raises
+        ------
+        TypeError
+            If the key is not hashable or ``new_camera`` is not a Camera.
+        KeyError
+            If ``camera_key`` is already registered.
+        ValueError
+            If the same Camera instance is already registered under another
+            key in this World.
         """
         if not isinstance(camera_key, Hashable):
             raise TypeError("camera_key must be hashable")
@@ -633,7 +685,7 @@ class World:
         self._P_matrix[camera_key] = None
         print(self.camera_info())
 
-    def remove_camera(self, camera_key):
+    def remove_camera(self, camera_key: Hashable) -> None:
         """Remove one camera without renumbering any remaining keys.
 
         Parameters
@@ -646,6 +698,11 @@ class World:
         Keys are stable: removing one Camera does not change any other key.
         A future explicit key-reset helper may be added if compact integer
         keys are needed.
+
+        Raises
+        ------
+        KeyError
+            If ``camera_key`` is not registered.
         """
         if camera_key not in self._cameras:
             raise KeyError(f"camera key {camera_key!r} is not registered")
@@ -658,7 +715,11 @@ class World:
         removed_camera.unset_world(self)
         print(self.camera_info())
 
-    def change_camera(self, camera_key: Hashable, camera: Camera):
+    def change_camera(
+            self,
+            camera_key: Hashable,
+            camera: Camera
+    ) -> None:
         """Replace the Camera at a stable key.
 
         Parameters
@@ -695,7 +756,7 @@ class World:
         print(self.camera_info())
 
     @voxel.setter
-    def voxel(self, voxel):
+    def voxel(self, voxel: Voxel) -> None:
         """Assign a new voxel model and invalidate cached projections.
 
         Parameters
@@ -717,7 +778,10 @@ class World:
             self._invalidate_projection_cache()
 
     @walls.setter
-    def walls(self, walls: list[mesh.Mesh] | mesh.Mesh):
+    def walls(
+            self,
+            walls: list[mesh.Mesh] | mesh.Mesh | None
+    ) -> None:
         """Update the STL meshes that define world boundaries.
 
         Parameters
@@ -736,7 +800,11 @@ class World:
                 self._wall_ranges = zip(np.min([_.min_ for _ in self._walls], axis=0),
                                         np.max([_.max_ for _ in self._walls], axis=0))
 
-    def set_inside_vertices(self, function: callable, **kwargs) -> None:
+    def set_inside_vertices(
+            self,
+            function: Callable[..., np.ndarray],
+            **kwargs: Any
+    ) -> None:
         """Derive the inside-vertex mask via a user-provided function.
 
         Parameters
@@ -780,7 +848,8 @@ class World:
             return np.ones(points.shape[0], dtype=bool)
         return self._inside_function(*points.T, **self._inside_kwargs).astype(bool)
 
-    def find_visible_points(self, points: np.ndarray, camera_idx: Hashable, eye_idx: int = None,
+    def find_visible_points(self, points: np.ndarray, camera_idx: Hashable,
+                            eye_idx: int | None = None,
                             verbose: int = 1) -> np.ndarray:
         """Determine point visibility for a specific camera and eye selection.
 
@@ -830,8 +899,9 @@ class World:
             verbose=verbose,
         )  # (N_eye, N_points)
 
-    def _find_visible_vertices(self, force: bool = False, verbose: int = None,
-                               camera_idx: Hashable = None) -> None:
+    def _find_visible_vertices(self, force: bool = False,
+                               verbose: int | None = None,
+                               camera_idx: Hashable | None = None) -> None:
         """Compute visibility masks for voxel vertices per camera.
 
         Parameters
@@ -889,7 +959,11 @@ class World:
             self._visible_vertices[c_] = visible_vertices
             my_print(f"Visible vertices for camera {c_!r} is calculated.", show=verbose > 0)
 
-    def find_visible_voxels(self, force: bool = False, verbose: int | None = None):
+    def find_visible_voxels(
+            self,
+            force: bool = False,
+            verbose: int | None = None
+    ) -> None:
         """Evaluate voxel visibility states for each camera.
 
         Parameters
@@ -959,7 +1033,8 @@ class World:
 
     def estimate_source_resolution(
             self, camera_idx: Hashable = 0, eye_idx: int = 0,
-            voxel_indices=None, max_resolution=4,
+            voxel_indices: ArrayLike | None = None,
+            max_resolution: int | tuple[int, int, int] = 4,
             point_source_threshold: float = 1.0 / 8.0,
             detector_grid: str = "psf",
             batch_size: int = 100_000) -> PointSourceResolutionEstimate:
@@ -1045,11 +1120,11 @@ class World:
                 zoom_rate = np.full(axial_distance.shape, np.nan)
                 in_front = axial_distance > 0.0
                 zoom_rate[in_front] = (
-                    1.0 + eye.focal_length / axial_distance[in_front]
+                        1.0 + eye.focal_length / axial_distance[in_front]
                 )
                 spot_size_uv = (
-                    eye.eye_size[::-1][None, :] *
-                    np.abs(zoom_rate[:, None])
+                        eye.eye_size[::-1][None, :] *
+                        np.abs(zoom_rate[:, None])
                 )
                 # Invalid/behind-Eye samples fail the geometry test below; use
                 # detector pitch here so the diagnostic scale stays finite.
@@ -1115,8 +1190,8 @@ class World:
     @classmethod
     def _resolve_projection_resolutions(
             cls, res, res_mode: str, partial_res,
-            ) -> tuple[tuple[int, int, int] | None,
-                       tuple[int, int, int], bool]:
+    ) -> tuple[tuple[int, int, int] | None,
+    tuple[int, int, int], bool]:
         """Validate public source-resolution settings in one place.
 
         ``fixed`` uses ``res`` directly, ``auto`` clips each geometric ideal
@@ -1147,7 +1222,15 @@ class World:
     def _projection_cache_key(
             cls, res, res_mode: str, partial_res,
             chunk_strategy: str, optical_bin_width_pixels,
-            point_source_threshold: float) -> tuple:
+            point_source_threshold: float
+    ) -> tuple[
+        str,
+        tuple[int, int, int] | None,
+        tuple[int, int, int],
+        float | None,
+        str,
+        tuple[float, float] | None,
+    ]:
         """Return the numerical settings that determine one eye projection.
 
         Execution-only controls such as parallelism and working-memory limits
@@ -1311,8 +1394,9 @@ class World:
                                   res: int | tuple[int, int, int] | None,
                                   res_mode: Literal["fixed", "auto", "ideal"] = "fixed",
                                   n_jobs: int = -2,
-                                  verbose: int = None, max_nnz: int = 100_000_000,
-                                  partial_res: int | tuple[int, int, int] = None,
+                                  verbose: int | None = None,
+                                  max_nnz: int = 100_000_000,
+                                  partial_res: int | tuple[int, int, int] | None = None,
                                   max_working_memory: int = 1_000_000_000,
                                   chunk_strategy: str = "voxel",
                                   optical_bin_width_pixels=1.0,
@@ -1481,10 +1565,10 @@ class World:
                                  sample_interpolator, sample_result, total_voxels):
             """Estimate a chunk size from transient bytes and legacy nnz cap."""
             transient_bytes = (
-                sample_points.nbytes
-                + _sparse_nbytes(sample_image)
-                + _sparse_nbytes(sample_interpolator)
-                + _sparse_nbytes(sample_result)
+                    sample_points.nbytes
+                    + _sparse_nbytes(sample_image)
+                    + _sparse_nbytes(sample_interpolator)
+                    + _sparse_nbytes(sample_result)
             )
             bytes_per_voxel = max(1.0, transient_bytes / sample_count)
             in_flight = 1 if n_jobs == 1 else 2 * n_jobs
@@ -1779,7 +1863,7 @@ class World:
                 partial_res = _process_parallel_chunks(_chunks, _process_partial_chunk,
                                                        desc="Processing partial voxels")
 
-            my_print(f"Partial voxels processed.", show=verbose > 0)
+            my_print("Partial voxels processed.", show=verbose > 0)
         partial_elapsed = 0.0 if partial_voxels.size == 0 else time.perf_counter() - partial_start
 
         assembly_start = time.perf_counter()
@@ -1798,7 +1882,13 @@ class World:
                  f"eye {eye_idx + 1}/{len(_camera.eyes)} is calculated.", show=verbose > 0)
         return
 
-    def trace_line(self, points, camera_idx: Hashable = 0, eye_idx: int = 0, coord_type: str = "XY"):
+    def trace_line(
+            self,
+            points: np.ndarray,
+            camera_idx: Hashable = 0,
+            eye_idx: int = 0,
+            coord_type: str = "XY"
+    ) -> np.ndarray:
         """Project world-coordinate points onto a camera screen.
 
         Parameters
@@ -1837,12 +1927,13 @@ class World:
             self, res: int | tuple[int, int, int] | None,
             res_mode: Literal["fixed", "auto", "ideal"] = "fixed",
             verbose: int = 1, parallel: int = -1,
-                              partial_res: int | tuple[int, int, int] = None,
-                              force: bool = False,
-                              max_working_memory: int = 1_000_000_000,
-                              chunk_strategy: str = "voxel",
-                              optical_bin_width_pixels=1.0,
-                              point_source_threshold: float = 1.0 / 8.0):
+            partial_res: int | tuple[int, int, int] | None = None,
+            force: bool = False,
+            max_working_memory: int = 1_000_000_000,
+            chunk_strategy: str = "voxel",
+            optical_bin_width_pixels: float | tuple[float, float] = 1.0,
+            point_source_threshold: float = 1.0 / 8.0
+    ) -> None:
         """Populate voxel-to-screen projection matrices for all cameras.
 
         Parameters
@@ -1935,8 +2026,15 @@ class World:
 
         my_print("Projection matrices are set.", show=verbose > 0)
 
-    def draw_camera_orientation(self, ax=None, show_fig: bool = False, x_lim=None, y_lim=None, z_lim=None,
-                                 **kwargs):
+    def draw_camera_orientation(
+            self,
+            ax: plt.Axes | None = None,
+            show_fig: bool = False,
+            x_lim: tuple[float, float] | None = None,
+            y_lim: tuple[float, float] | None = None,
+            z_lim: tuple[float, float] | None = None,
+            **kwargs: Any
+    ) -> plt.Axes:
         """Visualize cameras, voxel bounds, and optional walls in 3D.
 
         Parameters
@@ -1968,15 +2066,18 @@ class World:
         x_lim = (min(vx_lim[0], wx_lim[0],
                      *[camera.camera_position[0] for camera in self.cameras.values()]) * 1.1,
                  max(vx_lim[1], wx_lim[1],
-                     *[camera.camera_position[0] for camera in self.cameras.values()]) * 1.1) if x_lim is None else x_lim
+                     *[camera.camera_position[0] for camera in
+                       self.cameras.values()]) * 1.1) if x_lim is None else x_lim
         y_lim = (min(vy_lim[0], wy_lim[0],
                      *[camera.camera_position[1] for camera in self.cameras.values()]) * 1.1,
                  max(vy_lim[1], wy_lim[1],
-                     *[camera.camera_position[1] for camera in self.cameras.values()]) * 1.1) if y_lim is None else y_lim
+                     *[camera.camera_position[1] for camera in
+                       self.cameras.values()]) * 1.1) if y_lim is None else y_lim
         z_lim = (min(vz_lim[0], wz_lim[0],
                      *[camera.camera_position[2] for camera in self.cameras.values()]) * 1.1,
                  max(vz_lim[1], wz_lim[1],
-                     *[camera.camera_position[2] for camera in self.cameras.values()]) * 1.1) if z_lim is None else z_lim
+                     *[camera.camera_position[2] for camera in
+                       self.cameras.values()]) * 1.1) if z_lim is None else z_lim
 
         ax.set_xlim(x_lim)
         ax.set_ylim(y_lim)

@@ -6,8 +6,13 @@ points into normalized coordinates for profile evaluation, for example:
     r, theta, phi = voxel.normalized_coordinates().T
 """
 
-import numpy as np
+from collections.abc import Callable
 
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+FloatArray = NDArray[np.float64]
+CoordinateTransform = Callable[[FloatArray], FloatArray]
 
 COORDINATE_TYPES = (
     "cartesian",
@@ -49,7 +54,11 @@ def _missing_component_error(coordinate_type, components):
     )
 
 
-def cartesian_coordinates(width: float, depth: float, height: float):
+def cartesian_coordinates(
+        width: float,
+        depth: float,
+        height: float
+) -> CoordinateTransform:
     """Build a normalized Cartesian-coordinate transform.
 
     Parameters
@@ -71,13 +80,16 @@ def cartesian_coordinates(width: float, depth: float, height: float):
     """
     scale = np.abs([width / 2, depth / 2, height / 2])
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         return points / scale[None, :]
 
     return normalized_coordinates
 
 
-def torus_coordinates(major_radius: float, minor_radius: float):
+def torus_coordinates(
+        major_radius: float,
+        minor_radius: float
+) -> CoordinateTransform:
     """Return the standard right-handed normalized torus coordinate transform.
 
     Parameters
@@ -116,7 +128,7 @@ def torus_coordinates(major_radius: float, minor_radius: float):
     R_0 = major_radius
     a = minor_radius
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         R = np.linalg.norm(points[:, :2], axis=1)
         r = np.linalg.norm([R - R_0, points[:, 2]], axis=0) / a
         theta = np.arctan2(points[:, 2], R - R_0)
@@ -126,7 +138,10 @@ def torus_coordinates(major_radius: float, minor_radius: float):
     return normalized_coordinates
 
 
-def torus_inverse_coordinates(major_radius: float, minor_radius: float):
+def torus_inverse_coordinates(
+        major_radius: float,
+        minor_radius: float
+) -> CoordinateTransform:
     """Return the inverse-angle right-handed normalized torus coordinate transform.
 
     Parameters
@@ -163,7 +178,7 @@ def torus_inverse_coordinates(major_radius: float, minor_radius: float):
     R_0 = major_radius
     a = minor_radius
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         R = np.linalg.norm(points[:, :2], axis=1)
         r = np.linalg.norm([R - R_0, points[:, 2]], axis=0) / a
         theta = np.arctan2(points[:, 2], R_0 - R)
@@ -173,7 +188,10 @@ def torus_inverse_coordinates(major_radius: float, minor_radius: float):
     return normalized_coordinates
 
 
-def poloidal_cartesian_coordinates(major_radius: float, minor_radius: float):
+def poloidal_cartesian_coordinates(
+        major_radius: float,
+        minor_radius: float
+) -> CoordinateTransform:
     """Build a normalized poloidal-Cartesian transform.
 
     Parameters
@@ -199,7 +217,7 @@ def poloidal_cartesian_coordinates(major_radius: float, minor_radius: float):
     R_0 = major_radius
     a = minor_radius
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         R = np.linalg.norm(points[:, :2], axis=1)
         x = (R - R_0) / a
         y = points[:, 2] / a
@@ -210,7 +228,9 @@ def poloidal_cartesian_coordinates(major_radius: float, minor_radius: float):
 
 
 def poloidal_cartesian_inverse_coordinates(
-        major_radius: float, minor_radius: float):
+        major_radius: float,
+        minor_radius: float
+) -> CoordinateTransform:
     """Build a normalized poloidal-Cartesian transform with inverse azimuth.
 
     Parameters
@@ -234,7 +254,7 @@ def poloidal_cartesian_inverse_coordinates(
     """
     transform = poloidal_cartesian_coordinates(major_radius, minor_radius)
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         coordinates = transform(points)
         coordinates[:, 2] = np.arctan2(points[:, 1], points[:, 0])
         return coordinates
@@ -242,7 +262,10 @@ def poloidal_cartesian_inverse_coordinates(
     return normalized_coordinates
 
 
-def cylindrical_coordinates(radius: float, height: float):
+def cylindrical_coordinates(
+        radius: float,
+        height: float
+) -> CoordinateTransform:
     """Build a normalized cylindrical-coordinate transform.
 
     Parameters
@@ -268,7 +291,7 @@ def cylindrical_coordinates(radius: float, height: float):
     a = radius
     h = height
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         r = np.linalg.norm(points[:, :2], axis=1) / a
         theta = np.arctan2(points[:, 1], points[:, 0])
         z = points[:, 2] / (h / 2)
@@ -277,7 +300,7 @@ def cylindrical_coordinates(radius: float, height: float):
     return normalized_coordinates
 
 
-def spherical_coordinates(radius: float):
+def spherical_coordinates(radius: float) -> CoordinateTransform:
     """Build a normalized spherical-coordinate transform.
 
     Parameters
@@ -302,7 +325,7 @@ def spherical_coordinates(radius: float):
     """
     a = radius
 
-    def normalized_coordinates(points: np.ndarray):
+    def normalized_coordinates(points: FloatArray) -> FloatArray:
         distance = np.linalg.norm(points, axis=1)
         r = distance / a
         cos_theta = np.divide(
@@ -318,7 +341,10 @@ def spherical_coordinates(radius: float):
     return normalized_coordinates
 
 
-def coordinate_transform(coordinate_type: str, coordinate_parameters: dict):
+def coordinate_transform(
+        coordinate_type: str,
+        coordinate_parameters: dict[str, float]
+) -> CoordinateTransform:
     """Build a normalized-coordinate transform selected by name.
 
     Parameters
@@ -380,8 +406,13 @@ def _positive_scale(value, name):
     return value
 
 
-def convert_from_cartesian(points, coordinate_type: str, *, normalized=False,
-                           **coordinate_parameters):
+def convert_from_cartesian(
+        points: ArrayLike,
+        coordinate_type: str,
+        *,
+        normalized: bool = False,
+        **coordinate_parameters: float
+) -> FloatArray:
     """Convert Cartesian points to a selected coordinate convention.
 
     Unlike the legacy transform factories, this function can return physical
@@ -505,8 +536,12 @@ def convert_from_cartesian(points, coordinate_type: str, *, normalized=False,
     raise ValueError(f"Unsupported coordinate_type: {coordinate_type}")
 
 
-def convert_to_cartesian(coordinate_type: str, *, normalized=False,
-                         **components):
+def convert_to_cartesian(
+        coordinate_type: str,
+        *,
+        normalized: bool = False,
+        **components: ArrayLike
+) -> FloatArray:
     """Convert broadcastable keyword coordinate components to Cartesian.
 
     Parameters

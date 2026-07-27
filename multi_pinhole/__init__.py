@@ -5,8 +5,21 @@ from .projection import EyeProjectionWorkEstimate, ProjectionWorkEstimate
 from .voxel import Voxel
 from .world import World
 
+__all__ = [
+    "Aperture",
+    "Camera",
+    "Eye",
+    "EyeProjectionWorkEstimate",
+    "ProjectionWorkEstimate",
+    "Rays",
+    "Screen",
+    "Voxel",
+    "World",
+    "cli",
+]
 
-def cli():
+
+def cli() -> None:
     """Entry point for the ``multi-pinhole-sim`` console script.
 
     This package is intended to be used as a library; the console script

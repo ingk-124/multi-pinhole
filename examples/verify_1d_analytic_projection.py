@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
 os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
@@ -38,7 +38,6 @@ import numpy as np
 from scipy.integrate import quad
 
 from multi_pinhole import Camera, Eye, Screen, Voxel, World
-
 
 SOURCE_X_BOUNDS = (-20.0, 20.0)
 SOURCE_Y_BOUNDS = (-0.1, 0.1)

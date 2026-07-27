@@ -668,7 +668,6 @@ def plot_compression_detail(problem: ToyProblem, compression: Compression, outpu
 def plot_matrix_comparison(reference, approximation, output: Path):
     reference = reference.tocsr()
     approximation = approximation.tocsr()
-    difference = (approximation - reference).tocsr()
     ref_sensitivity = np.asarray(reference.sum(axis=0)).ravel()
     app_sensitivity = np.asarray(approximation.sum(axis=0)).ravel()
     column_relative_l2 = np.zeros(reference.shape[1])

@@ -1,19 +1,18 @@
 """Detector geometry, overlap integration, and spot rasterization."""
 from numbers import Number
-from typing import List, Tuple, Union
+from typing import List, Literal, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
 from numba import njit
 from scipy import sparse
-from typing_extensions import Literal
 
 from .eye import Eye
 from .rays import Rays
 from .utils import stl_utils
-from .utils.my_stdio import my_tqdm
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
+
 
 @njit(cache=True, nogil=True, inline="always")
 def _unit_circle_primitive(x):
@@ -324,8 +323,9 @@ def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
                     output_index += 1
     return pixel_indices, etendue_weights, counts
 
+
 class Screen:
-    """Screen class
+    """Represent a pixelated detector screen.
 
     Screen class is used to create a screen object
     """
@@ -335,7 +335,7 @@ class Screen:
                  screen_size: Union[Number, Vector2DLike] = 10,
                  pixel_shape: Tuple[int, int] = (100, 100),
                  subpixel_resolution: int = 1):
-        """Create a screen object
+        """Create a screen object.
 
         Parameters
         ----------
@@ -368,14 +368,18 @@ class Screen:
         -----
         The image coordinate system is defined on the screen as follows:
             origin: upper left corner of the screen
-            u-axis: vertical direction and points to the bottom of the screen (same direction as Y-axis of the camera coordinate system)
-            v-axis: horizontal direction and points to the right of the screen (same direction as X-axis of the camera coordinate system)
-            caution: the order of axes is different from the camera coordinate system (Y-axis -> u-axis, X-axis -> v-axis)
+            u-axis: vertical direction and points to the bottom of the screen
+            (same direction as Y-axis of the camera coordinate system)
+            v-axis: horizontal direction and points to the right of the screen
+            (same direction as X-axis of the camera coordinate system)
+            caution: the order of axes differs from the camera coordinate system
+            (Y-axis -> u-axis, X-axis -> v-axis)
         The center of screen is at the origin of the camera coordinate system, so the position is always [0, 0, 0]
         Screen shape is circle, ellipse or rectangle
         Image area is defined as the rectangle circumscribed by the screen
         Image size is the size of the image area and the unit is mm
-        Pixels are defined on the image area and the number of pixels is given as (U_p, V_p) in the image coordinate system
+        Pixels are defined on the image area, and their number is given as
+        (U_p, V_p) in the image coordinate system
         The size of pixel is calculated by image size / number of pixels
         To simulate more realistic images, subpixel resolution can be used
         Pixels and subpixels are discretized and noted as (i, j) and (i', j') respectively
@@ -449,47 +453,47 @@ class Screen:
             return False
 
     @property
-    def screen_shape(self):
+    def screen_shape(self) -> str:
         """str: Geometric outline of the active display surface."""
         return self._screen_shape
 
     @property
-    def screen_size(self):
+    def screen_size(self) -> np.ndarray:
         """np.ndarray: Physical height and width of the screen in millimeters."""
         return self._screen_size
 
     @property
-    def pixel_shape(self):
+    def pixel_shape(self) -> np.ndarray:
         """np.ndarray: Count of pixels along the ``u`` and ``v`` axes."""
         return self._pixel_shape
 
     @property
-    def N_pixel(self):
+    def N_pixel(self) -> int:
         """int: Total number of discrete pixels on the screen."""
         return self._N_pixel
 
     @property
-    def pixel_size(self):
+    def pixel_size(self) -> np.ndarray:
         """np.ndarray: Pixel pitch along ``u`` and ``v`` directions in millimeters."""
         return self._pixel_size
 
     @property
-    def A_pixel(self):
+    def A_pixel(self) -> float:
         """float: Pixel area in square millimeters."""
         return self._A_pixel
 
     @property
-    def pixel_position(self):
+    def pixel_position(self) -> np.ndarray:
         """np.ndarray: Coordinates of each pixel center in ``(u, v)`` order."""
         return self._pixel_position
 
     @property
-    def subpixel_resolution(self):
+    def subpixel_resolution(self) -> int:
         """int: Number of sub-divisions applied per pixel edge."""
         return self._subpixel_resolution
 
     @subpixel_resolution.setter
-    def subpixel_resolution(self, subpixel_resolution):
+    def subpixel_resolution(self, subpixel_resolution: int) -> None:
         """None: Update the subpixel refinement factor and recompute caches.
 
         Parameters
@@ -505,7 +509,7 @@ class Screen:
         self._set_variables()
 
     @property
-    def frozen(self):
+    def frozen(self) -> bool:
         """bool: Whether this screen's geometry and discretisation are immutable."""
         return self._frozen
 
@@ -513,7 +517,7 @@ class Screen:
         if self._frozen:
             raise RuntimeError("Screen geometry is frozen because its Camera is registered in a World")
 
-    def freeze(self):
+    def freeze(self) -> "Screen":
         """Freeze screen geometry, cached grids, and sparse mappings."""
         if not self._frozen:
             for value in self.__dict__.values():
@@ -527,42 +531,42 @@ class Screen:
         return self
 
     @property
-    def subpixel_shape(self):
+    def subpixel_shape(self) -> np.ndarray:
         """np.ndarray: Subpixel lattice dimensions in ``(u, v)`` order."""
         return self._subpixel_shape
 
     @property
-    def N_subpixel(self):
+    def N_subpixel(self) -> int:
         """int: Total number of subpixels composing the discretised screen."""
         return self._N_subpixel
 
     @property
-    def subpixel_size(self):
+    def subpixel_size(self) -> np.ndarray:
         """np.ndarray: Size of each subpixel in millimeters along ``u`` and ``v``."""
         return self._subpixel_size
 
     @property
-    def A_subpixel(self):
+    def A_subpixel(self) -> float:
         """float: Subpixel area in square millimeters."""
         return self._A_subpixel
 
     @property
-    def subpixel_position(self):
+    def subpixel_position(self) -> np.ndarray:
         """np.ndarray: Center coordinates for all subpixels in ``(u, v)`` order."""
         return self._subpixel_position
 
     @property
-    def pixel_image_mask(self):
+    def pixel_image_mask(self) -> np.ndarray:
         """np.ndarray: Boolean mask indicating pixels outside the active region."""
         return self._pixel_image_mask
 
     @property
-    def subpixel_image_mask(self):
+    def subpixel_image_mask(self) -> np.ndarray:
         """np.ndarray: Boolean mask identifying subpixels clipped by the screen shape."""
         return self._subpixel_image_mask
 
     @property
-    def transform_matrix(self):
+    def transform_matrix(self) -> sparse.csr_matrix:
         """sparse.csr_matrix or None: Mapping from subpixels to their parent pixels."""
         return self._transform_matrix
 
@@ -593,8 +597,12 @@ class Screen:
         self._transform_matrix = sparse.csr_matrix((np.ones(self._N_subpixel), indices, indptr),
                                                    shape=(self._N_pixel, self._N_subpixel))
 
-    def positions(self, pixel_shape, pixel_size):
-        """Calculate the center (u, v) of each pixel
+    def positions(
+            self,
+            pixel_shape: tuple[int, int] | np.ndarray,
+            pixel_size: tuple[float, float] | np.ndarray
+    ) -> np.ndarray:
+        """Calculate the center ``(u, v)`` of each pixel.
 
         Parameters
         ----------
@@ -615,8 +623,8 @@ class Screen:
         u, v = np.meshgrid(u_axis, v_axis, indexing="ij")
         return np.stack([u, v], axis=-1).reshape((-1, 2))
 
-    def image_mask(self, position: np.ndarray):
-        """Set the mask of the image
+    def image_mask(self, position: np.ndarray) -> bool | np.ndarray:
+        """Set the image mask.
 
         Parameters
         ----------
@@ -642,8 +650,8 @@ class Screen:
             mask = np.linalg.norm((position - self._screen_size / 2) / (self._screen_size / 2), axis=1) > 1
             return mask
 
-    def cosine(self, eye: Eye):
-        """Calculate cosine of each pixel
+    def cosine(self, eye: Eye) -> np.ndarray:
+        """Calculate the incidence-angle cosine of each pixel.
 
         Parameters
         ----------
@@ -666,8 +674,8 @@ class Screen:
         tangent = np.linalg.norm(uv, axis=-1) / eye.focal_length  # (U_p * V_p, )
         return 1 / np.sqrt(1 + tangent ** 2)  # (U_p * V_p, )
 
-    def etendue_per_subpixel(self, eye: Eye):
-        """Calculate etendue of each subpixel
+    def etendue_per_subpixel(self, eye: Eye) -> np.ndarray:
+        """Calculate the etendue of each subpixel.
 
         Parameters
         ----------
@@ -686,8 +694,13 @@ class Screen:
         """
         return self._A_subpixel * (self.cosine(eye) ** 4) / (4 * np.pi)  # (U_p * V_p, )
 
-    def ray2image_grid(self, eye: Eye, rays: Rays, verbose=0,
-                       etendue_per_subpixel=None):
+    def ray2image_grid(
+            self,
+            eye: Eye,
+            rays: Rays,
+            verbose: int = 0,
+            etendue_per_subpixel: np.ndarray | None = None
+    ) -> sparse.spmatrix:
         """Integrate finite-Eye ray footprints on the detector grid.
 
         Parameters
@@ -800,7 +813,7 @@ class Screen:
         # detector integration point back into the finite Eye and evaluates
         # its own local source-to-Eye ray geometry.
         source_offset = -(rays.Z[:, None] / eye.focal_length) \
-            * (rays.XY - eye.position[None, :2])
+                        * (rays.XY - eye.position[None, :2])
         pixel_indices, local_etendue, counts = _rasterize_spots(
             u_axis, v_axis, du, dv, u_center, v_center, a_u, a_v,
             i_min, i_max, j_min, j_max, valid, V_sub, use_ellipse,
@@ -822,8 +835,8 @@ class Screen:
         ).tocsr()
         return mat  # (N_subpixel, n) csr matrix
 
-    def xy2uv(self, xy: np.ndarray):
-        """Convert uv vectors in the camera coordinate to the image coordinate
+    def xy2uv(self, xy: np.ndarray) -> np.ndarray:
+        """Convert camera-plane vectors to image coordinates.
 
         Parameters
         ----------
@@ -842,7 +855,11 @@ class Screen:
         else:
             raise ValueError("xy must be 1D or 2D array")
 
-    def uv2subpixel_index(self, light_points: np.ndarray, intensity: np.ndarray):
+    def uv2subpixel_index(
+            self,
+            light_points: np.ndarray,
+            intensity: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Tuple[np.ndarray, np.ndarray]: Convert image-plane samples into subpixel indices.
 
         Parameters
@@ -867,8 +884,11 @@ class Screen:
                        subpixel_indices[:, 1] >= 0, subpixel_indices[:, 1] < self._subpixel_shape[1]], axis=0)
         return subpixel_indices[mask], intensity[mask]
 
-    def subpixel_to_pixel(self, subpixel_image: np.ndarray = None) -> np.ndarray:
-        """Convert subpixel image to pixel image
+    def subpixel_to_pixel(
+            self,
+            subpixel_image: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Convert a subpixel image to a pixel image.
 
         Parameters
         ----------
@@ -898,10 +918,12 @@ class Screen:
         # Convert subpixel image to pixel image by averaging subpixels
         return self._transform_matrix.dot(subpixel_image)
 
-    def show_image(self, image: np.ndarray = None, ax: plt.Axes = None,
+    def show_image(self, image: np.ndarray | None = None,
+                   ax: plt.Axes | None = None,
                    block: bool = True, pixel_image: bool = False, pm: bool = False,
-                   colorbar: bool = True, masked: bool = False, show: bool = False, **kwargs) -> plt.Axes:
-        """Show image
+                   colorbar: bool = True, masked: bool = False,
+                   show: bool = False, **kwargs: object) -> plt.Axes:
+        """Display an image.
 
         Parameters
         ----------

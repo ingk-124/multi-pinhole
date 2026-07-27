@@ -1,6 +1,6 @@
 """Camera composition, coordinate transforms, orientation, and drawing."""
 from numbers import Number
-from typing import List, Tuple, Union
+from typing import List, Literal, Tuple, Union
 
 import mpl_toolkits.mplot3d.art3d as art3d
 import numpy as np
@@ -9,20 +9,17 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Rectangle
 from scipy import sparse
 from scipy.spatial.transform import Rotation
-from stl import mesh
-from typing_extensions import Literal
 
 from .aperture import Aperture
 from .eye import Eye
-from .rays import Rays
 from .screen import Screen
 from .utils import stl_utils
-from .utils.my_stdio import my_tqdm
 
 VectorLike = Union[np.ndarray, List[Number], Tuple[Number], Number]
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
 MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[List[Number]], Tuple[Tuple[Number]]]
+
 
 class Camera:
     """A multi-pinhole camera combining eyes, apertures, and a screen.
@@ -42,9 +39,9 @@ class Camera:
                  apertures: Union[Aperture, List[Aperture]],
                  screen: Screen,
                  camera_position: Tuple[float, float, float],
-                 rotation_matrix: np.ndarray = None,
-                 camera_name: str = None):
-        """Camera
+                 rotation_matrix: np.ndarray | None = None,
+                 camera_name: str | None = None):
+        """Create a multi-pinhole camera.
 
         Parameters
         ----------
@@ -96,7 +93,7 @@ class Camera:
                        screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
                        subpixel_resolution: int = 1,
                        wavelength_range: Tuple[float, float] = (0.01, 0.1),
-                       camera_name: str = None):
+                       camera_name: str | None = None) -> "Camera":
         """Create a single-pinhole camera in its local reference pose.
 
         The screen center is the camera origin, the eye is centered at
@@ -108,6 +105,32 @@ class Camera:
         Parameters are forwarded to :class:`Eye` and :class:`Screen`; the
         aperture geometry remains explicit because it is specific to the
         physical camera being modeled.
+
+        Parameters
+        ----------
+        focal_length : float
+            Eye-to-screen distance in the model's length unit.
+        eye_size : float or array-like, shape (2,)
+            Pinhole diameter or two-axis size.
+        screen_size : float or array-like, shape (2,)
+            Physical detector size.
+        pixel_shape : tuple[int, int]
+            Detector pixel counts in image ``(u, v)`` order.
+        apertures : Aperture or list[Aperture]
+            Aperture geometry placed between the eye and scene.
+        eye_shape, screen_shape : str, optional
+            Analytic eye and detector shapes.
+        subpixel_resolution : int, default=1
+            Detector integration subdivisions along each pixel axis.
+        wavelength_range : tuple[float, float], optional
+            Wavelength interval carried by the eye metadata.
+        camera_name : str, optional
+            Human-readable camera name.
+
+        Returns
+        -------
+        Camera
+            Camera in the identity pose, ready to be positioned and oriented.
         """
         eye = Eye(position=(0.0, 0.0),
                   focal_length=focal_length,
@@ -177,55 +200,55 @@ class Camera:
                 self._screen == other._screen
 
     @property
-    def eye_type(self):
+    def eye_type(self) -> str:
         """str: Shared optical mode for all eyes (``"pinhole"`` or ``"concave_lens"``)."""
         return self._eye_type
 
     @property
-    def eyes(self):
+    def eyes(self) -> tuple[Eye, ...]:
         """tuple[Eye, ...]: Eyes mounted on the camera, exposed read-only."""
         return tuple(self._eyes)
 
     @property
-    def apertures(self):
+    def apertures(self) -> tuple[Aperture, ...]:
         """tuple[Aperture, ...]: Aperture geometries, exposed read-only."""
         return tuple(self._apertures)
 
     @property
-    def screen(self):
+    def screen(self) -> Screen:
         """Screen: Display surface receiving projected rays."""
         return self._screen
 
     @property
-    def camera_position(self):
+    def camera_position(self) -> np.ndarray:
         """numpy.ndarray: camera position in the world coordinate system."""
         return self._camera_position
 
     @property
-    def camera_x(self):
+    def camera_x(self) -> np.ndarray:
         """numpy.ndarray: camera right direction in the world coordinate system."""
         # X-direction of the camera coordinate system in the world coordinate system
         return self.rotation_matrix.T @ np.array([1, 0, 0]).ravel()
 
     @property
-    def camera_y(self):
+    def camera_y(self) -> np.ndarray:
         """numpy.ndarray: camera Y (image-down) direction in world coordinates."""
         # Y-direction of the camera coordinate system in the world coordinate system
         return self.rotation_matrix.T @ np.array([0, 1, 0]).ravel()
 
     @property
-    def camera_z(self):
+    def camera_z(self) -> np.ndarray:
         """numpy.ndarray: camera look direction in the world coordinate system."""
         # Z-direction of the camera coordinate system in the world coordinate system
         return self.rotation_matrix.T @ np.array([0, 0, 1]).ravel()
 
     @property
-    def rotation_matrix(self):
+    def rotation_matrix(self) -> np.ndarray:
         """numpy.ndarray: rotation matrix from the world coordinate system to the camera coordinate system."""
         return self._rotation_matrix
 
     @rotation_matrix.setter
-    def rotation_matrix(self, rotation_matrix):
+    def rotation_matrix(self, rotation_matrix: np.ndarray) -> None:
         """None: Override the world-to-camera rotation matrix.
 
         Parameters
@@ -237,17 +260,17 @@ class Camera:
         self.set_rotation_matrix(rotation_matrix)
 
     @property
-    def world(self):
+    def world(self) -> object | None:
         """World or None: Most recently registered world, if any."""
         return self._world
 
     @property
-    def worlds(self):
+    def worlds(self) -> tuple[object, ...]:
         """tuple[World, ...]: Worlds currently sharing this frozen camera."""
         return tuple(self._worlds)
 
     @property
-    def frozen(self):
+    def frozen(self) -> bool:
         """bool: Whether this camera and its optical geometry are immutable."""
         return self._frozen
 
@@ -258,8 +281,14 @@ class Camera:
                 "create a new Camera and use World.change_camera()"
             )
 
-    def freeze(self):
-        """Freeze this camera and all Eye, Screen, and Aperture geometry."""
+    def freeze(self) -> "Camera":
+        """Freeze this camera and all Eye, Screen, and Aperture geometry.
+
+        Returns
+        -------
+        Camera
+            This instance, for fluent-style chaining.
+        """
         if not self._frozen:
             for eye in self._eyes:
                 eye.freeze()
@@ -271,7 +300,7 @@ class Camera:
             self._frozen = True
         return self
 
-    def set_world(self, world_obj):
+    def set_world(self, world_obj: object | None) -> None:
         """None: Register the :class:`World` scene providing geometry and emitters.
 
         Parameters
@@ -288,12 +317,21 @@ class Camera:
         self._world = world_obj
         self.freeze()
 
-    def unset_world(self, world_obj):
-        """Detach one World while keeping the camera permanently frozen."""
+    def unset_world(self, world_obj: object) -> None:
+        """Detach one World while keeping the camera permanently frozen.
+
+        Parameters
+        ----------
+        world_obj : World
+            Owning world to detach by object identity.
+        """
         self._worlds = [world for world in self._worlds if world is not world_obj]
         self._world = self._worlds[-1] if self._worlds else None
 
-    def set_camera_position(self, camera_position):
+    def set_camera_position(
+            self,
+            camera_position: Vector3DLike
+    ) -> "Camera":
         """Set the camera origin to an absolute world-coordinate position.
 
         Parameters
@@ -305,6 +343,13 @@ class Camera:
         -------
         Camera
             The camera instance for fluent-style chaining.
+
+        Raises
+        ------
+        RuntimeError
+            If the camera is frozen by registration in a world.
+        ValueError
+            If ``camera_position`` is not a three-vector.
         """
         self._ensure_mutable()
         camera_position = np.array(camera_position, dtype=float, copy=True)
@@ -313,8 +358,26 @@ class Camera:
         self._camera_position = camera_position
         return self
 
-    def translate_world(self, offset):
-        """Translate the camera by an offset expressed in world coordinates."""
+    def translate_world(self, offset: Vector3DLike) -> "Camera":
+        """Translate the camera by an offset expressed in world coordinates.
+
+        Parameters
+        ----------
+        offset : array-like, shape (3,)
+            World-coordinate displacement.
+
+        Returns
+        -------
+        Camera
+            This camera with its origin translated.
+
+        Raises
+        ------
+        RuntimeError
+            If the camera is frozen.
+        ValueError
+            If ``offset`` is not a three-vector.
+        """
         self._ensure_mutable()
         offset = np.asarray(offset)
         if offset.shape != (3,):
@@ -322,11 +385,28 @@ class Camera:
         self._camera_position = self._camera_position + offset
         return self
 
-    def translate_camera(self, offset):
+    def translate_camera(self, offset: Vector3DLike) -> "Camera":
         """Translate the camera by an offset expressed in camera coordinates.
 
         This operation uses the current rotation, so it generally does not
         commute with changing the camera orientation.
+
+        Parameters
+        ----------
+        offset : array-like, shape (3,)
+            Displacement resolved along the camera axes.
+
+        Returns
+        -------
+        Camera
+            This camera with its origin translated.
+
+        Raises
+        ------
+        RuntimeError
+            If the camera is frozen.
+        ValueError
+            If ``offset`` is not a three-vector.
         """
         self._ensure_mutable()
         offset = np.asarray(offset)
@@ -335,7 +415,12 @@ class Camera:
         self._camera_position = self._camera_position + self.rotation_matrix.T @ offset
         return self
 
-    def set_rotation_euler(self, order, angle, degrees=True):
+    def set_rotation_euler(
+            self,
+            order: str,
+            angle: Vector3DLike,
+            degrees: bool = True
+    ) -> "Camera":
         """Set the absolute world-to-camera rotation using Euler angles.
 
         Parameters
@@ -356,8 +441,27 @@ class Camera:
         self._rotation_matrix = Rotation.from_euler(order, angle, degrees=degrees).as_matrix()
         return self
 
-    def set_rotation_matrix(self, rotation_matrix):
-        """Set the absolute world-to-camera rotation matrix."""
+    def set_rotation_matrix(self, rotation_matrix: MatrixLike) -> "Camera":
+        """Set the absolute world-to-camera rotation matrix.
+
+        Parameters
+        ----------
+        rotation_matrix : array-like, shape (3, 3)
+            Right-handed orthonormal world-to-camera rotation.
+
+        Returns
+        -------
+        Camera
+            This camera with the updated orientation.
+
+        Raises
+        ------
+        RuntimeError
+            If the camera is frozen.
+        ValueError
+            If the matrix has the wrong shape, is not orthonormal, or has a
+            determinant other than +1.
+        """
         self._ensure_mutable()
         matrix = np.array(rotation_matrix, dtype=float, copy=True)
         if matrix.shape != (3, 3):
@@ -369,7 +473,13 @@ class Camera:
         self._rotation_matrix = matrix
         return self
 
-    def set_orientation(self, look, *, right=None, down=None):
+    def set_orientation(
+            self,
+            look: Vector3DLike,
+            *,
+            right: Vector3DLike | None = None,
+            down: Vector3DLike | None = None
+    ) -> "Camera":
         """Set camera orientation from axes expressed in world coordinates.
 
         Parameters
@@ -380,6 +490,17 @@ class Camera:
             Approximate camera X direction (image-right) in world coordinates.
         down : Vector3DLike, optional
             Approximate camera Y direction (image-down) in world coordinates.
+
+        Returns
+        -------
+        Camera
+            This camera with a right-handed orthonormal orientation.
+
+        Raises
+        ------
+        ValueError
+            If exactly one lateral direction is not supplied, or if a
+            direction is invalid or parallel to ``look``.
 
         Notes
         -----
@@ -417,7 +538,13 @@ class Camera:
 
         return self.set_rotation_matrix(np.stack([x_axis, y_axis, z_axis]))
 
-    def set_orientation_from_points(self, look_point, *, right_point=None, down_point=None):
+    def set_orientation_from_points(
+            self,
+            look_point: Vector3DLike,
+            *,
+            right_point: Vector3DLike | None = None,
+            down_point: Vector3DLike | None = None
+    ) -> "Camera":
         """Set orientation from world-coordinate points viewed from the camera.
 
         Parameters
@@ -428,6 +555,17 @@ class Camera:
             A world-coordinate point in the camera's image-right direction.
         down_point : Vector3DLike, optional
             A world-coordinate point in the camera's image-down direction.
+
+        Returns
+        -------
+        Camera
+            This camera oriented toward the supplied points.
+
+        Raises
+        ------
+        ValueError
+            If exactly one lateral point is not supplied or the derived
+            directions cannot define an orientation.
 
         Notes
         -----
@@ -451,8 +589,8 @@ class Camera:
         down = None if down_point is None else direction_to(down_point, "down_point")
         return self.set_orientation(look, right=right, down=down)
 
-    def world2camera(self, points):
-        """transform points from the world coordinate system to the camera coordinate system
+    def world2camera(self, points: np.ndarray) -> np.ndarray:
+        """Transform points from world coordinates to camera coordinates.
 
         Parameters
         ----------
@@ -466,7 +604,7 @@ class Camera:
         """
         return (self.rotation_matrix @ (points - self.camera_position[None, :]).T).T
 
-    def add_eye(self, eye):
+    def add_eye(self, eye: Eye) -> None:
         """Add an eye to the camera.
 
         Parameters
@@ -486,7 +624,7 @@ class Camera:
             raise ValueError("eye_type of the new eye is different from the other eyes")
         self._eyes.append(eye)
 
-    def add_aperture(self, aperture):
+    def add_aperture(self, aperture: Aperture) -> None:
         """Add an aperture to the camera.
 
         Parameters
@@ -497,8 +635,14 @@ class Camera:
         self._ensure_mutable()
         self._apertures.append(aperture)
 
-    def calc_image_vec(self, eye_num, points, verbose: int = 0, check_visibility: bool = True,
-                       etendue_per_subpixel=None):
+    def calc_image_vec(
+            self,
+            eye_num: int,
+            points: np.ndarray,
+            verbose: int = 0,
+            check_visibility: bool = True,
+            etendue_per_subpixel: np.ndarray | None = None
+    ) -> sparse.csr_matrix:
         """sparse.csr_matrix: Assemble ray hits into a sparse image vector.
 
         Parameters
@@ -542,8 +686,16 @@ class Camera:
         )
         return mat
 
-    def draw_optical_system(self, ax=None, show_focal_length=True, show_aperture=True, show_screen=True,
-                            X_lim=None, Y_lim=None, Z_lim=None):
+    def draw_optical_system(
+            self,
+            ax: plt.Axes | None = None,
+            show_focal_length: bool = True,
+            show_aperture: bool = True,
+            show_screen: bool = True,
+            X_lim: tuple[float, float] | None = None,
+            Y_lim: tuple[float, float] | None = None,
+            Z_lim: tuple[float, float] | None = None
+    ) -> plt.Axes:
         """matplotlib.axes.Axes: Visualise optical elements in a 3D Matplotlib scene.
 
         Parameters
@@ -692,8 +844,11 @@ class Camera:
 
         return ax
 
-
-    def draw_camera_orientation_plotly(self, fig=None, **kwargs):
+    def draw_camera_orientation_plotly(
+            self,
+            fig: go.Figure | None = None,
+            **kwargs: object
+    ) -> go.Figure:
         """go.Figure: Render camera axes within Plotly for interactive viewing.
 
         Parameters
@@ -713,7 +868,10 @@ class Camera:
                                    **kwargs)
         return fig
 
-    def draw_camera_orientation(self, ax=None):
+    def draw_camera_orientation(
+            self,
+            ax: plt.Axes | None = None
+    ) -> plt.Axes:
         """matplotlib.axes.Axes: Plot camera axes relative to the world frame.
 
         Parameters
@@ -760,7 +918,7 @@ class Camera:
 
         return ax
 
-    def print_settings(self):
+    def print_settings(self) -> None:
         """None: Emit a formatted summary of camera, eye, screen, and aperture settings."""
         print("Camera settings:")
         print(f"Camera position: {self._camera_position}")

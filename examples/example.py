@@ -1,7 +1,7 @@
-import numpy as np
 import plotly.graph_objects as go
 from matplotlib import pyplot as plt
-from multi_pinhole import *
+
+from multi_pinhole import Aperture, Camera, Voxel, World
 
 if __name__ == "__main__":
     # Create objects

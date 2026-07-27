@@ -8,12 +8,18 @@ truncated basis set.
 """
 
 import itertools
+from collections.abc import Callable
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from scipy.special import jn, jn_zeros
 
 
-def torus_fourier_bessel(k: int, m: int, n: int):
+def torus_fourier_bessel(
+        k: int,
+        m: int,
+        n: int
+) -> Callable[[ArrayLike, ArrayLike, ArrayLike], NDArray[np.complex128]]:
     """Fourier-Bessel functions f_{n, m, k}(r, theta, phi) in the torus coordinate system.
 
     Fourier-Bessel functions are defined as
@@ -39,7 +45,11 @@ def torus_fourier_bessel(k: int, m: int, n: int):
     """
     lmd_nk = jn_zeros(m, k)[-1]
 
-    def fb_kmn(r, theta, phi):
+    def fb_kmn(
+            r: ArrayLike,
+            theta: ArrayLike,
+            phi: ArrayLike
+    ) -> NDArray[np.complex128]:
         """Fourier-Bessel function f_{n, m, k}(r, theta, phi).
 
         Parameters
@@ -61,9 +71,12 @@ def torus_fourier_bessel(k: int, m: int, n: int):
     return fb_kmn
 
 
-def basis_params(k_range: list, m_range: list, n_range: list):
-    """
-    make a list of basis parameters
+def basis_params(
+        k_range: list[int] | int,
+        m_range: list[int] | int,
+        n_range: list[int] | int
+) -> list[tuple[int, int, int]]:
+    """Build a list of Fourier-Bessel basis parameters.
 
     Parameters
     ----------
@@ -125,4 +138,3 @@ if __name__ == '__main__':
     fig.show()
 
     params = basis_params(2, 3, 4)
-

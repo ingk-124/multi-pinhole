@@ -6,13 +6,17 @@ site: pass a boolean ``show``/``disable`` flag (typically derived from a
 ``verbose`` argument) to toggle output on or off.
 """
 
-import sys
+from collections.abc import Iterable, Iterator
+from typing import Any, TypeVar
 
 from tqdm import trange, tqdm
 from tqdm.contrib import tzip
 
 NCOLS = 80
-def my_print(s, show=True):
+T = TypeVar("T")
+
+
+def my_print(s: object, show: bool = True) -> None:
     """Print ``s`` when ``show`` is true; otherwise do nothing.
 
     Parameters
@@ -26,7 +30,7 @@ def my_print(s, show=True):
         print(s)
 
 
-def my_range(*args, **kwargs):
+def my_range(*args: Any, **kwargs: Any) -> tqdm:
     """Return a ``tqdm.trange`` progress-bar iterator with fixed formatting.
 
     Parameters
@@ -50,7 +54,11 @@ def my_range(*args, **kwargs):
                   position=0)
 
 
-def my_tqdm(iterable, *args, **kwargs):
+def my_tqdm(
+        iterable: Iterable[T],
+        *args: Any,
+        **kwargs: Any
+) -> tqdm:
     """Wrap ``iterable`` with a ``tqdm`` progress bar using fixed formatting.
 
     Parameters
@@ -74,7 +82,10 @@ def my_tqdm(iterable, *args, **kwargs):
                 position=0)
 
 
-def my_zip(*iterables, **kwargs):
+def my_zip(
+        *iterables: Iterable[Any],
+        **kwargs: Any
+) -> Iterator[tuple[Any, ...]]:
     """Zip ``iterables`` together while displaying a ``tqdm`` progress bar.
 
     Parameters

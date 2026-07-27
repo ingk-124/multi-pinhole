@@ -7,7 +7,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Rays:
-    """Rays class
+    """Store a bundle of projected rays.
 
     Parameters
     ----------
@@ -28,16 +28,16 @@ class Rays:
     front_and_visible: np.ndarray
 
     @property
-    def n(self):
+    def n(self) -> int:
         """int: Total number of sampled rays contained in this instance."""
         return self.Z.size
 
     @property
-    def n_visible(self):
+    def n_visible(self) -> int:
         """int: Count of rays that are both in front of the eye and marked visible."""
         return self.front_and_visible.nonzero()[0].size
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: object) -> "Rays":
         """Rays: Return the subset of rays selected by ``key``.
 
         Parameters
@@ -56,6 +56,6 @@ class Rays:
                     zoom_rate=self.zoom_rate[key],
                     front_and_visible=self.front_and_visible[key])
 
-    def __len__(self):
+    def __len__(self) -> int:
         """int: Total number of rays, same as :attr:`n`."""
         return self.n

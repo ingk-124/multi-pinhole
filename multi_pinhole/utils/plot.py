@@ -6,6 +6,8 @@ as a nested list) into a grid of volume-rendering subplots for side-by-side
 comparison.
 """
 
+from typing import Any
+
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -46,8 +48,18 @@ def get_row_col(val_list: list[list[np.ndarray]] | list[np.ndarray] | np.ndarray
     return rows, cols, val_list
 
 
-def volume_rendering(f_val, grid, fig=None, row=None, col=None,
-                     isomin=None, isomax=None, opacity=0.8, surface_count=7, **volumekw):
+def volume_rendering(
+        f_val: np.ndarray,
+        grid: np.ndarray,
+        fig: go.Figure | None = None,
+        row: int | None = None,
+        col: int | None = None,
+        isomin: float | None = None,
+        isomax: float | None = None,
+        opacity: float = 0.8,
+        surface_count: int = 7,
+        **volumekw: Any
+) -> go.Figure:
     """Add a Plotly 3D volume-rendering trace for a scalar field on a grid.
 
     Parameters
@@ -104,8 +116,16 @@ def volume_rendering(f_val, grid, fig=None, row=None, col=None,
     return fig
 
 
-def multi_volume_rendering(val_list: list[np.ndarray] | list[list[np.ndarray]], grid: np.ndarray,
-                           fig=None, isomin=10, isomax=None, opacity=0.8, surface_count=7, **volumekw):
+def multi_volume_rendering(
+        val_list: list[np.ndarray] | list[list[np.ndarray]],
+        grid: np.ndarray,
+        fig: go.Figure | None = None,
+        isomin: float = 10,
+        isomax: float | None = None,
+        opacity: float = 0.8,
+        surface_count: int = 7,
+        **volumekw: Any
+) -> go.Figure:
     """Render a grid of Plotly 3D volume subplots, one per field in ``val_list``.
 
     Parameters

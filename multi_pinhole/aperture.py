@@ -1,15 +1,15 @@
 """Aperture geometry and STL freeze handling."""
 from numbers import Number
-from typing import List, Tuple, Union
+from typing import List, Literal, Tuple, Union
 
 import numpy as np
 from stl import mesh
-from typing_extensions import Literal
 
 from .utils import stl_utils
 
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
+
 
 class Aperture:
     """The physical opening that limits light reaching an :class:`Eye`.
@@ -22,13 +22,13 @@ class Aperture:
     """
 
     def __init__(self,
-                 shape: Literal["circle", "ellipse", "rectangle"] = None,
-                 size: Union[Number, Vector2DLike] = None,
-                 position: Vector3DLike = None,
-                 direction: Vector3DLike = None,
-                 stl_model: mesh.Mesh = None,
+                 shape: Literal["circle", "ellipse", "rectangle"] | None = None,
+                 size: Union[Number, Vector2DLike] | None = None,
+                 position: Vector3DLike | None = None,
+                 direction: Vector3DLike | None = None,
+                 stl_model: mesh.Mesh | None = None,
                  **stl_args):
-        """Create an aperture object
+        """Create an aperture object.
 
         Parameters
         ----------
@@ -62,7 +62,6 @@ class Aperture:
                 self._shape, self._size = stl_utils.shape_check(shape, size)
                 self.set_model(**stl_args)
 
-
     def __eq__(self, other):
         """bool: Compare aperture geometry, ignoring linked STL mesh objects."""
         if isinstance(other, Aperture):
@@ -75,8 +74,12 @@ class Aperture:
         else:
             return False
 
-    def set_model(self, resolution: int = 20, max_size: Union[Number, Vector2DLike] = None):
-        """Set stl model
+    def set_model(
+            self,
+            resolution: int = 20,
+            max_size: Union[Number, Vector2DLike] | None = None
+    ) -> "Aperture":
+        """Set the STL model.
 
         Parameters
         ----------
@@ -100,7 +103,7 @@ class Aperture:
         return self
 
     @property
-    def frozen(self):
+    def frozen(self) -> bool:
         """bool: Whether this aperture's geometry is immutable."""
         return self._frozen
 
@@ -108,7 +111,7 @@ class Aperture:
         if self._frozen:
             raise RuntimeError("Aperture geometry is frozen because its Camera is registered in a World")
 
-    def freeze(self):
+    def freeze(self) -> "Aperture":
         """Freeze analytic geometry and the underlying STL data buffer."""
         if not self._frozen:
             self._position.setflags(write=False)
@@ -121,31 +124,31 @@ class Aperture:
         return self
 
     @property
-    def position(self):
+    def position(self) -> np.ndarray:
         """np.ndarray: Aperture center in camera coordinates as ``(x, y, z)``."""
         return self._position
 
     @property
-    def direction(self):
+    def direction(self) -> np.ndarray:
         """np.ndarray: Unit vector indicating aperture normal in camera space."""
         return self._direction
 
     @property
-    def shape(self):
+    def shape(self) -> str:
         """str: Shape keyword such as ``"circle"``, ``"ellipse"``, ``"rectangle"`` or ``"stl"``."""
         return self._shape
 
     @property
-    def size(self):
+    def size(self) -> np.ndarray | None:
         """np.ndarray or None: Characteristic dimensions of the aperture opening in millimeters."""
         return self._size
 
     @property
-    def stl_model(self):
+    def stl_model(self) -> mesh.Mesh | None:
         """mesh.Mesh or None: Triangulated aperture surface when generated from STL."""
         return self._stl_model
 
-    def print_info(self):
+    def print_info(self) -> None:
         """None: Print the aperture's spatial configuration and dimensions."""
         print("position:", self.position)
         print("shape:", self.shape)

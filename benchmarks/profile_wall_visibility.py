@@ -162,7 +162,13 @@ def run(scene="toy", voxel_shape=(24, 16, 12), mst_spacing=None, batch_points=81
     inside_function = world._inside_function
     inside_kwargs = dict(world._inside_kwargs)
     if inside_function is None:
-        inside_function = lambda x, y, z: np.ones_like(x, dtype=bool)
+        def inside_function(
+                x: np.ndarray,
+                y: np.ndarray,
+                z: np.ndarray
+        ) -> np.ndarray:
+            del y, z
+            return np.ones_like(x, dtype=bool)
 
     _, inside_metrics = measure(
         lambda: world.set_inside_vertices(inside_function, **inside_kwargs),

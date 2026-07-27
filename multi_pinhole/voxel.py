@@ -1,31 +1,35 @@
 """Cartesian voxel grids, indexing, subdivision, and interpolation."""
 
+from collections.abc import Sequence
 from functools import lru_cache
 from itertools import chain
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 from numba import njit
+from numpy.typing import ArrayLike
 from scipy import sparse
 from scipy.spatial.transform import Rotation
 
 from .coordinates import (
     COORDINATE_PARAMETER_KEYS,
     COORDINATE_TYPES,
-    cartesian_coordinates,
     convert_from_cartesian,
     convert_to_cartesian,
     coordinate_transform,
-    cylindrical_coordinates,
-    poloidal_cartesian_coordinates,
-    poloidal_cartesian_inverse_coordinates,
-    spherical_coordinates,
-    torus_coordinates,
-    torus_inverse_coordinates,
 )
-from .utils.my_stdio import *
+from .utils.my_stdio import my_print, my_range, my_tqdm, my_zip
 
-def interpolate_matrix_from_vertices(res=None):
+if TYPE_CHECKING:
+    from .interpolation import VoxelCenterInterpolator
+
+VoxelSelection = int | slice | list[int] | np.ndarray | None
+VoxelResolution = int | tuple[int, int, int] | np.ndarray | None
+
+
+def interpolate_matrix_from_vertices(
+        res: VoxelResolution = None
+) -> np.ndarray | sparse.csr_matrix:
     """Build an interpolation matrix from voxel vertex contributions.
 
     Parameters
@@ -150,9 +154,9 @@ def _uniform_center_interpolator_csr(points, center_starts, center_steps,
                     output += 1
     return data, indices, indptr
 
+
 class Voxel:
-    """
-    Voxel class
+    """Represent a Cartesian voxel grid.
 
     Attributes
     ----------
@@ -214,13 +218,13 @@ class Voxel:
     """
 
     def __init__(self,
-                 x_axis: np.ndarray = None,
-                 y_axis: np.ndarray = None,
-                 z_axis: np.ndarray = None,
-                 coordinate_type: str = None,
-                 rotation: Rotation | np.ndarray = None,
-                 coordinate_parameters: dict = None,
-                 sub_voxel_resolution: int | tuple[int, int, int] = None):
+                 x_axis: np.ndarray | None = None,
+                 y_axis: np.ndarray | None = None,
+                 z_axis: np.ndarray | None = None,
+                 coordinate_type: str | None = None,
+                 rotation: Rotation | np.ndarray | None = None,
+                 coordinate_parameters: dict[str, float] | None = None,
+                 sub_voxel_resolution: int | tuple[int, int, int] | None = None):
         """
         Initialize a voxel object.
 
@@ -314,9 +318,9 @@ class Voxel:
             return False
 
     @property
-    def ranges(self):
-        """
-        get axis ranges
+    def ranges(self) -> tuple[tuple[float, float], ...]:
+        """Return axis ranges.
+
         Returns
         -------
         ((float, float), (float, float), (float, float))
@@ -324,9 +328,9 @@ class Voxel:
         return self._ranges
 
     @property
-    def N_grid(self):
-        """
-        get vertex number
+    def N_grid(self) -> int:
+        """Return the number of grid vertices.
+
         Returns
         -------
         int
@@ -334,9 +338,9 @@ class Voxel:
         return self._N_grid
 
     @property
-    def grid_shape(self):
-        """
-        get vertex shape
+    def grid_shape(self) -> tuple[int, int, int]:
+        """Return the grid-vertex shape.
+
         Returns
         -------
         (int, int, int)
@@ -344,9 +348,9 @@ class Voxel:
         return self._grid_shape
 
     @property
-    def grid(self):
-        """
-        get vertex points
+    def grid(self) -> np.ndarray:
+        """Return all grid-vertex points.
+
         Returns
         -------
         np.ndarray (N_grid, 3)
@@ -355,9 +359,9 @@ class Voxel:
             [axis[_] for axis, _ in zip(self.axes, np.unravel_index(np.arange(self.N_grid), self.grid_shape))], axis=-1)
 
     @property
-    def N_voxel(self):
-        """
-        get voxel number
+    def N_voxel(self) -> int:
+        """Return the number of voxels.
+
         Returns
         -------
         int
@@ -365,9 +369,9 @@ class Voxel:
         return self._N_voxel
 
     @property
-    def voxel_shape(self):
-        """
-        get voxel shape
+    def voxel_shape(self) -> tuple[int, int, int]:
+        """Return the voxel-grid shape.
+
         Returns
         -------
         (int, int, int)
@@ -375,9 +379,9 @@ class Voxel:
         return self._voxel_shape
 
     @property
-    def vertices_indices(self):
-        """
-        get vertices indices
+    def vertices_indices(self) -> np.ndarray:
+        """Return the eight vertex indices for every voxel.
+
         Returns
         -------
         np.ndarray (N_voxel, 8)
@@ -385,17 +389,15 @@ class Voxel:
         return self._vertices_indices
 
     @property
-    def vertices_indices_3d(self):
-        """
-        get vertices indices in (N_voxel, 8, 3) form
-        """
+    def vertices_indices_3d(self) -> np.ndarray:
+        """Return vertex indices with shape ``(N_voxel, 8, 3)``."""
         ii, jj, kk = np.unravel_index(self._vertices_indices, self.grid_shape)  # each shape is (N_voxel, 8)
         return np.stack([ii, jj, kk], axis=-1)  # shape is (N_voxel, 8, 3)
 
     @property
-    def vertices(self):
-        """
-        get vertices
+    def vertices(self) -> np.ndarray:
+        """Return vertex coordinates for every voxel.
+
         Returns
         -------
         np.ndarray (N_voxel, 8, 3)
@@ -404,9 +406,8 @@ class Voxel:
         return np.stack([self.x_axis[ii], self.y_axis[jj], self.z_axis[kk]], axis=-1)  # shape is (N_voxel, 8, 3)
 
     @property
-    def gravity_center(self):
-        """
-        get gravity center
+    def gravity_center(self) -> np.ndarray:
+        """Return every voxel gravity center.
 
         Returns
         -------
@@ -416,9 +417,11 @@ class Voxel:
         xxx, yyy, zzz = np.meshgrid(self.cx_axis, self.cy_axis, self.cz_axis, indexing="ij")
         return np.stack([xxx.ravel(), yyy.ravel(), zzz.ravel()], axis=1)
 
-    def get_gravity_center(self, n=None):
-        """
-        get gravity center
+    def get_gravity_center(
+            self,
+            n: VoxelSelection = None
+    ) -> np.ndarray:
+        """Return selected voxel gravity centers.
 
         Parameters
         ----------
@@ -436,7 +439,10 @@ class Voxel:
         cz = self.cz_axis[indices[:, 2]]
         return np.stack([cx, cy, cz], axis=1)
 
-    def get_edge_lengths(self, n=None):
+    def get_edge_lengths(
+            self,
+            n: VoxelSelection = None
+    ) -> np.ndarray:
         """Return selected voxel edge lengths without materializing full grids.
 
         Parameters
@@ -458,7 +464,11 @@ class Voxel:
             self.dz_axis[indices[:, 2]],
         ))
 
-    def get_sub_voxel_centers(self, n=None, res=None):
+    def get_sub_voxel_centers(
+            self,
+            n: VoxelSelection = None,
+            res: VoxelResolution = None
+    ) -> np.ndarray:
         """Return sub-voxel center points without constructing Voxel objects.
 
         Parameters
@@ -620,9 +630,8 @@ class Voxel:
         ).tocsr()
 
     @property
-    def volume(self):
-        """
-        get voxel volume
+    def volume(self) -> np.ndarray:
+        """Return every voxel volume.
 
         Returns
         -------
@@ -631,24 +640,26 @@ class Voxel:
         return (self.dx_axis[:, None, None] * self.dy_axis[None, :, None] * self.dz_axis[None, None, :]).ravel()
 
     @property
-    def coordinate_type(self):
+    def coordinate_type(self) -> str:
         """str: Configured normalized-coordinate system (see :func:`set_coordinate`)."""
         return self._coordinate_type
 
     @property
-    def available_coordinate_types(self):
+    def available_coordinate_types(self) -> tuple[str, ...]:
         """tuple[str, ...]: Coordinate conventions supported by conversion APIs."""
         return COORDINATE_TYPES
 
     @property
-    def res(self):
+    def res(self) -> tuple[int, int, int]:
         """tuple[int, int, int]: Current sub-voxel resolution ``(x_res, y_res, z_res)``."""
         return self._res
 
     @res.setter
-    def res(self, res: int | tuple[int, int, int] | np.ndarray = None):
-        """
-        set resolution of sub voxels
+    def res(
+            self,
+            res: int | tuple[int, int, int] | np.ndarray | None = None
+    ) -> None:
+        """Set the sub-voxel resolution.
 
         Parameters
         ----------
@@ -668,10 +679,11 @@ class Voxel:
                 self._res = _res
                 self._sub_voxel_matrix = interpolate_matrix_from_vertices(self._res)
 
-    def set_coordinate(self, coordinate_type: str = None, rotation: Rotation | np.ndarray = None,
-                       show: bool = False, **coordinate_parameters):
-        """
-        set coordinate type and parameters
+    def set_coordinate(self, coordinate_type: str | None = None,
+                       rotation: Rotation | np.ndarray | None = None,
+                       show: bool = False,
+                       **coordinate_parameters: float) -> "Voxel":
+        """Set the coordinate type and parameters.
 
         Parameters
         ----------
@@ -743,11 +755,14 @@ class Voxel:
         return self
 
     @property
-    def coordinate_parameters(self):
+    def coordinate_parameters(self) -> dict[str, float]:
         """dict: Resolved parameters for the configured :attr:`coordinate_type` (see :func:`set_coordinate`)."""
         return self._coordinate_parameters
 
-    def normalized_coordinates(self, points=None):
+    def normalized_coordinates(
+            self,
+            points: ArrayLike | None = None
+    ) -> np.ndarray:
         """
 
         Convert Cartesian points to the configured normalized coordinate system.
@@ -783,9 +798,15 @@ class Voxel:
             raise ValueError("rotation must be a Rotation or an array with shape (3, 3)")
         return matrix
 
-    def to_coordinates(self, coordinate_type: str, points="centers", *,
-                       normalized: bool = False, rotation=None,
-                       **coordinate_parameters):
+    def to_coordinates(
+            self,
+            coordinate_type: str,
+            points: str | ArrayLike = "centers",
+            *,
+            normalized: bool = False,
+            rotation: Rotation | ArrayLike | None = None,
+            **coordinate_parameters: float
+    ) -> np.ndarray:
         """Convert Cartesian points to an arbitrary coordinate convention.
 
         This query does not modify the configured :attr:`coordinate_type`.
@@ -842,37 +863,62 @@ class Voxel:
 
     @overload
     def from_coordinates(self, coordinate_type: Literal["cartesian"], *,
-                         x: Any, y: Any, z: Any, normalized: bool = False,
-                         rotation=None, width: float = ..., depth: float = ...,
-                         height: float = ...) -> np.ndarray: ...
+                         x: ArrayLike, y: ArrayLike, z: ArrayLike,
+                         normalized: bool = False,
+                         rotation: Rotation | ArrayLike | None = None,
+                         width: float = ..., depth: float = ...,
+                         height: float = ...) -> np.ndarray:
+        """Convert Cartesian coordinate components to world Cartesian points."""
+        ...
 
     @overload
     def from_coordinates(self, coordinate_type: Literal["cylindrical"], *,
-                         R: Any, phi: Any, Z: Any, normalized: bool = False,
-                         rotation=None, radius: float = ...,
-                         height: float = ...) -> np.ndarray: ...
+                         R: ArrayLike, phi: ArrayLike, Z: ArrayLike,
+                         normalized: bool = False,
+                         rotation: Rotation | ArrayLike | None = None,
+                         radius: float = ...,
+                         height: float = ...) -> np.ndarray:
+        """Convert cylindrical coordinate components to Cartesian points."""
+        ...
 
     @overload
     def from_coordinates(self, coordinate_type: Literal["torus", "torus_inverse"], *,
-                         r: Any, theta: Any, phi: Any, major_radius: float,
-                         normalized: bool = False, rotation=None,
-                         minor_radius: float = ...) -> np.ndarray: ...
+                         r: ArrayLike, theta: ArrayLike, phi: ArrayLike,
+                         major_radius: float,
+                         normalized: bool = False,
+                         rotation: Rotation | ArrayLike | None = None,
+                         minor_radius: float = ...) -> np.ndarray:
+        """Convert toroidal coordinate components to Cartesian points."""
+        ...
 
     @overload
     def from_coordinates(self, coordinate_type: Literal[
-            "poloidal_cartesian", "poloidal_cartesian_inverse"], *,
-                         x: Any, y: Any, phi: Any, major_radius: float,
-                         normalized: bool = False, rotation=None,
-                         minor_radius: float = ...) -> np.ndarray: ...
+        "poloidal_cartesian", "poloidal_cartesian_inverse"], *,
+                         x: ArrayLike, y: ArrayLike, phi: ArrayLike,
+                         major_radius: float,
+                         normalized: bool = False,
+                         rotation: Rotation | ArrayLike | None = None,
+                         minor_radius: float = ...) -> np.ndarray:
+        """Convert poloidal-Cartesian components to Cartesian points."""
+        ...
 
     @overload
     def from_coordinates(self, coordinate_type: Literal["spherical"], *,
-                         r: Any, theta: Any, phi: Any,
-                         normalized: bool = False, rotation=None,
-                         radius: float = ...) -> np.ndarray: ...
+                         r: ArrayLike, theta: ArrayLike, phi: ArrayLike,
+                         normalized: bool = False,
+                         rotation: Rotation | ArrayLike | None = None,
+                         radius: float = ...) -> np.ndarray:
+        """Convert spherical coordinate components to Cartesian points."""
+        ...
 
-    def from_coordinates(self, coordinate_type: str, *, normalized: bool = False,
-                         rotation=None, **components):
+    def from_coordinates(
+            self,
+            coordinate_type: str,
+            *,
+            normalized: bool = False,
+            rotation: Rotation | ArrayLike | None = None,
+            **components: ArrayLike
+    ) -> np.ndarray:
         """Convert broadcastable keyword coordinate components to Cartesian.
 
         The returned array has shape ``broadcast_shape + (3,)``. The inverse
@@ -940,7 +986,11 @@ class Voxel:
         matrix = self._coordinate_rotation_matrix(rotation)
         return local_points @ matrix
 
-    def center_interpolator(self, values, **interpolator_kwargs):
+    def center_interpolator(
+            self,
+            values: ArrayLike,
+            **interpolator_kwargs: object
+    ) -> "VoxelCenterInterpolator":
         """Build an interpolator for values sampled at voxel gravity centers.
 
         Parameters
@@ -963,9 +1013,9 @@ class Voxel:
         return VoxelCenterInterpolator(self, values, **interpolator_kwargs)
 
     @property
-    def axes(self):
-        """
-        get axes [x_axis, y_axis, z_axis]
+    def axes(self) -> list[np.ndarray]:
+        """Return ``[x_axis, y_axis, z_axis]``.
+
         Returns
         -------
         list[np.ndarray, np.ndarray, np.ndarray]
@@ -973,7 +1023,7 @@ class Voxel:
         return self._axes
 
     @axes.setter
-    def axes(self, axes):
+    def axes(self, axes: Sequence[ArrayLike]) -> None:
         """Set ``[x_axis, y_axis, z_axis]``, converting each entry to ``np.ndarray``.
 
         Note
@@ -984,24 +1034,24 @@ class Voxel:
         self._axes = [np.array(axis) for axis in axes]
 
     @property
-    def x_axis(self):
+    def x_axis(self) -> np.ndarray:
         """np.ndarray: Grid coordinates along x, shape ``(N_x + 1,)``."""
         return self.axes[0]
 
     @property
-    def y_axis(self):
+    def y_axis(self) -> np.ndarray:
         """np.ndarray: Grid coordinates along y, shape ``(N_y + 1,)``."""
         return self.axes[1]
 
     @property
-    def z_axis(self):
+    def z_axis(self) -> np.ndarray:
         """np.ndarray: Grid coordinates along z, shape ``(N_z + 1,)``."""
         return self.axes[2]
 
     @property
-    def vx(self):
-        """
-        get x coordinates of vertices
+    def vx(self) -> np.ndarray:
+        """Return vertex x coordinates.
+
         Returns
         -------
         np.ndarray (N_voxel, 8)
@@ -1009,9 +1059,9 @@ class Voxel:
         return self.vertices[..., 0]
 
     @property
-    def vy(self):
-        """
-        get y coordinates of vertices
+    def vy(self) -> np.ndarray:
+        """Return vertex y coordinates.
+
         Returns
         -------
         np.ndarray (N_voxel, 8)
@@ -1019,9 +1069,9 @@ class Voxel:
         return self.vertices[..., 1]
 
     @property
-    def vz(self):
-        """
-        get z coordinates of vertices
+    def vz(self) -> np.ndarray:
+        """Return vertex z coordinates.
+
         Returns
         -------
         np.ndarray (N_voxel, 8)
@@ -1029,9 +1079,9 @@ class Voxel:
         return self.vertices[..., 2]
 
     @property
-    def grid_3d(self):
-        """
-        get grid points as 3d array
+    def grid_3d(self) -> np.ndarray:
+        """Return grid points as a 3D array.
+
         Returns
         -------
         np.ndarray (3, N_x + 1, N_y + 1, N_z + 1)
@@ -1039,9 +1089,9 @@ class Voxel:
         return self._grid.T.reshape((3, *self.grid_shape))
 
     @property
-    def voxel_indices_3d(self):
-        """
-        get voxel indices as 3d array
+    def voxel_indices_3d(self) -> np.ndarray:
+        """Return voxel indices as a 3D array.
+
         Returns
         -------
         np.ndarray (N_x, N_y, N_z)
@@ -1049,9 +1099,9 @@ class Voxel:
         return self._voxel_indices.T.reshape((3, *self.voxel_shape))
 
     @property
-    def shape(self):
-        """
-        alias of voxel_shape
+    def shape(self) -> tuple[int, int, int]:
+        """Return the voxel shape.
+
         Returns
         -------
         (int, int, int)
@@ -1059,9 +1109,9 @@ class Voxel:
         return self.voxel_shape
 
     @property
-    def N(self):
-        """
-        alias of N_voxel
+    def N(self) -> int:
+        """Return the number of voxels.
+
         Returns
         -------
         int
@@ -1069,17 +1119,19 @@ class Voxel:
         return self.N_voxel
 
     @property
-    def voxel2vertices(self):
-        """
-        get mapping from voxel index to vertex indices
+    def voxel2vertices(self) -> sparse.csr_matrix | None:
+        """Return the voxel-to-vertex interpolation mapping.
 
         Returns
         -------
-        np.ndarray (N_voxel, 8)
+        scipy.sparse.csr_matrix or None
+            Matrix with shape ``(N_grid, N_voxel)`` that maps voxel-center
+            values to grid vertices. ``None`` until
+            :meth:`set_voxel2vertices` has been called.
         """
         return self._voxel2vertices
 
-    def set_world(self, world_obj):
+    def set_world(self, world_obj: object) -> None:
         """Register the owning :class:`~multi_pinhole.world.World` instance.
 
         Parameters
@@ -1092,29 +1144,39 @@ class Voxel:
         self._world = world_obj
 
     @staticmethod
-    def uniform_voxel(ranges, shape, **kwargs):
-        """
-        create Voxel with uniform axes
+    def uniform_voxel(
+            ranges: ArrayLike,
+            shape: tuple[int, int, int] | list[int],
+            **kwargs: Any
+    ) -> "Voxel":
+        """Create a voxel grid with uniformly spaced axis boundaries.
 
         Parameters
         ----------
-        ranges : ((float, float), (float, float), (float, float))
-            axis ranges
-        shape : (int, int, int)
-            voxel shape
-        kwargs : dict
-            other arguments of Voxel
+        ranges : array-like, shape (3, 2)
+            Inclusive lower and upper grid boundaries for the x, y, and z
+            axes. All axes must use the same physical unit.
+        shape : tuple[int, int, int] or list[int]
+            Number of voxels along the x, y, and z axes.
+        **kwargs
+            Additional keyword arguments forwarded to :class:`Voxel`.
 
         Returns
         -------
-        voxel : Voxel
+        Voxel
+            Uniform voxel grid with ``shape`` cells.
         """
         axes = [np.round(np.linspace(start, end, num + 1), 6) for (start, end), num in zip(ranges, shape)]
         voxel = Voxel(*axes, **kwargs)
         return voxel
 
     @classmethod
-    def uniform_voxel_from_centers(cls, ranges, shape, **kwargs):
+    def uniform_voxel_from_centers(
+            cls,
+            ranges: ArrayLike,
+            shape: tuple[int, int, int] | list[int],
+            **kwargs: Any
+    ) -> "Voxel":
         """Create a uniform voxel grid from gravity-center ranges.
 
         This is the center-based counterpart of :meth:`uniform_voxel`.
@@ -1162,19 +1224,14 @@ class Voxel:
             ))
         return cls(*axes, **kwargs)
 
-    def update(self):
-        """
-        Update attributes.
-            - Avoids allocating the full `grid` / `vertices` unless explicitly requested.
-            - Computes voxel centers, cell sizes and volumes in a vectorized way.
-            - Builds `vertices_indices` with a fully vectorized formula.
+    def update(self) -> None:
+        """Update derived grid and voxel attributes.
 
-        Parameters
+        Notes
         ----------
-        build_grid : bool, default False
-            If True, materialize `self._grid` ((N_grid,3)). Otherwise keep it None.
-        build_vertices : bool, default False
-            If True, materialize `self._vertices` ((N_voxel,8,3)). Otherwise keep it None.
+        This avoids materializing the full grid and vertex arrays until they
+        are requested, computes centers and cell sizes vectorially, and builds
+        vertex indices without Python loops.
         """
 
         # Basic shapes
@@ -1220,7 +1277,10 @@ class Voxel:
 
         return
 
-    def get_voxel_position(self, n: int | np.ndarray):
+    def get_voxel_position(
+            self,
+            n: int | np.ndarray
+    ) -> np.ndarray:
         """
         Get voxel position (i, j, k) from voxel number n.
 
@@ -1237,8 +1297,8 @@ class Voxel:
         n = self._type_check_n_voxel(n)
         return self._voxel_indices[n]  # (n_voxel, 3)
 
-    def get_voxel_number(self, i, j, k):
-        """
+    def get_voxel_number(self, i: int, j: int, k: int) -> int:
+        """Return a voxel number from three grid indices.
 
         Parameters
         ----------
@@ -1261,28 +1321,28 @@ class Voxel:
         return n
 
     @property
-    def dx_axis(self):
+    def dx_axis(self) -> np.ndarray:
         """1D cell size along x (length N_x)."""
         if self.axes is None or len(self.axes[0]) == 0:
             return np.array([])
         return np.diff(self.axes[0])
 
     @property
-    def dy_axis(self):
+    def dy_axis(self) -> np.ndarray:
         """1D cell size along y (length N_y)."""
         if self.axes is None or len(self.axes[1]) == 0:
             return np.array([])
         return np.diff(self.axes[1])
 
     @property
-    def dz_axis(self):
+    def dz_axis(self) -> np.ndarray:
         """1D cell size along z (length N_z)."""
         if self.axes is None or len(self.axes[2]) == 0:
             return np.array([])
         return np.diff(self.axes[2])
 
     @property
-    def cx_axis(self):
+    def cx_axis(self) -> np.ndarray:
         """1D centers along x (length N_x)."""
         if self.axes is None or len(self.axes[0]) == 0:
             return np.array([])
@@ -1290,7 +1350,7 @@ class Voxel:
         return 0.5 * (x[:-1] + x[1:])
 
     @property
-    def cy_axis(self):
+    def cy_axis(self) -> np.ndarray:
         """1D centers along y (length N_y)."""
         if self.axes is None or len(self.axes[1]) == 0:
             return np.array([])
@@ -1298,14 +1358,14 @@ class Voxel:
         return 0.5 * (y[:-1] + y[1:])
 
     @property
-    def cz_axis(self):
+    def cz_axis(self) -> np.ndarray:
         """1D centers along z (length N_z)."""
         if self.axes is None or len(self.axes[2]) == 0:
             return np.array([])
         z = self.axes[2]
         return 0.5 * (z[:-1] + z[1:])
 
-    def show_info(self):
+    def show_info(self) -> None:
         """None: Print axis ranges and grid/voxel shape information."""
         print(f"{self.__class__.__name__} info:")
         print(f"ranges: {self.ranges}")
@@ -1316,8 +1376,7 @@ class Voxel:
         print(f"voxel_shape: {self.voxel_shape} (N_voxel={self.N_voxel})")
 
     def _type_check_n_voxel(self, n=None):
-        """
-        type check for voxel number n
+        """Validate and normalize a voxel selection.
 
         Parameters
         ----------
@@ -1346,30 +1405,44 @@ class Voxel:
                     elif np.issubdtype(n.dtype, np.integer):
                         n = n
                     else:
-                        raise TypeError(f"n must be int or boolean np.ndarray")
+                        raise TypeError("n must be int or boolean np.ndarray")
                 else:
-                    raise TypeError(f"n must be 1d np.ndarray")
+                    raise TypeError("n must be 1d np.ndarray")
             else:
-                raise TypeError(f"n must be int, slice, list, or np.ndarray")
+                raise TypeError("n must be int, slice, list, or np.ndarray")
 
             if np.any((n < 0) | (n >= self.N_voxel)):
                 raise IndexError(f"voxel number out of range: n should satisfy 0 <= n < {self.N_voxel}")
         return n.astype(int)
 
-    def get_sub_voxel(self, n=None, res=None, verbose=0):
-        """
-        get sub voxels with resolution `res`
+    def get_sub_voxel(
+            self,
+            n: VoxelSelection = None,
+            res: VoxelResolution = None,
+            verbose: int = 0
+    ) -> list["Voxel"]:
+        """Return selected sub-voxels at resolution ``res``.
+
         Parameters
         ----------
-        n : int, list[int], slice, optional (default=None)
-            voxel numbers (if vertices is specified, n is ignored)
-        res : int or (int, int, int), optional (default=3)
-            resolution of sub voxels (x_res, y_res, z_res)
+        n : int, list[int], slice, numpy.ndarray, optional
+            Voxel indices to subdivide. ``None`` selects every voxel.
+        res : int or tuple[int, int, int], optional
+            Subdivision count along each axis. A scalar is broadcast to all
+            axes. ``None`` preserves the current :attr:`res` value.
+        verbose : int, default=0
+            Show progress when greater than zero.
 
         Returns
         -------
-        sub_voxel : list[Voxel]
-            sub voxels with resolution `res`
+        list[Voxel]
+            One independent voxel grid for each selected parent voxel.
+
+        Notes
+        -----
+        This method updates :attr:`res` before constructing the returned
+        grids. Use :meth:`get_sub_voxel_centers` when only quadrature points
+        are needed.
         """
 
         self.res = res
@@ -1394,30 +1467,48 @@ class Voxel:
                           for x0_, x1_, y0_, y1_, z0_, z1_ in my_zip(x0, x1, y0, y1, z0, z1, disable=verbose <= 0)]
         return sub_voxels
 
-    def sub_voxel_interpolator(self, n=None, res=None, verbose=0):
-        """
-        get n-th sub voxel interpolator with resolution `res`
+    def sub_voxel_interpolator(
+            self,
+            n: VoxelSelection = None,
+            res: VoxelResolution = None,
+            verbose: int = 0
+    ) -> sparse.csr_matrix | list[sparse.csr_matrix]:
+        """Return selected sub-voxel interpolation matrices.
 
         Parameters
         ----------
-        n : int or list[int]
-            voxel number(s)
-        res : int or (int, int, int), optional (default=3)
-            resolution of sub voxels (x_res, y_res, z_res)
+        n : int, list[int], slice, numpy.ndarray, optional
+            Voxel indices for which to build interpolation matrices. ``None``
+            selects every voxel.
+        res : int or tuple[int, int, int], optional
+            Subdivision count along each axis. A scalar is broadcast to all
+            axes. ``None`` preserves the current :attr:`res` value.
         verbose : int, default=0
-            verbosity level
+            Show progress when greater than zero.
 
         Returns
         -------
-        interpolator : scipy.sparse.csr_matrix (N_sub_voxel, N_voxel)
-            interpolator for n-th sub voxel (N_sub_grid = x_res * y_res * z_res)
+        scipy.sparse.csr_matrix or list[scipy.sparse.csr_matrix]
+            Each matrix has shape ``(prod(res), N_voxel)`` and maps parent
+            voxel-center values to one selected voxel's sub-voxel centers.
+            A single selected voxel returns one matrix; multiple selected
+            voxels return a list.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`set_voxel2vertices` has not prepared the interpolation
+            mapping.
+
+        Notes
+        -----
+        This method updates :attr:`res`.
         """
         self.res = res
         n = self._type_check_n_voxel(n)
         if self.voxel2vertices is None:
             raise RuntimeError("voxel2vertices is not calculated. "
                                "Please run set_voxel2vertices() before calling sub_voxel_interpolator().")
-
 
         def _append_interpolator_matrix(vi):
             selector = sparse.coo_matrix((np.ones(8, dtype=bool), (np.arange(8), vi)),
@@ -1429,9 +1520,13 @@ class Voxel:
 
         return interpolator if len(interpolator) > 1 else interpolator[0]
 
-    def get_random_point(self, n, N=1, rng=None):
-        """
-        get random points in n-th voxel
+    def get_random_point(
+            self,
+            n: int,
+            N: int = 1,
+            rng: float | np.random.Generator | None = None
+    ) -> np.ndarray:
+        """Return random points in the selected voxel.
 
         Parameters
         ----------
@@ -1458,9 +1553,13 @@ class Voxel:
                 raise TypeError(f"{rng=} must be float (seed) or np.random._generator.Generator")
         return rng.uniform(self.vertices[n][0], self.vertices[n][-1], (N, 3))
 
-    def set_voxel2vertices(self, exist_ok=True, n_jobs=-2, verbose=0):
-        """
-        interpolate values to vertices
+    def set_voxel2vertices(
+            self,
+            exist_ok: bool = True,
+            n_jobs: int = -2,
+            verbose: int = 0
+    ) -> sparse.csr_matrix | None:
+        """Build the voxel-to-vertex interpolation matrix.
 
         Parameters
         ----------

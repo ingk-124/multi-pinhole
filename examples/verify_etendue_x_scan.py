@@ -1,8 +1,8 @@
 """Compare numerical pinhole etendue against an analytic X-axis scan."""
 
-from pathlib import Path
 import os
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
 os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))

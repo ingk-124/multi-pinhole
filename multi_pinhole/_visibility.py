@@ -30,6 +30,30 @@ def calculate_point_visibility(
     Occluders are applied in the established order: the eye front plane,
     apertures, then walls.  Each geometry check receives only points still
     active after the preceding check.
+
+    Parameters
+    ----------
+    camera_points : numpy.ndarray, shape (N, 3)
+        Query points expressed in the camera coordinate system.
+    eyes : sequence
+        Camera eyes providing ray origins and front-plane positions.
+    eye_indices : sequence[int]
+        Eye indices to evaluate, in output-row order.
+    apertures : sequence
+        Aperture objects that may block a ray.
+    walls_in_camera : sequence
+        Wall meshes already transformed into camera coordinates.
+    verbose : int, default=1
+        Show geometry-check progress when greater than zero.
+
+    Returns
+    -------
+    numpy.ndarray, shape (len(eye_indices), N)
+        Boolean visibility mask for every requested eye and point.
+
+    Notes
+    -----
+    Aperture meshes may be initialized lazily by calling ``set_model()``.
     """
     visible = np.zeros((len(eye_indices), camera_points.shape[0]), dtype=bool)
 
@@ -44,6 +68,8 @@ def calculate_point_visibility(
 
         my_print("--- checking for apertures ---", show=verbose > 0)
         for aperture_index, aperture in enumerate(apertures):
+            # Recompute the active set after each occluder. Besides reducing
+            # work, this prevents a later mesh from reviving a blocked ray.
             active = np.flatnonzero(visible[i])
             if active.size == 0:
                 break
@@ -88,7 +114,20 @@ def calculate_visible_vertex_mask(
         inside_vertices: np.ndarray,
         inside_visibility: np.ndarray,
 ) -> np.ndarray:
-    """Expand visibility for inside vertices to the complete vertex grid."""
+    """Expand inside-vertex visibility to the complete vertex grid.
+
+    Parameters
+    ----------
+    inside_vertices : numpy.ndarray
+        Flat indices of vertices included in the source region.
+    inside_visibility : numpy.ndarray, shape (N_eye, N_inside)
+        Visibility values corresponding to ``inside_vertices``.
+
+    Returns
+    -------
+    numpy.ndarray, shape (N_eye, N_grid)
+        Visibility mask with excluded vertices left false.
+    """
     visible_vertices = np.zeros(
         (inside_visibility.shape[0], inside_vertices.size),
         dtype=bool,
@@ -101,7 +140,21 @@ def classify_visible_voxels(
         visible_vertices: np.ndarray,
         vertices_indices: np.ndarray,
 ) -> np.ndarray:
-    """Classify voxels as invisible (0), partial (1), or fully visible (2)."""
+    """Classify each voxel from the visibility of its eight vertices.
+
+    Parameters
+    ----------
+    visible_vertices : numpy.ndarray, shape (N_eye, N_grid)
+        Per-eye visibility of every grid vertex.
+    vertices_indices : numpy.ndarray, shape (N_voxel, 8)
+        Flat vertex indices for each voxel.
+
+    Returns
+    -------
+    numpy.ndarray, shape (N_eye, N_voxel)
+        Integer state: 0 for invisible, 1 for partially visible, and 2 for
+        fully visible.
+    """
     voxel_vertices = visible_vertices[:, vertices_indices]
     conditions_any = np.any(voxel_vertices, axis=-1).astype(int)
     conditions_all = np.all(voxel_vertices, axis=-1).astype(int)

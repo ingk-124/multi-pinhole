@@ -8,8 +8,13 @@ ordinary sparse and future factorized projection builders.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import ArrayLike
+
+if TYPE_CHECKING:
+    from .camera import Camera
 
 
 def _pair(value, name: str) -> np.ndarray:
@@ -21,7 +26,7 @@ def _pair(value, name: str) -> np.ndarray:
     return pair
 
 
-def projected_axis_spans(camera, eye_index: int, centers: np.ndarray,
+def projected_axis_spans(camera: Camera, eye_index: int, centers: np.ndarray,
                          edge_lengths: np.ndarray) -> np.ndarray:
     """Project each source-cell axis chord onto the detector plane.
 
@@ -176,10 +181,12 @@ class EyeProjectionWorkEstimate:
 
     @property
     def visible_voxels(self) -> int:
+        """Return the number of full and partial visible voxels."""
         return self.full_voxels + self.partial_voxels
 
     @property
     def total_samples_upper_bound(self) -> int:
+        """Return the scheduled full samples plus the partial upper bound."""
         return self.full_samples + self.partial_samples_upper_bound
 
 
@@ -197,14 +204,27 @@ class ProjectionWorkEstimate:
 
     @property
     def total_visible_voxels(self) -> int:
+        """Return the visible-voxel count summed across all Eyes."""
         return sum(eye.visible_voxels for eye in self.eyes)
 
     @property
     def total_samples_upper_bound(self) -> int:
+        """Return the sample upper bound summed across all Eyes."""
         return sum(eye.total_samples_upper_bound for eye in self.eyes)
 
     def summary(self, max_buckets: int = 8) -> str:
-        """Return a compact human-readable work estimate."""
+        """Return a compact human-readable work estimate.
+
+        Parameters
+        ----------
+        max_buckets : int, default=8
+            Maximum number of resolution buckets shown for each eye.
+
+        Returns
+        -------
+        str
+            Multiline summary suitable for logs or preflight output.
+        """
         lines = [
             "Projection preflight: "
             f"{self.total_samples_upper_bound:,} source samples (upper bound), "
@@ -240,10 +260,10 @@ class ProjectionWorkEstimate:
 
 def select_circumsphere_resolution(
         points_in_eye: np.ndarray, edge_lengths: np.ndarray,
-        focal_length: float, reference_size,
-        fallback_resolution=4,
+        focal_length: float, reference_size: ArrayLike,
+        fallback_resolution: int | tuple[int, int, int] | None = 4,
         point_source_threshold: float = 1.0 / 8.0,
-        ) -> PointSourceResolutionEstimate:
+) -> PointSourceResolutionEstimate:
     """Recommend axis-wise source resolution from a local circumsphere scale.
 
     Parameters
@@ -326,24 +346,24 @@ def select_circumsphere_resolution(
     distance = np.linalg.norm(points_in_eye, axis=1)
     axial_distance = points_in_eye[:, 2]
     valid = (
-        np.all(np.isfinite(points_in_eye), axis=1) &
-        (distance > 0.0) &
-        (axial_distance > radius)
+            np.all(np.isfinite(points_in_eye), axis=1) &
+            (distance > 0.0) &
+            (axial_distance > radius)
     )
 
     projected_diameter = np.full(points_in_eye.shape[0], np.inf)
     # Z*cos(theta) = Z**2 / distance. This form avoids a separate angle and
     # makes the off-axis 1/cos(theta) safety factor explicit algebraically.
     projected_diameter[valid] = (
-        abs(float(focal_length)) * diameter[valid] * distance[valid] /
-        axial_distance[valid] ** 2
+            abs(float(focal_length)) * diameter[valid] * distance[valid] /
+            axial_distance[valid] ** 2
     )
     ratio = projected_diameter / reference_size
     point_source = valid & (ratio <= point_source_threshold)
     magnification = np.full(points_in_eye.shape[0], np.inf)
     magnification[valid] = (
-        abs(float(focal_length)) * distance[valid] /
-        axial_distance[valid] ** 2
+            abs(float(focal_length)) * distance[valid] /
+            axial_distance[valid] ** 2
     )
     # For a cube, a subcell edge h has circumsphere diameter sqrt(3)*h.
     # Choosing h from the allowed projected diameter therefore reproduces
@@ -351,8 +371,8 @@ def select_circumsphere_resolution(
     # close to cubic after subdivision.
     target_edge = np.zeros(points_in_eye.shape[0], dtype=float)
     target_edge[valid] = (
-        point_source_threshold * reference_size[valid] /
-        (np.sqrt(3.0) * magnification[valid])
+            point_source_threshold * reference_size[valid] /
+            (np.sqrt(3.0) * magnification[valid])
     )
     ideal_float = np.full((points_in_eye.shape[0], 3), np.inf)
     refinable = valid & ~point_source
@@ -393,8 +413,9 @@ def select_circumsphere_resolution(
     )
 
 
-def select_source_resolution(projected_spans: np.ndarray, detector_pitch,
-                             max_resolution=4,
+def select_source_resolution(projected_spans: np.ndarray,
+                             detector_pitch: ArrayLike,
+                             max_resolution: int | tuple[int, int, int] = 4,
                              max_projected_step: float = 1.0
                              ) -> SourceResolutionEstimate:
     """Choose axis-wise source resolution from projected cell-axis spans.
@@ -516,14 +537,23 @@ class OpticalBinning:
 
     @property
     def n_samples(self) -> int:
+        """Return the number of packed visible samples."""
         return int(self.order.size)
 
     @property
     def n_scopes(self) -> int:
+        """Return the number of independent optical scopes."""
         return int(self.scope_offsets.size - 1)
 
     def scopes(self) -> list[np.ndarray]:
-        """Return sample-index views, one per independent optical scope."""
+        """Return sample-index views, one per independent optical scope.
+
+        Returns
+        -------
+        list[numpy.ndarray]
+            Views into :attr:`order`; concatenating them restores the complete
+            optical ordering.
+        """
         return [self.order[start:stop]
                 for start, stop in zip(self.scope_offsets[:-1], self.scope_offsets[1:])]
 
@@ -533,6 +563,22 @@ class OpticalBinning:
         The limit is soft when one scope itself is larger than ``max_samples``;
         callers that require a hard memory bound should set ``max_scope_samples``
         while constructing the binning.
+
+        Parameters
+        ----------
+        max_samples : int
+            Target maximum expanded-sample cost per work chunk.
+
+        Returns
+        -------
+        numpy.ndarray
+            Monotonic offsets into :attr:`order`, including zero and
+            :attr:`n_samples`.
+
+        Raises
+        ------
+        ValueError
+            If ``max_samples`` is less than one.
         """
         if max_samples < 1:
             raise ValueError("max_samples must be positive")
@@ -555,14 +601,25 @@ class OpticalBinning:
         return np.asarray(offsets, dtype=np.int64)
 
     def work_chunks(self, max_samples: int) -> list[np.ndarray]:
-        """Return sample-index views for memory-bounded work chunks."""
+        """Return sample-index views for memory-bounded work chunks.
+
+        Parameters
+        ----------
+        max_samples : int
+            Target maximum expanded-sample cost per chunk.
+
+        Returns
+        -------
+        list[numpy.ndarray]
+            Views into :attr:`order`, with optical scopes kept intact.
+        """
         offsets = self.work_offsets(max_samples)
         return [self.order[start:stop]
                 for start, stop in zip(offsets[:-1], offsets[1:])]
 
 
-def make_optical_binning(camera, eye_index: int, points: np.ndarray,
-                         bin_width_pixels=1.0,
+def make_optical_binning(camera: Camera, eye_index: int, points: np.ndarray,
+                         bin_width_pixels: ArrayLike = 1.0,
                          max_scope_samples: int | None = None,
                          sample_costs: np.ndarray | None = None) -> OpticalBinning:
     """Order already-visible source samples by Eye projection direction.

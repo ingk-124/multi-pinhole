@@ -7,13 +7,21 @@ operate on normalized coordinates such as those returned by
 """
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 
 
-def _as_array(value):
+FloatArray = NDArray[np.float64]
+
+
+def _as_array(value: ArrayLike) -> FloatArray:
     return np.asarray(value, dtype=float)
 
 
-def torus_to_poloidal_cartesian(r, theta, phi):
+def torus_to_poloidal_cartesian(
+        r: ArrayLike,
+        theta: ArrayLike,
+        phi: ArrayLike
+) -> tuple[FloatArray, FloatArray, ArrayLike]:
     """Convert normalized torus coordinates to poloidal Cartesian coordinates.
 
     Parameters
@@ -35,7 +43,13 @@ def torus_to_poloidal_cartesian(r, theta, phi):
     return x, y, phi
 
 
-def helical_phase(theta, phi, m_, n_, phi_0=0):
+def helical_phase(
+        theta: ArrayLike,
+        phi: ArrayLike,
+        m_: ArrayLike,
+        n_: ArrayLike,
+        phi_0: ArrayLike = 0
+) -> FloatArray:
     """Calculate a helical phase ``m*theta - n*(phi - phi_0)``.
 
     Parameters
@@ -55,7 +69,14 @@ def helical_phase(theta, phi, m_, n_, phi_0=0):
     return m_ * _as_array(theta) - n_ * (_as_array(phi) - phi_0)
 
 
-def helical_poloidal_coordinates(r, theta, phi, m_, n_, phi_0=0):
+def helical_poloidal_coordinates(
+        r: ArrayLike,
+        theta: ArrayLike,
+        phi: ArrayLike,
+        m_: ArrayLike,
+        n_: ArrayLike,
+        phi_0: ArrayLike = 0
+) -> tuple[FloatArray, FloatArray, FloatArray]:
     """Convert ``(r, theta, phi)`` to ``(x, y, psi)`` helical coordinates.
 
     Parameters
@@ -79,7 +100,13 @@ def helical_poloidal_coordinates(r, theta, phi, m_, n_, phi_0=0):
     return x, y, psi
 
 
-def shifted_polar(x, y, cx, cy, normalize_boundary=True):
+def shifted_polar(
+        x: ArrayLike,
+        y: ArrayLike,
+        cx: ArrayLike,
+        cy: ArrayLike,
+        normalize_boundary: bool = True
+) -> tuple[FloatArray, FloatArray]:
     """Convert normalized poloidal Cartesian coordinates to shifted polar coordinates.
 
     Parameters
@@ -126,7 +153,14 @@ def shifted_polar(x, y, cx, cy, normalize_boundary=True):
     return rho_shifted, theta_shifted
 
 
-def rigid_shifted_polar(x, y, delta, xi, phi=0, psi_0=0):
+def rigid_shifted_polar(
+        x: ArrayLike,
+        y: ArrayLike,
+        delta: ArrayLike,
+        xi: ArrayLike,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0
+) -> tuple[FloatArray, FloatArray]:
     """Apply a rigid toroidally rotating shift and return shifted polar coordinates.
 
     Parameters
@@ -155,7 +189,13 @@ def rigid_shifted_polar(x, y, delta, xi, phi=0, psi_0=0):
     return shifted_polar(x, y, cx, cy)
 
 
-def gaussian(rho, rho_s, w, d=2, edge=0.02):
+def gaussian(
+        rho: ArrayLike,
+        rho_s: ArrayLike,
+        w: ArrayLike,
+        d: ArrayLike = 2,
+        edge: float | None = 0.02
+) -> FloatArray:
     """Evaluate a bounded Gaussian-like envelope on normalized radius ``rho``.
 
     Parameters
@@ -188,7 +228,11 @@ def gaussian(rho, rho_s, w, d=2, edge=0.02):
     return np.where(rho > 1, 0, profile)
 
 
-def two_power(rho, alpha, beta):
+def two_power(
+        rho: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike
+) -> FloatArray:
     """Evaluate a clipped two-power radial profile.
 
     Parameters
@@ -209,7 +253,11 @@ def two_power(rho, alpha, beta):
     return np.where(rho > 1, 0, profile)
 
 
-def two_power_derivative(rho, alpha, beta):
+def two_power_derivative(
+        rho: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike
+) -> FloatArray:
     """Evaluate the interior derivative of the clipped two-power profile.
 
     Parameters
@@ -232,7 +280,11 @@ def two_power_derivative(rho, alpha, beta):
     return np.where(rho > 1, 0, derivative)
 
 
-def smooth_maximum(a, b, eps=0.03):
+def smooth_maximum(
+        a: ArrayLike,
+        b: ArrayLike,
+        eps: float = 0.03
+) -> FloatArray:
     """Smooth a broadcast maximum using ``logaddexp``.
 
     Parameters
@@ -250,7 +302,11 @@ def smooth_maximum(a, b, eps=0.03):
     return np.logaddexp(_as_array(a) / eps, _as_array(b) / eps) * eps
 
 
-def smooth_minimum(a, b, eps=0.03):
+def smooth_minimum(
+        a: ArrayLike,
+        b: ArrayLike,
+        eps: float = 0.03
+) -> FloatArray:
     """Smooth a broadcast minimum using ``-smooth_maximum(-a, -b)``.
 
     Parameters
@@ -268,12 +324,25 @@ def smooth_minimum(a, b, eps=0.03):
     return -smooth_maximum(-_as_array(a), -_as_array(b), eps=eps)
 
 
-def _distort_theta(theta, gamma, psi_0):
+def _distort_theta(
+        theta: ArrayLike,
+        gamma: ArrayLike,
+        psi_0: ArrayLike
+) -> FloatArray:
     theta_offset = theta - psi_0
     return theta_offset + gamma * np.sin(theta_offset)
 
 
-def kinked_rho(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
+def kinked_rho(
+        x: ArrayLike,
+        y: ArrayLike,
+        delta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0
+) -> tuple[FloatArray, FloatArray]:
     """Return polar coordinates after a radially decaying rigid-shift kink.
 
     Parameters
@@ -302,8 +371,20 @@ def kinked_rho(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
     return rigid_shifted_polar(x, y, delta, xi, phi=phi, psi_0=psi_0)
 
 
-def flattening_rho(x, y, delta, xi_0, rho_s, d, w, gamma=0, lam_0=1,
-                   phi=0, psi_0=0, psi_1=np.pi):
+def flattening_rho(
+        x: ArrayLike,
+        y: ArrayLike,
+        delta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        w: ArrayLike,
+        gamma: ArrayLike = 0,
+        lam_0: ArrayLike = 1,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0,
+        psi_1: ArrayLike = np.pi
+) -> tuple[FloatArray, FloatArray]:
     """Return coordinates after kink displacement and smooth partial flattening.
 
     Parameters
@@ -344,7 +425,16 @@ def flattening_rho(x, y, delta, xi_0, rho_s, d, w, gamma=0, lam_0=1,
     return rho_merged, theta_distorted
 
 
-def flattening_rho_min(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
+def flattening_rho_min(
+        x: ArrayLike,
+        y: ArrayLike,
+        delta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0
+) -> tuple[FloatArray, FloatArray]:
     """Return the minimum-model flattened polar coordinates.
 
     Parameters
@@ -377,7 +467,15 @@ def flattening_rho_min(x, y, delta, xi_0, rho_s, d, phi=0, psi_0=0):
     return np.minimum(rho_kinked, rho_flat), theta_kinked
 
 
-def _profile_from_rho(x, y, rho, A, alpha, beta, edge_value=0):
+def _profile_from_rho(
+        x: ArrayLike,
+        y: ArrayLike,
+        rho: ArrayLike,
+        A: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike,
+        edge_value: ArrayLike = 0
+) -> FloatArray:
     """Scale a two-power shape within the unit poloidal disk."""
     shape = two_power(rho, alpha, beta)
     return np.where(
@@ -387,7 +485,16 @@ def _profile_from_rho(x, y, rho, A, alpha, beta, edge_value=0):
     )
 
 
-def axisymmetric_profile(x, y, A, delta, alpha, beta, edge_value=0, **kwargs):
+def axisymmetric_profile(
+        x: ArrayLike,
+        y: ArrayLike,
+        A: ArrayLike,
+        delta: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike,
+        edge_value: ArrayLike = 0,
+        **kwargs: object
+) -> FloatArray:
     """Evaluate an axisymmetric two-power profile on poloidal coordinates.
 
     Parameters
@@ -415,8 +522,20 @@ def axisymmetric_profile(x, y, A, delta, alpha, beta, edge_value=0, **kwargs):
     return _profile_from_rho(x, y, rho_shifted, A, alpha, beta, edge_value)
 
 
-def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0,
-                   edge_value=0):
+def kinked_profile(
+        x: ArrayLike,
+        y: ArrayLike,
+        A: ArrayLike,
+        delta: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0,
+        edge_value: ArrayLike = 0
+) -> FloatArray:
     """Evaluate a two-power profile on kink-displaced coordinates.
 
     Parameters
@@ -445,9 +564,24 @@ def kinked_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, phi=0, psi_0=0,
     return _profile_from_rho(x, y, rho_kinked, A, alpha, beta, edge_value)
 
 
-def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
-                       gamma=0, lam_0=1, phi=0, psi_0=0, psi_1=np.pi,
-                       edge_value=0):
+def flattening_profile(
+        x: ArrayLike,
+        y: ArrayLike,
+        A: ArrayLike,
+        delta: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        w: ArrayLike,
+        gamma: ArrayLike = 0,
+        lam_0: ArrayLike = 1,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0,
+        psi_1: ArrayLike = np.pi,
+        edge_value: ArrayLike = 0
+) -> FloatArray:
     """Evaluate a two-power profile on kinked and flattened coordinates.
 
     Parameters
@@ -484,8 +618,20 @@ def flattening_profile(x, y, A, delta, alpha, beta, xi_0, rho_s, d, w,
     return _profile_from_rho(x, y, rho_flattened, A, alpha, beta, edge_value)
 
 
-def flattening_profile_min(x, y, A, delta, alpha, beta, xi_0, rho_s, d,
-                           phi=0, psi_0=0, edge_value=0):
+def flattening_profile_min(
+        x: ArrayLike,
+        y: ArrayLike,
+        A: ArrayLike,
+        delta: ArrayLike,
+        alpha: ArrayLike,
+        beta: ArrayLike,
+        xi_0: ArrayLike,
+        rho_s: ArrayLike,
+        d: ArrayLike,
+        phi: ArrayLike = 0,
+        psi_0: ArrayLike = 0,
+        edge_value: ArrayLike = 0
+) -> FloatArray:
     """Evaluate a two-power profile on minimum-flattened coordinates.
 
     Parameters

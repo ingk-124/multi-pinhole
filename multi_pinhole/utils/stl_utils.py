@@ -15,7 +15,7 @@ Numpy-style docstrings are used throughout this module.
 
 import time
 from numbers import Number
-from typing import Tuple, Callable, Union, List
+from typing import Any, Tuple, Callable, Union, List
 
 import numpy as np
 import plotly.io as pio
@@ -29,7 +29,7 @@ from scipy.spatial.transform import Rotation
 from stl import mesh
 from tqdm.auto import trange
 
-from .my_stdio import *
+from .my_stdio import my_print, my_range
 
 pio.renderers.default = "firefox"
 
@@ -51,7 +51,11 @@ _VISIBILITY_TRIANGLE_BATCH = 512
 
 
 # MARK: - STL utilities
-def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict = None) -> Tuple[str, Vector2DLike]:
+def shape_check(
+        shape: str,
+        size: Union[Number, Vector2DLike],
+        ok_shapes: dict[str, int] | None = None
+) -> Tuple[str, Vector2DLike]:
     """Normalize aperture ``shape`` and ``size`` specifications.
 
     Parameters
@@ -116,8 +120,12 @@ def shape_check(shape: str, size: Union[Number, Vector2DLike], ok_shapes: dict =
     return shape, size_hw
 
 
-def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolution: Union[Number, Vector2DLike],
-                          max_size: Union[Number, Vector2DLike] = None) -> mesh.Mesh:
+def generate_aperture_stl(
+        shape: str,
+        size: Union[Number, Vector2DLike],
+        resolution: Union[Number, Vector2DLike],
+        max_size: Union[Number, Vector2DLike] | None = None
+) -> mesh.Mesh:
     """Create a planar STL mesh representing an aperture outline.
 
     Parameters
@@ -167,7 +175,7 @@ def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolut
         e_4 = np.array([np.ones_like(y_edge) * -size[0] / 2, y_edge]).T
         edge_points = np.concatenate([e_1, e_2, e_3, e_4])
     else:
-        raise ValueError(f"shape must be one of ['circle', 'ellipse', 'rectangle']")
+        raise ValueError("shape must be one of ['circle', 'ellipse', 'rectangle']")
 
     outer_points = np.array(np.meshgrid(x_arr, y_arr, indexing='ij')).reshape(2, -1).T
     outer_points = outer_points[~condition(outer_points[:, 0] / 1.5, outer_points[:, 1] / 1.5)]
@@ -176,8 +184,11 @@ def generate_aperture_stl(shape: str, size: Union[Number, Vector2DLike], resolut
     return make_2D_surface(points, condition)
 
 
-def rotate_model(model: mesh.Mesh, order: str = 'xyz', angles: Vector3DLike = (0, 0, 0), matrix: np.ndarray = None,
-                 origin: Vector3DLike = (0, 0, 0), degrees: bool = True) -> mesh.Mesh:
+def rotate_model(model: mesh.Mesh, order: str = 'xyz',
+                 angles: Vector3DLike = (0, 0, 0),
+                 matrix: np.ndarray | None = None,
+                 origin: Vector3DLike = (0, 0, 0),
+                 degrees: bool = True) -> mesh.Mesh:
     """Rotate an STL mesh either by Euler angles or by an explicit matrix.
 
     Parameters
@@ -212,7 +223,11 @@ def rotate_model(model: mesh.Mesh, order: str = 'xyz', angles: Vector3DLike = (0
     return model
 
 
-def copy_model(model: mesh.Mesh, translate: np.ndarray = (0, 0, 0), rotation_matrix: np.ndarray = None) -> mesh.Mesh:
+def copy_model(
+        model: mesh.Mesh,
+        translate: np.ndarray = (0, 0, 0),
+        rotation_matrix: np.ndarray | None = None
+) -> mesh.Mesh:
     """Return a transformed deep copy of ``model``.
 
     Parameters
@@ -446,14 +461,20 @@ def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
     # return AND of the above conditions
     # cone = p_oab & p_obc & p_oca  # (N, M)
     # cone = p_oab.multiply(p_obc).multiply(p_oca)  # (N, M)
-    # inside_cone = sparse.hstack([sparse.csr_matrix((p @ n_oab_ >= 0) & (p @ n_obc_ >= 0) & (p @ n_oca_ >= 0) & v).T for
+    # inside_cone = sparse.hstack([sparse.csr_matrix(
+    #     (p @ n_oab_ >= 0) & (p @ n_obc_ >= 0) & (p @ n_oca_ >= 0) & v
+    # ).T for
     #                              n_oab_, n_obc_, n_oca_, v in
     #                              zip(n_oab, n_obc, n_oca, zero_volume)], format="csr")  # (N, M)
     # return inside_cone
     return n_oab, n_obc, n_oca, zero_volume
 
 
-def delta_cone_prepare(triangles: np.ndarray, start_point: np.ndarray, eps: float = 1e-6):
+def delta_cone_prepare(
+        triangles: np.ndarray,
+        start_point: np.ndarray,
+        eps: float = 1e-6
+) -> tuple[np.ndarray, np.ndarray]:
     """Generate oriented cone planes for a batch of triangles.
 
     Parameters
@@ -613,7 +634,7 @@ def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points:
     return sparse.csr_matrix((data, (rows, cols)), shape=(M, N), dtype=bool), valid
 
 
-def delta_cone_apply_test():
+def delta_cone_apply_test() -> go.Figure:
     """Manual/interactive check of :func:`delta_cone_apply` on one triangle.
 
     Builds a single test triangle and a 3D grid of sample points, runs
@@ -728,7 +749,8 @@ def _check_visible_reference(mesh_obj, start: np.ndarray, grid_points: np.ndarra
     return visible
 
 
-def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
+def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
+                  grid_points: np.ndarray, verbose: int = 0,
                   behind_start_included: float | bool = False, dtype: type = np.float32,
                   batch_points: int = _VISIBILITY_POINT_BATCH) -> np.ndarray:
     """Determine point visibility using bounded point and triangle batches.
@@ -737,6 +759,40 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     :func:`_check_visible_reference`.  Candidate pairs are consumed inside each
     batch instead of being retained as a global CSR matrix.  Points occluded by
     an earlier triangle batch are omitted from all later batches.
+
+    Parameters
+    ----------
+    mesh_obj : stl.mesh.Mesh
+        Triangle mesh that may occlude the rays.
+    start : numpy.ndarray, shape (3,)
+        Common ray origin.
+    grid_points : numpy.ndarray, shape (N, 3)
+        Ray endpoints whose visibility is tested.
+    verbose : int, default=0
+        Show progress and timing information when greater than zero.
+    behind_start_included : bool or float, default=False
+        Whether intersections behind ``start`` also count as occlusion. This
+        is enabled for aperture checks, whose blocking surface may extend
+        behind an eye.
+    dtype : type, default=numpy.float32
+        Floating-point dtype used by the batched intersection calculation.
+    batch_points : int, optional
+        Maximum number of endpoints processed in one point batch.
+
+    Returns
+    -------
+    numpy.ndarray, shape (N,)
+        Boolean mask where ``True`` means the segment is not blocked.
+
+    Raises
+    ------
+    ValueError
+        If ``batch_points`` is not positive.
+
+    Notes
+    -----
+    Memory use is bounded by both ``batch_points`` and the internal triangle
+    batch size instead of growing with every point-triangle pair.
     """
     N = grid_points.shape[0]
     M = mesh_obj.vectors.shape[0]
@@ -818,7 +874,7 @@ def check_visible(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose:
     return visible
 
 
-def check_visible_test():
+def check_visible_test() -> go.Figure:
     """Manual/interactive check of :func:`check_visible` on one triangle.
 
     Builds a single-triangle mesh and a 3D grid of sample points, compares
@@ -855,13 +911,13 @@ def check_visible_test():
                                mode='markers', name='start', marker=dict(color='black', size=1)))
     inside_points = points[cone.getrow(0).nonzero()[1]]
     fig.add_trace(go.Scatter3d(x=inside_points[:, 0], y=inside_points[:, 1], z=inside_points[:, 2],
-                               mode='markers', name=f'Inside Points 1', marker=dict(size=2)))
+                               mode='markers', name='Inside Points 1', marker=dict(size=2)))
     invisible_points = points[~visible]
     fig.add_trace(go.Scatter3d(x=invisible_points[:, 0], y=invisible_points[:, 1], z=invisible_points[:, 2],
-                               mode='markers', name=f'Invisible Points (no mesh)', marker=dict(size=4, color='red')))
+                               mode='markers', name='Invisible Points (no mesh)', marker=dict(size=4, color='red')))
     invisible_points2 = points[~visible2]
     fig.add_trace(go.Scatter3d(x=invisible_points2[:, 0], y=invisible_points2[:, 1], z=invisible_points2[:, 2],
-                               mode='markers', name=f'Invisible Points (with mesh)',
+                               mode='markers', name='Invisible Points (with mesh)',
                                marker=dict(size=3, color='green')))
     fig.show()
     return fig
@@ -934,13 +990,21 @@ def check_visible_old(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.nd
 
 
 # MARK: STL visualization utilities
-def stl2mesh3d(stl_mesh: mesh.Mesh):
+def stl2mesh3d(
+        stl_mesh: mesh.Mesh
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """Convert ``numpy-stl`` triangle data into a Plotly ``Mesh3d`` representation.
+
+    Parameters
+    ----------
+    stl_mesh : stl.mesh.Mesh
+        Source triangle mesh. Duplicate triangle vertices are consolidated.
 
     Returns
     -------
     tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]
-        Unique vertex coordinates and corresponding face index arrays ``(i, j, k)``.
+        Unique vertex coordinates and corresponding face index arrays
+        ``(i, j, k)``.
     """
     # stl_mesh is read by numpy-stl from a stl file; it is  an array of faces/triangles (i.e. three 3d points)
     # this function extracts the unique vertices and the lists I, J, K to define a Plotly mesh3d
@@ -948,15 +1012,17 @@ def stl2mesh3d(stl_mesh: mesh.Mesh):
     # the array stl_mesh.vectors.reshape(p*q, r) can contain multiple copies of the same vertex;
     # extract unique vertices from all mesh triangles
     vertices, ixr = np.unique(stl_mesh.vectors.reshape(p * q, r), return_inverse=True, axis=0)
-    I = np.take(ixr, [3 * k for k in range(p)])
-    J = np.take(ixr, [3 * k + 1 for k in range(p)])
-    K = np.take(ixr, [3 * k + 2 for k in range(p)])
-    return vertices, (I, J, K)
+    face_i = np.take(ixr, [3 * k for k in range(p)])
+    face_j = np.take(ixr, [3 * k + 1 for k in range(p)])
+    face_k = np.take(ixr, [3 * k + 2 for k in range(p)])
+    return vertices, (face_i, face_j, face_k)
 
 
-def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure = None, color: str = 'lightblue',
+def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure | None = None,
+                    color: str = 'lightblue',
                     opacity: float = 0.5, show_edges: bool = False, show_fig: bool = True,
-                    linearg: dict = None, **kwargs):
+                    linearg: dict[str, object] | None = None,
+                    **kwargs: Any) -> go.Figure:
     """Render ``stl_mesh`` into a Plotly figure with optional edge overlays.
 
     Parameters
@@ -988,9 +1054,9 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure = None, color: str = 'li
     if linearg is None:
         linearg = dict(color='black', width=1)
 
-    vertices, (I, J, K) = stl2mesh3d(stl_mesh)
+    vertices, (face_i, face_j, face_k) = stl2mesh3d(stl_mesh)
     mesh3d = go.Mesh3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
-                       i=I, j=J, k=K,
+                       i=face_i, j=face_j, k=face_k,
                        color=color, opacity=opacity, showscale=False)
     fig.add_trace(mesh3d)
     if show_edges:
@@ -1012,9 +1078,11 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure = None, color: str = 'li
     return fig
 
 
-def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
-                     fig: go.Figure = None, show_fig: bool = True, axis_length: float = 1.0, cone_scale: float = 0.2,
-                     name: str = 'axes', **kwargs):
+def plotly_show_axes(R: Rotation | np.ndarray,
+                     origin: np.ndarray | None = None,
+                     fig: go.Figure | None = None, show_fig: bool = True,
+                     axis_length: float = 1.0, cone_scale: float = 0.2,
+                     name: str = 'axes', **kwargs: Any) -> go.Figure:
     """Plot a triad of axes derived from ``R`` in a Plotly figure.
 
     Parameters
@@ -1041,6 +1109,8 @@ def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
     go.Figure
         Figure containing the axes visualization.
     """
+    if origin is None:
+        origin = np.zeros(3)
     if fig is None:
         fig = go.Figure()
 
@@ -1050,7 +1120,7 @@ def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
     elif isinstance(R, np.ndarray):
         X, Y, Z = R * axis_length
     else:
-        raise TypeError(f"R must be a Rotation or a numpy.ndarray")
+        raise TypeError("R must be a Rotation or a numpy.ndarray")
     # plot the axes
     line_x = go.Scatter3d(x=[origin[0], origin[0] + X[0]],
                           y=[origin[1], origin[1] + X[1]],
@@ -1089,9 +1159,24 @@ def plotly_show_axes(R: Rotation, origin: np.ndarray = np.zeros(3),
     return fig
 
 
-def show_stl(model, ax=None, fsz=10, elev=30, azim=30, facecolors="lightblue", edgecolors="k", lw=0.1,
-             x_lim=None, y_lim=None, z_lim=None, modify_axes=False, full_model=True, show_origin=False, show_fig=False,
-             **kwargs):
+def show_stl(
+        model: mesh.Mesh,
+        ax: plt.Axes | None = None,
+        fsz: float = 10,
+        elev: float = 30,
+        azim: float = 30,
+        facecolors: str = "lightblue",
+        edgecolors: str = "k",
+        lw: float = 0.1,
+        x_lim: tuple[float, float] | None = None,
+        y_lim: tuple[float, float] | None = None,
+        z_lim: tuple[float, float] | None = None,
+        modify_axes: bool = False,
+        full_model: bool = True,
+        show_origin: bool = False,
+        show_fig: bool = False,
+        **kwargs: Any
+) -> plt.Axes:
     """Visualize an STL ``model`` with Matplotlib's 3D toolkit.
 
     Parameters
@@ -1212,7 +1297,8 @@ def make_stl(vertices: np.ndarray, faces: np.ndarray) -> mesh.Mesh:
 
 
 def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
-                   func: Callable, **func_kwargs) -> Tuple[np.ndarray, np.ndarray]:
+                   func: Callable[..., tuple[np.ndarray, np.ndarray, np.ndarray]],
+                   **func_kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
     """Sample ``func`` across a parameter grid and triangulate the resulting surface.
 
     Parameters
@@ -1237,7 +1323,12 @@ def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
     return vertices, faces
 
 
-def torus(theta: np.ndarray, phi: np.ndarray, a: float = 1, R: float = 2):
+def torus(
+        theta: np.ndarray,
+        phi: np.ndarray,
+        a: float = 1,
+        R: float = 2
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate torus surface coordinates for grids of ``theta`` and ``phi``.
 
     Parameters
@@ -1262,7 +1353,11 @@ def torus(theta: np.ndarray, phi: np.ndarray, a: float = 1, R: float = 2):
     return x, y, z
 
 
-def sphere(theta: np.ndarray, phi: np.ndarray, r: float = 1):
+def sphere(
+        theta: np.ndarray,
+        phi: np.ndarray,
+        r: float = 1
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate spherical surface coordinates for the supplied angles.
 
     Parameters

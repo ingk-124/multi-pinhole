@@ -4,12 +4,12 @@ from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
+from matplotlib import pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
-from matplotlib import pyplot as plt
 from stl import mesh
 
-from multi_pinhole import *
+from multi_pinhole import Aperture, Camera, Voxel, World
 from multi_pinhole.utils import stl_utils
 
 plt.rcParams.update({'font.size': 12})
