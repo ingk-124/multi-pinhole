@@ -1,6 +1,9 @@
 # created by virtualenv automatically
 .DS_Store
 */.DS_Store
+.codex/
+.idea/
+*.egg-info/
 */.idea
 */.vscode
 */__pycache__
