@@ -26,8 +26,7 @@ def plot_radial_cross_sections(x, parameters):
     )
     rho_kinked, _ = profiles.kinked_rho(
         x, 0, **{key: kinked[key] for key in ("delta", "xi_0", "rho_s", "d")},
-        phi=0,
-        psi_0=kinked["psi_0"],
+        center_angle_xy=kinked["center_angle_xy"],
     )
     rho_flattened, _ = profiles.flattening_rho(
         x,
@@ -36,16 +35,15 @@ def plot_radial_cross_sections(x, parameters):
             key: flattened[key]
             for key in ("delta", "xi_0", "rho_s", "d", "w", "gamma", "lam_0")
         },
-        phi=0,
-        psi_0=flattened["psi_0"],
-        psi_1=flattened["psi_1"],
+        center_angle_xy=flattened["center_angle_xy"],
+        flattening_angle_offset=flattened["flattening_angle_offset"],
     )
 
     values = [
         profiles.axisymmetric_profile(x, 0, **axisymmetric),
-        profiles.kinked_profile(x, 0, **kinked, phi=0),
-        profiles.flattening_profile(x, 0, **flattened, phi=0),
-        profiles.flattening_profile(x, 0, **full_flattening, phi=0),
+        profiles.kinked_profile(x, 0, **kinked),
+        profiles.flattening_profile(x, 0, **flattened),
+        profiles.flattening_profile(x, 0, **full_flattening),
     ]
     rho_full_flattening, _ = profiles.flattening_rho(
         x,
@@ -54,9 +52,8 @@ def plot_radial_cross_sections(x, parameters):
             key: full_flattening[key]
             for key in ("delta", "xi_0", "rho_s", "d", "w", "gamma", "lam_0")
         },
-        phi=0,
-        psi_0=full_flattening["psi_0"],
-        psi_1=full_flattening["psi_1"],
+        center_angle_xy=full_flattening["center_angle_xy"],
+        flattening_angle_offset=full_flattening["flattening_angle_offset"],
     )
     radii = [rho_shifted, rho_kinked, rho_flattened, rho_full_flattening]
     labels = [
@@ -76,32 +73,35 @@ def plot_radial_cross_sections(x, parameters):
     axes[1].set_xlabel("Normalized poloidal coordinate x")
     axes[0].legend()
     axes[1].legend()
-    fig.suptitle(r"Poloidal profiles along $y=0$ at $\phi=0$")
+    fig.suptitle(r"Poloidal profiles along $y=0$ at center angle $0$")
     return fig
 
 
-def plot_phase_slices(x, y, phi, parameters, profile_name):
-    """Plot one non-axisymmetric profile at several toroidal phases."""
-    xx, yy, pp = np.meshgrid(x, y, phi, indexing="ij")
+def plot_phase_slices(x, y, center_angles, parameters, profile_name):
+    """Plot one non-axisymmetric profile at several poloidal center angles."""
+    xx, yy, aa = np.meshgrid(x, y, center_angles, indexing="ij")
     axisymmetric = profiles.axisymmetric_profile(
         xx, yy, **parameters["axisymmetric"],
     )
 
     if profile_name == "kinked":
-        values = profiles.kinked_profile(xx, yy, **parameters["kinked"], phi=pp)
+        values = profiles.kinked_profile(
+            xx, yy, **(parameters["kinked"] | {"center_angle_xy": aa}),
+        )
     elif profile_name == "flattened":
         values = profiles.flattening_profile(
-            xx, yy, **parameters["flattened"], phi=pp,
+            xx, yy, **(parameters["flattened"] | {"center_angle_xy": aa}),
         )
     elif profile_name == "full flattening":
         values = profiles.flattening_profile(
-            xx, yy, **parameters["full_flattening"], phi=pp,
+            xx, yy,
+            **(parameters["full_flattening"] | {"center_angle_xy": aa}),
         )
     else:
         raise ValueError(f"Unknown profile name: {profile_name}")
 
     ncols = 4
-    nrows = int(np.ceil(phi.size / ncols))
+    nrows = int(np.ceil(center_angles.size / ncols))
     fig, axes = plt.subplots(
         nrows,
         ncols,
@@ -114,7 +114,7 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
     levels = np.linspace(0, parameters["axisymmetric"]["A"], 16)
     contour = None
     for index, ax in enumerate(axes.flat):
-        if index >= phi.size:
+        if index >= center_angles.size:
             ax.set_visible(False)
             continue
         contour = ax.contourf(
@@ -129,7 +129,9 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
             linewidths=0.5,
             linestyles="--",
         )
-        ax.set_title(rf"$\phi={phi[index] / np.pi:.2g}\pi$")
+        ax.set_title(
+            rf"$\theta_c={center_angles[index] / np.pi:.2g}\pi$",
+        )
         ax.set_aspect("equal")
 
     for ax in axes[-1, :]:
@@ -137,7 +139,9 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
             ax.set_xlabel("x")
     for ax in axes[:, 0]:
         ax.set_ylabel("y")
-    fig.suptitle(f"{profile_name.capitalize()} profile over toroidal phase")
+    fig.suptitle(
+        f"{profile_name.capitalize()} profile over poloidal center angle",
+    )
     fig.colorbar(
         contour,
         ax=axes,
@@ -151,11 +155,16 @@ def plot_phase_slices(x, y, phi, parameters, profile_name):
 def main():
     x = np.linspace(-1, 1, 101)
     y = np.linspace(-1, 1, 101)
-    phi = np.linspace(-np.pi, np.pi, 8, endpoint=False)
+    center_angles = np.linspace(-np.pi, np.pi, 8, endpoint=False)
 
     axisymmetric = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
-    kinked = axisymmetric | dict(xi_0=0.4, rho_s=0.3, d=2.0, psi_0=0.0)
-    flattened = kinked | dict(w=0.4, gamma=0.1, lam_0=0.5, psi_1=np.pi)
+    kinked = axisymmetric | dict(
+        xi_0=0.4, rho_s=0.3, d=2.0, center_angle_xy=0.0,
+    )
+    flattened = kinked | dict(
+        w=0.4, gamma=0.1, lam_0=0.5,
+        flattening_angle_offset=np.pi,
+    )
     full_flattening = flattened | dict(lam_0=1.0)
     parameters = {
         "axisymmetric": axisymmetric,
@@ -165,9 +174,9 @@ def main():
     }
 
     plot_radial_cross_sections(x, parameters)
-    plot_phase_slices(x, y, phi, parameters, "kinked")
-    plot_phase_slices(x, y, phi, parameters, "flattened")
-    plot_phase_slices(x, y, phi, parameters, "full flattening")
+    plot_phase_slices(x, y, center_angles, parameters, "kinked")
+    plot_phase_slices(x, y, center_angles, parameters, "flattened")
+    plot_phase_slices(x, y, center_angles, parameters, "full flattening")
     plt.show()
 
 

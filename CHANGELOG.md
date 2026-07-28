@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0
+
+- Make non-axisymmetric profiles accept an explicit poloidal
+  `center_angle_xy` instead of imposing a toroidal `phi`/`psi_0` phase
+  convention. Rename the flattening orientation parameter to
+  `flattening_angle_offset`.
+- Add `helical_center_angle` to propagate a poloidal Cartesian reference
+  angle across `phi` using caller-supplied signed mode numbers and NumPy
+  broadcasting.
+- Remove the profile-local torus/helical conversion helpers and the unused
+  sharp minimum-flattening variant. Coordinate conversion remains in
+  `multi_pinhole.coordinates`; applications now derive time-, toroidal-, and
+  mode-dependent center angles before profile evaluation.
+
 ## 0.8.6
 
 - Allow `World.project` and `World.backproject` to apply their cached sparse

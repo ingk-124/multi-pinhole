@@ -120,8 +120,18 @@ x, y, phi = voxel.to_coordinates(
     major_radius=1500,
     minor_radius=500,
 ).T
+# This example chooses a one-to-one toroidal phase relation. Applications can
+# derive the center angle from time, phi, and their own mode convention.
+center_angle_xy = profiles.helical_center_angle(
+    phi,
+    center_angle_xy_ref=0.0,
+    m=1,
+    n=1,
+    phi_ref=0.0,
+)
 shape = profiles.kinked_profile(
     x, y, A=1.0, delta=0.1, alpha=2, beta=3,
-    xi_0=0.1, rho_s=0.5, d=2, phi=phi,
+    xi_0=0.1, rho_s=0.5, d=2,
+    center_angle_xy=center_angle_xy,
 )
 ```
