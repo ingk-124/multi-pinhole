@@ -87,7 +87,7 @@ eye_image = world.projection[0][0] @ emission   # eye 0、形状 (N_pixel,)
 
 Cartesian voxel重心上の値は`Voxel.center_interpolator(values, **interpolator_kwargs)`で再利用できます。返されたcallableはCartesianの`points`、または明示的な`coordinate_type`とkeyword成分を受け取ります。named成分はCartesianへ逆変換され、NumPy規則でbroadcastされた後に補間されます。scalar値に加えて末尾にvector/tensor shapeを持つ値も扱えます。この通常補間APIは、projection組立で使うprivateな体積重み付きsource quadrature行列とは別物です。
 
-`multi_pinhole.profiles` は、正規化poloidal Cartesian `(x, y)`を入力とする、物理量に依存しない組み合わせ可能なprofile helperを提供します。非軸対称modelだけ`phi`も受け取ります。点は`Voxel.to_coordinates()`で明示的に変換し、`x`, `y`と必要なら`phi`をaxisymmetric、kinked、flattening profileへ渡します。これにより座標規約をprofile数式から分離します。描画、フィッティング、実験固有の診断はcore profile APIの外側に置く想定です。
+`multi_pinhole.profiles` は、正規化poloidal Cartesian `(x, y)`を入力とする、物理量に依存しない組み合わせ可能なprofile helperを提供します。非軸対称modelには、poloidal `+x` 軸から反時計回りに測った `center_angle_xy` を明示します。`profiles.helical_center_angle(phi, center_angle_xy_ref, m=..., n=..., phi_ref=...)` はhelical pitchをNumPy broadcastで展開しますが、`phi`が通常規約かinverse規約かは判定しません。呼び出し側が座標規約と整合するsigned `n`を渡し、Hilbert phaseから参照角への変換と回転方向も外側で決定します。これにより座標・mode規約をprofile数式から分離します。描画、フィッティング、実験固有の診断はcore profile APIの外側に置く想定です。
 
 ## 注目すべき機能
 

@@ -42,10 +42,17 @@ def make_test_profile(voxel):
         normalized=True,
         **voxel.coordinate_parameters,
     ).T
+    center_angle_xy = profiles.helical_center_angle(
+        phi,
+        center_angle_xy_ref=0.0,
+        m=1,
+        n=1,
+        phi_ref=0.0,
+    )
     return profiles.flattening_profile(
         x,
         y,
-        phi=phi,
+        center_angle_xy=center_angle_xy,
         A=1.0,
         delta=0.1,
         alpha=2,

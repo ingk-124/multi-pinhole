@@ -214,12 +214,18 @@ the private, volume-weighted source-quadrature matrices used by projection
 assembly.
 
 `multi_pinhole.profiles` provides composable, physical-quantity-independent
-helpers on normalized poloidal Cartesian `(x, y)` coordinates. Non-axisymmetric
-models additionally accept `phi`. Convert points explicitly with
-`Voxel.to_coordinates()`, then pass `x`, `y`, and where needed `phi` to the
-axisymmetric, kinked, or flattening profile. This keeps coordinate conventions
-out of the profile equations. Plotting, fitting, and experiment-specific
-diagnostics should live outside the core profile API.
+helpers on normalized poloidal Cartesian `(x, y)` coordinates.
+Non-axisymmetric models accept an explicit `center_angle_xy`, measured
+counter-clockwise from the positive poloidal `x` axis. Applications derive
+that angle from time, toroidal position, and mode numbers before calling the
+profile. `profiles.helical_center_angle(phi, center_angle_xy_ref, m=..., n=...,
+phi_ref=...)` performs the broadcast helical propagation but deliberately
+does not infer the `phi` convention; callers provide a signed `n` consistent
+with their coordinates. The profile module does not impose a Hilbert-phase
+or rotation-direction convention.
+This keeps coordinate and mode conventions out of the profile equations.
+Plotting, fitting, and experiment-specific diagnostics should live outside
+the core profile API.
 
 ## Notable Capabilities
 

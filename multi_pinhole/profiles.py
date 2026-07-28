@@ -17,87 +17,54 @@ def _as_array(value: ArrayLike) -> FloatArray:
     return np.asarray(value, dtype=float)
 
 
-def torus_to_poloidal_cartesian(
-        r: ArrayLike,
-        theta: ArrayLike,
-        phi: ArrayLike
-) -> tuple[FloatArray, FloatArray, ArrayLike]:
-    """Convert normalized torus coordinates to poloidal Cartesian coordinates.
-
-    Parameters
-    ----------
-    r, theta : array-like
-        Dimensionless minor radius and poloidal angle in radians. Inputs use
-        NumPy broadcasting.
-    phi : scalar or ndarray
-        Toroidal angle in radians. It is returned unchanged, without coercion.
-
-    Returns
-    -------
-    x, y, phi : tuple
-        ``x=r*cos(theta)`` and ``y=r*sin(theta)`` with broadcast shape, plus
-        the original ``phi`` object. Non-finite values propagate through NumPy.
-    """
-    x = _as_array(r) * np.cos(theta)
-    y = _as_array(r) * np.sin(theta)
-    return x, y, phi
-
-
-def helical_phase(
-        theta: ArrayLike,
+def helical_center_angle(
         phi: ArrayLike,
-        m_: ArrayLike,
-        n_: ArrayLike,
-        phi_0: ArrayLike = 0
+        center_angle_xy_ref: ArrayLike,
+        *,
+        m: ArrayLike,
+        n: ArrayLike,
+        phi_ref: ArrayLike
 ) -> FloatArray:
-    """Calculate a helical phase ``m*theta - n*(phi - phi_0)``.
+    """Propagate a reference poloidal-center angle along a helical structure.
 
     Parameters
     ----------
-    theta, phi : array-like
-        Poloidal and toroidal angles in radians.
-    m_, n_ : scalar or array-like
-        Dimensionless mode numbers. Integer values are intended but not enforced.
-    phi_0 : scalar or array-like, default=0
-        Phase origin in radians.
+    phi : array-like
+        Toroidal angle in radians at each evaluation point.
+    center_angle_xy_ref : array-like
+        Poloidal-center angle in radians at ``phi_ref``. It is measured
+        counter-clockwise from the outward poloidal Cartesian ``+x`` axis
+        toward ``+y`` (upward).
+    m, n : scalar or array-like
+        Signed poloidal and toroidal mode numbers. ``m`` must be nonzero.
+    phi_ref : scalar or array-like
+        Toroidal reference angle in radians.
 
     Returns
     -------
     ndarray
-        Phase in radians with the broadcast input shape. Non-finite values propagate.
+        Poloidal Cartesian center angle
+        ``center_angle_xy_ref + (n / m) * (phi - phi_ref)`` with the
+        broadcast input shape. Angles are not wrapped.
+
+    Raises
+    ------
+    ValueError
+        If any value of ``m`` is zero.
+
+    Notes
+    -----
+    This function does not infer whether ``phi`` follows the ``torus`` or
+    ``torus_inverse`` convention. The caller supplies a signed ``n`` that is
+    consistent with the chosen toroidal-angle convention.
     """
-    return m_ * _as_array(theta) - n_ * (_as_array(phi) - phi_0)
-
-
-def helical_poloidal_coordinates(
-        r: ArrayLike,
-        theta: ArrayLike,
-        phi: ArrayLike,
-        m_: ArrayLike,
-        n_: ArrayLike,
-        phi_0: ArrayLike = 0
-) -> tuple[FloatArray, FloatArray, FloatArray]:
-    """Convert ``(r, theta, phi)`` to ``(x, y, psi)`` helical coordinates.
-
-    Parameters
-    ----------
-    r : array-like
-        Dimensionless minor radius.
-    theta, phi : array-like
-        Poloidal and toroidal angles in radians.
-    m_, n_ : scalar or array-like
-        Dimensionless mode numbers; integer values are intended but unchecked.
-    phi_0 : scalar or array-like, default=0
-        Phase origin in radians.
-
-    Returns
-    -------
-    x, y, psi : tuple of ndarray
-        Broadcast dimensionless poloidal coordinates and helical phase in radians.
-    """
-    x, y, _ = torus_to_poloidal_cartesian(r, theta, phi)
-    psi = helical_phase(theta, phi, m_=m_, n_=n_, phi_0=phi_0)
-    return x, y, psi
+    m = _as_array(m)
+    if np.any(m == 0):
+        raise ValueError("m must be nonzero")
+    return (
+        _as_array(center_angle_xy_ref)
+        + (_as_array(n) / m) * (_as_array(phi) - _as_array(phi_ref))
+    )
 
 
 def shifted_polar(
@@ -158,21 +125,19 @@ def rigid_shifted_polar(
         y: ArrayLike,
         delta: ArrayLike,
         xi: ArrayLike,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0
+        center_angle_xy: ArrayLike = 0
 ) -> tuple[FloatArray, FloatArray]:
-    """Apply a rigid toroidally rotating shift and return shifted polar coordinates.
+    """Apply a rigid shift and return shifted polar coordinates.
 
     Parameters
     ----------
     x, y : array-like
         Dimensionless poloidal Cartesian coordinates.
     delta, xi : scalar or array-like
-        Dimensionless static and rotating displacement amplitudes.
-    phi : scalar or array-like, default=0
-        Toroidal angle in radians.
-    psi_0 : scalar or array-like, default=0
-        Phase offset in radians. Inputs broadcast.
+        Dimensionless static and directional displacement amplitudes.
+    center_angle_xy : scalar or array-like, default=0
+        Displacement angle measured counter-clockwise from the positive
+        poloidal ``x`` axis. Inputs broadcast.
 
     Returns
     -------
@@ -181,11 +146,11 @@ def rigid_shifted_polar(
 
     Notes
     -----
-    The shift center is ``(delta + xi*cos(phi+psi_0), xi*sin(phi+psi_0))``.
-    Singular and non-finite behavior is inherited from :func:`shifted_polar`.
+    Singular and non-finite behavior is inherited from
+    :func:`shifted_polar`.
     """
-    cx = delta + xi * np.cos(phi + psi_0)
-    cy = xi * np.sin(phi + psi_0)
+    cx = delta + xi * np.cos(center_angle_xy)
+    cy = xi * np.sin(center_angle_xy)
     return shifted_polar(x, y, cx, cy)
 
 
@@ -327,9 +292,9 @@ def smooth_minimum(
 def _distort_theta(
         theta: ArrayLike,
         gamma: ArrayLike,
-        psi_0: ArrayLike
+        reference_angle: ArrayLike
 ) -> FloatArray:
-    theta_offset = theta - psi_0
+    theta_offset = theta - reference_angle
     return theta_offset + gamma * np.sin(theta_offset)
 
 
@@ -340,8 +305,7 @@ def kinked_rho(
         xi_0: ArrayLike,
         rho_s: ArrayLike,
         d: ArrayLike,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0
+        center_angle_xy: ArrayLike = 0
 ) -> tuple[FloatArray, FloatArray]:
     """Return polar coordinates after a radially decaying rigid-shift kink.
 
@@ -353,8 +317,9 @@ def kinked_rho(
         Dimensionless static shift, kink amplitude, and decay radius.
     d : scalar or array-like
         Decay exponent; positive values and nonzero ``rho_s`` are intended.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians. Inputs broadcast.
+    center_angle_xy : scalar or array-like, default=0
+        Kink displacement angle measured counter-clockwise from the positive
+        poloidal ``x`` axis.
 
     Returns
     -------
@@ -368,7 +333,10 @@ def kinked_rho(
     """
     rho_shifted, _ = shifted_polar(x, y, delta, 0)
     xi = xi_0 * np.exp(-(rho_shifted / rho_s) ** d)
-    return rigid_shifted_polar(x, y, delta, xi, phi=phi, psi_0=psi_0)
+    return rigid_shifted_polar(
+        x, y, delta, xi,
+        center_angle_xy=center_angle_xy,
+    )
 
 
 def flattening_rho(
@@ -381,9 +349,8 @@ def flattening_rho(
         w: ArrayLike,
         gamma: ArrayLike = 0,
         lam_0: ArrayLike = 1,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0,
-        psi_1: ArrayLike = np.pi
+        center_angle_xy: ArrayLike = 0,
+        flattening_angle_offset: ArrayLike = np.pi,
 ) -> tuple[FloatArray, FloatArray]:
     """Return coordinates after kink displacement and smooth partial flattening.
 
@@ -399,10 +366,12 @@ def flattening_rho(
         Dimensionless angular-distortion amplitude.
     lam_0 : scalar or array-like, default=1
         Blend amplitude. It is not clipped, so values outside ``[0, 1]`` extrapolate.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians.
-    psi_1 : scalar or array-like, default=pi
-        Angular flattening offset in radians. Inputs broadcast.
+    center_angle_xy : scalar or array-like, default=0
+        Kink displacement angle measured counter-clockwise from the positive
+        poloidal ``x`` axis.
+    flattening_angle_offset : scalar or array-like, default=pi
+        Angular offset of the flattening region relative to the kink
+        displacement direction. Inputs broadcast.
 
     Returns
     -------
@@ -416,55 +385,20 @@ def flattening_rho(
     ``rho_s=0``, unsuitable exponents, and non-finite inputs follow NumPy.
     """
     rho_shifted, _ = shifted_polar(x, y, delta, 0)
-    rho_kinked, theta_kinked = kinked_rho(x, y, delta, xi_0, rho_s, d, phi=phi, psi_0=psi_0)
+    rho_kinked, theta_kinked = kinked_rho(
+        x, y, delta, xi_0, rho_s, d,
+        center_angle_xy=center_angle_xy,
+    )
     rho_flat = smooth_maximum(rho_s, rho_shifted)
-    theta_distorted = _distort_theta(theta_kinked, gamma=gamma, psi_0=phi + psi_1 + psi_0)
+    theta_distorted = _distort_theta(
+        theta_kinked,
+        gamma=gamma,
+        reference_angle=center_angle_xy + flattening_angle_offset,
+    )
     angular_weight = 0.5 * (1 + np.cos(theta_distorted))
     lam = gaussian(rho_kinked, rho_s, w) * angular_weight * lam_0
     rho_merged = (1 - lam) * rho_kinked + lam * rho_flat
     return rho_merged, theta_distorted
-
-
-def flattening_rho_min(
-        x: ArrayLike,
-        y: ArrayLike,
-        delta: ArrayLike,
-        xi_0: ArrayLike,
-        rho_s: ArrayLike,
-        d: ArrayLike,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0
-) -> tuple[FloatArray, FloatArray]:
-    """Return the minimum-model flattened polar coordinates.
-
-    Parameters
-    ----------
-    x, y : array-like
-        Dimensionless poloidal Cartesian coordinates.
-    delta, xi_0, rho_s : scalar or array-like
-        Dimensionless static shift, kink amplitude, and flattening radius.
-    d : scalar or array-like
-        Radial decay exponent; positive values are intended.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians. Inputs broadcast.
-
-    Returns
-    -------
-    rho, theta : tuple of ndarray
-        Minimum-merged dimensionless radius and kinked angle in radians.
-
-    Notes
-    -----
-    This is the sharp minimum variant of :func:`flattening_rho`: it merges
-    the kinked radius with ``smooth_maximum(rho_s, rho_shifted)`` using an
-    exact minimum. It therefore has no Gaussian width or angular blend.
-    """
-    rho_shifted, _ = shifted_polar(x, y, delta, 0)
-    rho_kinked, theta_kinked = kinked_rho(
-        x, y, delta, xi_0, rho_s, d, phi=phi, psi_0=psi_0,
-    )
-    rho_flat = smooth_maximum(rho_s, rho_shifted)
-    return np.minimum(rho_kinked, rho_flat), theta_kinked
 
 
 def _profile_from_rho(
@@ -532,9 +466,8 @@ def kinked_profile(
         xi_0: ArrayLike,
         rho_s: ArrayLike,
         d: ArrayLike,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0,
-        edge_value: ArrayLike = 0
+        center_angle_xy: ArrayLike = 0,
+        edge_value: ArrayLike = 0,
 ) -> FloatArray:
     """Evaluate a two-power profile on kink-displaced coordinates.
 
@@ -548,8 +481,9 @@ def kinked_profile(
         Dimensionless displacement parameters and decay radius.
     alpha, beta, d : scalar or array-like
         Two-power and decay exponents; positive values are intended.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians. Inputs broadcast.
+    center_angle_xy : scalar or array-like, default=0
+        Kink displacement angle measured counter-clockwise from the positive
+        poloidal ``x`` axis.
     edge_value : scalar or array-like, default=0
         Profile value where the effective ``rho=1``. The central value
         remains ``A`` and the profile is zero where ``x**2 + y**2 > 1``.
@@ -560,7 +494,10 @@ def kinked_profile(
         Broadcast profile. Clipping and singularities follow
         :func:`kinked_rho` and :func:`two_power`.
     """
-    rho_kinked, _ = kinked_rho(x, y, delta, xi_0, rho_s, d, phi=phi, psi_0=psi_0)
+    rho_kinked, _ = kinked_rho(
+        x, y, delta, xi_0, rho_s, d,
+        center_angle_xy=center_angle_xy,
+    )
     return _profile_from_rho(x, y, rho_kinked, A, alpha, beta, edge_value)
 
 
@@ -577,10 +514,9 @@ def flattening_profile(
         w: ArrayLike,
         gamma: ArrayLike = 0,
         lam_0: ArrayLike = 1,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0,
-        psi_1: ArrayLike = np.pi,
-        edge_value: ArrayLike = 0
+        center_angle_xy: ArrayLike = 0,
+        flattening_angle_offset: ArrayLike = np.pi,
+        edge_value: ArrayLike = 0,
 ) -> FloatArray:
     """Evaluate a two-power profile on kinked and flattened coordinates.
 
@@ -598,10 +534,12 @@ def flattening_profile(
         Dimensionless angular-distortion amplitude.
     lam_0 : scalar or array-like, default=1
         Unclipped blend amplitude.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians.
-    psi_1 : scalar or array-like, default=pi
-        Flattening offset in radians. Inputs broadcast.
+    center_angle_xy : scalar or array-like, default=0
+        Kink displacement angle measured counter-clockwise from the positive
+        poloidal ``x`` axis.
+    flattening_angle_offset : scalar or array-like, default=pi
+        Angular offset of the flattening region relative to the kink
+        displacement direction. Inputs broadcast.
     edge_value : scalar or array-like, default=0
         Profile value where the effective ``rho=1``. The central value
         remains ``A`` and the profile is zero where ``x**2 + y**2 > 1``.
@@ -614,50 +552,6 @@ def flattening_profile(
     """
     rho_flattened, _ = flattening_rho(x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
                                       w=w, gamma=gamma, lam_0=lam_0,
-                                      phi=phi, psi_0=psi_0, psi_1=psi_1)
-    return _profile_from_rho(x, y, rho_flattened, A, alpha, beta, edge_value)
-
-
-def flattening_profile_min(
-        x: ArrayLike,
-        y: ArrayLike,
-        A: ArrayLike,
-        delta: ArrayLike,
-        alpha: ArrayLike,
-        beta: ArrayLike,
-        xi_0: ArrayLike,
-        rho_s: ArrayLike,
-        d: ArrayLike,
-        phi: ArrayLike = 0,
-        psi_0: ArrayLike = 0,
-        edge_value: ArrayLike = 0
-) -> FloatArray:
-    """Evaluate a two-power profile on minimum-flattened coordinates.
-
-    Parameters
-    ----------
-    x, y : array-like
-        Dimensionless poloidal Cartesian coordinates.
-    A : scalar or array-like
-        Generic profile amplitude; it may carry application-defined units.
-    delta, xi_0, rho_s : scalar or array-like
-        Dimensionless static shift, kink amplitude, and flattening radius.
-    alpha, beta, d : scalar or array-like
-        Two-power and radial-decay exponents; positive values are intended.
-    phi, psi_0 : scalar or array-like, default=0
-        Toroidal angle and phase origin in radians. Inputs broadcast.
-    edge_value : scalar or array-like, default=0
-        Profile value where the effective ``rho=1``. The central value
-        remains ``A`` and the profile is zero where ``x**2 + y**2 > 1``.
-
-    Returns
-    -------
-    ndarray
-        Broadcast generic profile evaluated using
-        :func:`flattening_rho_min`.
-    """
-    rho_flattened, _ = flattening_rho_min(
-        x, y, delta=delta, xi_0=xi_0, rho_s=rho_s, d=d,
-        phi=phi, psi_0=psi_0,
-    )
+                                      center_angle_xy=center_angle_xy,
+                                      flattening_angle_offset=flattening_angle_offset)
     return _profile_from_rho(x, y, rho_flattened, A, alpha, beta, edge_value)
