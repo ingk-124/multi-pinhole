@@ -71,11 +71,12 @@ origin ``theta`` is ``nan``; azimuth on the ``z`` axis follows NumPy's
    voxels are visible (unobstructed by apertures or walls) and builds the
    sparse `(N_pixel, N_voxel)` matrix `world.P_matrix[camera_idx]`. See the
    worked example below and `docs/world.md` for the full pipeline.
-6. **Render or invert.** Given a voxel-intensity vector `emission`
-   (`shape (N_voxel,)`), `world.P_matrix[camera_idx] @ emission` is the
-   simulated pixel image. `world.projection[camera_idx][eye_idx] @ emission`
-   is one eye's contribution in the same pixel coordinates. Detector
-   subpixels are transient quadrature samples and are not cached.
+6. **Render or invert.** Given voxel intensities `emission` with shape
+   `(N_voxel,)` or a column-wise batch with shape `(N_voxel, N_rhs)`,
+   `world.project(emission, camera_idx)` returns shape `(N_pixel,)` or
+   `(N_pixel, N_rhs)`. Selecting an `eye_idx` returns one eye's contribution
+   in the same pixel coordinates. Detector subpixels are transient quadrature
+   samples and are not cached.
 
 ### Worked example: from an empty `World` to a rendered image
 

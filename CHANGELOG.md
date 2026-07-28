@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.6
+
+- Allow `World.project` and `World.backproject` to apply their cached sparse
+  operators to column-wise batches while preserving the existing vector API.
+
 ## 0.8.5
 
 - Add a common ``edge_value`` boundary value to all generic profile models

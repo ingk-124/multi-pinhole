@@ -23,7 +23,7 @@ Projection matrix の検証項目と今後の改善候補は
 3. **`Camera` を組み立てる。** eye／aperture／screen から `Camera` を構成し、`camera_position` と回転によってワールド空間に配置します。
 4. **`World` を構築する。** ボクセルグリッドとカメラから `World` を作り、`World.set_inside_vertices(...)` によって、どのボクセル頂点が対象体積の物理的な「内部」であるかをマークします（外部の頂点は以降の可視性・投影計算からスキップされます——これにより、例えば矩形のボクセル箱の中にあるトーラス形状のプラズマ体積を表現できます）。
 5. **可視性と投影行列を計算する。** `World.set_projection_matrix()` は、各カメラの各 eye について、（aperture や壁によって遮られていない）可視なボクセルを判定し、疎な `(N_pixel, N_voxel)` 行列 `world.P_matrix[camera_idx]` を構築します。以下の具体例と `docs/world.md` の全パイプライン解説を参照してください。
-6. **レンダリング、または逆問題を解く。** ボクセル強度ベクトル `emission`（形状 `(N_voxel,)`）が与えられれば、`world.P_matrix[camera_idx] @ emission` が全eyeを合算したピクセル画像になります。`world.projection[camera_idx][eye_idx] @ emission` は同じpixel座標における1つのeyeの寄与です。subpixelは面積積分の一時的な評価点であり、projection cacheには保持されません。
+6. **レンダリング、または逆問題を解く。** `emission` は形状 `(N_voxel,)` のベクトルに加え、列ごとに独立な形状 `(N_voxel, N_rhs)` のbatchを使用できます。`world.project(emission, camera_idx)` はそれぞれ形状 `(N_pixel,)` または `(N_pixel, N_rhs)` を返し、`eye_idx`を指定すると1つのeyeの寄与を返します。subpixelは面積積分の一時的な評価点であり、projection cacheには保持されません。
 
 ### 具体例：空の `World` から画像レンダリングまで
 
