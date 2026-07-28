@@ -134,7 +134,7 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 
-構築後は `world.project(emission, camera_idx, eye_idx=None)` でcamera合算行列を適用でき、`eye_idx`を指定すると1つのEye行列だけを適用できます。`world.backproject(image, camera_idx, eye_idx=None)` は同じ行列の転置を適用します。backprojectionは離散随伴 `P.T @ image` であり、逆問題の解や逆行列ではありません。どちらのmethodも投影行列を暗黙に構築せず、対象行列がcacheされていなければ `RuntimeError` を送出します。
+構築後は `world.project(emission, camera_idx, eye_idx=None)` でcamera合算行列を適用でき、`eye_idx`を指定すると1つのEye行列だけを適用できます。`world.backproject(image, camera_idx, eye_idx=None)` は同じ行列の転置を適用します。両methodはベクトルだけでなく列ごとのbatchを受け入れ、`(N_voxel, N_rhs)` と `(N_pixel, N_rhs)` の末尾の `N_rhs` を結果でも維持します。backprojectionは離散随伴 `P.T @ image` であり、逆問題の解や逆行列ではありません。どちらのmethodも投影行列を暗黙に構築せず、対象行列がcacheされていなければ `RuntimeError` を送出します。
 
 ### `trace_line`：完全な行列を構築せずに少数の点を投影する
 

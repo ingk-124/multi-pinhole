@@ -67,6 +67,21 @@ def test_world_project_and_backproject_wrap_cached_sparse_matrices():
         rtol=1e-14, atol=1e-14,
     )
 
+    emissions = np.column_stack((emission, 2 * emission, -emission))
+    images = np.column_stack((image, image ** 2, -image))
+    projected = world.project(emissions, camera_idx="main")
+    backprojected = world.backproject(images, camera_idx="main")
+
+    assert projected.shape == (camera.screen.N_pixel, 3)
+    assert backprojected.shape == (voxel.N, 3)
+    np.testing.assert_allclose(projected, eye_projection @ emissions)
+    np.testing.assert_allclose(backprojected, eye_projection.T @ images)
+    np.testing.assert_allclose(
+        np.sum(projected * images),
+        np.sum(emissions * backprojected),
+        rtol=1e-14, atol=1e-14,
+    )
+
 
 def test_world_project_and_backproject_validate_cache_selection_and_shapes():
     voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2))
@@ -78,7 +93,9 @@ def test_world_project_and_backproject_validate_cache_selection_and_shapes():
     with pytest.raises(KeyError, match="not registered"):
         world.project(np.ones(voxel.N), camera_idx="missing")
     with pytest.raises(ValueError, match="emission must have shape"):
-        world.project(np.ones((voxel.N, 1)), camera_idx="main")
+        world.project(np.ones((1, voxel.N)), camera_idx="main")
+    with pytest.raises(ValueError, match="emission must have shape"):
+        world.project(np.ones((voxel.N, 1, 1)), camera_idx="main")
     with pytest.raises(TypeError, match="eye_idx"):
         world.project(np.ones(voxel.N), camera_idx="main", eye_idx="0")
     with pytest.raises(IndexError, match="eye_idx"):
@@ -89,6 +106,10 @@ def test_world_project_and_backproject_validate_cache_selection_and_shapes():
     )
     with pytest.raises(ValueError, match="image must have shape"):
         world.backproject(np.ones(camera.screen.N_pixel + 1), camera_idx="main")
+    with pytest.raises(ValueError, match="image must have shape"):
+        world.backproject(
+            np.ones((camera.screen.N_pixel, 1, 1)), camera_idx="main",
+        )
 
 
 def test_uniform_voxel_from_centers_preserves_requested_gravity_center_ranges():

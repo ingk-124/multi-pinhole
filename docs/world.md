@@ -196,9 +196,11 @@ visibility result.
 After construction, `world.project(emission, camera_idx, eye_idx=None)`
 applies the cached camera-summed matrix, or one Eye matrix when `eye_idx` is
 given. `world.backproject(image, camera_idx, eye_idx=None)` applies its
-transpose. Backprojection is the discrete adjoint `P.T @ image`, not an
-inverse reconstruction. Neither method starts an implicit projection build;
-they raise `RuntimeError` when the requested matrix is not cached.
+transpose. Both accept either a vector or a column-wise batch: shapes
+`(N_voxel, N_rhs)` and `(N_pixel, N_rhs)` preserve `N_rhs` in the result.
+Backprojection is the discrete adjoint `P.T @ image`, not an inverse
+reconstruction. Neither method starts an implicit projection build; they
+raise `RuntimeError` when the requested matrix is not cached.
 
 ### `_calc_voxel_image_for_eye`: fully-visible vs. partially-visible voxels
 

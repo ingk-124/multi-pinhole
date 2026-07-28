@@ -64,12 +64,17 @@ image = world.project(emission, camera_idx="main")
 adjoint = world.backproject(image, camera_idx="main")
 assert image.shape == (screen.N_pixel,)
 assert adjoint.shape == (voxel.N,)
+
+# Columns are independent emission profiles and remain separate in the result.
+image_batch = world.project(np.ones((voxel.N, 3)), camera_idx="main")
+assert image_batch.shape == (screen.N_pixel, 3)
 ```
 
 `project` applies a previously constructed matrix; it never builds one
 implicitly. `backproject` applies the discrete adjoint `P.T` and is not an
-inverse reconstruction. See [the world guide](docs/world.md) for resolution
-policies and [the core guide](docs/core.md) for detector integration.
+inverse reconstruction. Both methods accept a vector or a column-wise batch.
+See [the world guide](docs/world.md) for resolution policies and
+[the core guide](docs/core.md) for detector integration.
 
 ## Classes
 - `World`: Represents the 3D world to be imaged.

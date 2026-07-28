@@ -417,8 +417,9 @@ class World:
 
         Parameters
         ----------
-        emission : array-like, shape (N_voxel,)
-            Emission value at every voxel center.
+        emission : array-like, shape (N_voxel,) or (N_voxel, N_rhs)
+            One or more emission values at every voxel center. For a matrix,
+            each column is projected independently.
         camera_idx : Hashable
             Key of the camera to project. The camera's Eye contributions are
             summed when ``eye_idx`` is ``None``.
@@ -427,8 +428,9 @@ class World:
 
         Returns
         -------
-        numpy.ndarray, shape (N_pixel,)
-            Pixel-space image.
+        numpy.ndarray, shape (N_pixel,) or (N_pixel, N_rhs)
+            Pixel-space image or column-wise batch of images. The number of
+            dimensions matches ``emission``.
 
         Notes
         -----
@@ -436,20 +438,22 @@ class World:
         :meth:`set_projection_matrix` before projecting.
         """
         emission = np.asarray(emission)
-        if emission.ndim != 1 or emission.shape[0] != self.voxel.N:
+        if emission.ndim not in (1, 2) or emission.shape[0] != self.voxel.N:
             raise ValueError(
-                f"emission must have shape {(self.voxel.N,)}, got {emission.shape}"
+                f"emission must have shape ({self.voxel.N},) or "
+                f"({self.voxel.N}, N_rhs), got {emission.shape}"
             )
         operator = self._projection_operator(camera_idx, eye_idx)
-        return np.asarray(operator @ emission).reshape(-1)
+        return np.asarray(operator @ emission)
 
     def backproject(self, image, camera_idx: Hashable, eye_idx: int | None = None):
         """Apply the transpose of a cached voxel-to-pixel projection matrix.
 
         Parameters
         ----------
-        image : array-like, shape (N_pixel,)
-            Pixel-space values to map back to voxel space.
+        image : array-like, shape (N_pixel,) or (N_pixel, N_rhs)
+            One or more pixel-space values to map back to voxel space. For a
+            matrix, each column is backprojected independently.
         camera_idx : Hashable
             Key of the camera whose transpose is applied. The camera-summed
             projection is used when ``eye_idx`` is ``None``.
@@ -458,8 +462,9 @@ class World:
 
         Returns
         -------
-        numpy.ndarray, shape (N_voxel,)
-            Result of the discrete adjoint operation ``P.T @ image``.
+        numpy.ndarray, shape (N_voxel,) or (N_voxel, N_rhs)
+            Result of the discrete adjoint operation ``P.T @ image``. The
+            number of dimensions matches ``image``.
 
         Notes
         -----
@@ -468,12 +473,12 @@ class World:
         """
         operator = self._projection_operator(camera_idx, eye_idx)
         image = np.asarray(image)
-        expected_shape = (operator.shape[0],)
-        if image.ndim != 1 or image.shape != expected_shape:
+        if image.ndim not in (1, 2) or image.shape[0] != operator.shape[0]:
             raise ValueError(
-                f"image must have shape {expected_shape}, got {image.shape}"
+                f"image must have shape ({operator.shape[0]},) or "
+                f"({operator.shape[0]}, N_rhs), got {image.shape}"
             )
-        return np.asarray(operator.T @ image).reshape(-1)
+        return np.asarray(operator.T @ image)
 
     @property
     def inside_vertices(self):
