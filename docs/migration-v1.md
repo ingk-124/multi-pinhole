@@ -53,4 +53,3 @@ without source provenance rather than silently losing them.
 
 No optics modules moved for 1.0. Projection formulae, processing order,
 dtypes, tolerances, and projection cache schema 3 are unchanged.
-

@@ -66,4 +66,3 @@ untrusted or unauthenticated source.
 The JSON [World config schema](config.md) does not execute callables and is
 the appropriate interchange format when caches and arbitrary Python state
 are unnecessary.
-

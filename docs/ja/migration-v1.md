@@ -50,4 +50,3 @@ STL Aperture、source provenanceのないwall meshは、黙って欠落させず
 
 1.0ではoptics moduleを移動していません。projection数式、処理順、dtype、許容誤差、
 projection cache schema 3は変更していません。
-

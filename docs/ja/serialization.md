@@ -62,4 +62,3 @@ legacy fileからpickle/dill復元を実行します。pickle/dillは任意code�
 
 cacheや任意Python stateが不要な交換用途には、callableを実行しないJSON
 [World config schema](config.md)を使ってください。
-

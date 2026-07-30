@@ -79,4 +79,3 @@ archive if exact Python state must be checkpointed.
 Invalid input raises `multi_pinhole.config.WorldConfigError`, a `ValueError`
 subclass. Unsupported schema versions fail explicitly. Future schema changes
 are independent of both the package version and World archive schema.
-

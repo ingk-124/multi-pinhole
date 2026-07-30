@@ -75,4 +75,3 @@ version 1のinside typeは次の3つです。
 `multi_pinhole.config.WorldConfigError`を送出します。非対応schema versionは明示的に
 失敗します。将来のconfig schema更新はpackage version、World archive schemaの
 どちらからも独立しています。
-
