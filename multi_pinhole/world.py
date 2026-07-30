@@ -222,6 +222,7 @@ class World:
 
         self._walls = []
         self._wall_ranges = None
+        self._config_wall_paths = ()
         self.walls = walls
 
         self._inside_function = None
@@ -346,6 +347,63 @@ class World:
             raise TypeError("serialized object is not a World")
         loaded_world._ensure_projection_cache_schema()
         return loaded_world
+
+    @classmethod
+    def from_config(
+            cls,
+            source: str | os.PathLike[str] | Mapping[str, Any]
+    ) -> "World":
+        """Construct a scene from a strict World JSON configuration.
+
+        Parameters
+        ----------
+        source : path-like or mapping
+            JSON path or an already-parsed mapping following World config
+            schema version 1. Relative STL paths are resolved from the JSON
+            file's directory, or from the current directory for a mapping.
+
+        Returns
+        -------
+        World
+            Newly constructed scene without visibility or projection caches.
+
+        Raises
+        ------
+        multi_pinhole.config.WorldConfigError
+            If the schema, a field, a type, a shape, or a referenced STL file
+            is invalid.
+        """
+        from .config import load_world_config
+
+        return load_world_config(source)
+
+    def to_config(
+            self,
+            destination: str | os.PathLike[str] | None = None
+    ) -> dict[str, Any]:
+        """Return the canonical scene mapping and optionally write JSON.
+
+        Parameters
+        ----------
+        destination : path-like, optional
+            UTF-8 JSON destination. Wall paths are written relative to this
+            file. If omitted, a mapping containing absolute wall paths is
+            returned without writing.
+
+        Returns
+        -------
+        dict
+            JSON-compatible World config schema version 1.
+
+        Raises
+        ------
+        multi_pinhole.config.WorldConfigError
+            If the World contains a non-string camera key, arbitrary inside
+            callable or mask, STL aperture, or wall without source provenance.
+        """
+        from .config import dump_world_config
+
+        return dump_world_config(self, destination)
 
     @property
     def cameras(self) -> Mapping[Hashable, Camera]:
@@ -797,6 +855,7 @@ class World:
         walls = type_check_and_list(walls, mesh.Mesh)
         if walls != self._walls:
             self._walls = walls
+            self._config_wall_paths = ()
             self._visible_voxels = {i: None for i in self._cameras.keys()}
             if self._walls:
                 for wall in self._walls:
