@@ -13,8 +13,12 @@ from pathlib import Path
 import tempfile
 import time
 
-os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
-os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl")
+)
+os.environ.setdefault(
+    "XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache")
+)
 
 import numpy as np
 from stl import mesh
@@ -23,20 +27,39 @@ from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
 from multi_pinhole.utils import stl_utils
 
 
-def build_world(voxel_shape: tuple[int, int, int], pixel_shape: tuple[int, int],
-                detector_res: int = 2) -> World:
+def build_world(
+    voxel_shape: tuple[int, int, int],
+    pixel_shape: tuple[int, int],
+    detector_res: int = 2,
+) -> World:
     """Build a deterministic projection benchmark without wall occlusion."""
     voxel = Voxel.uniform_voxel(
         ranges=((-10.0, 10.0), (-10.0, 10.0), (-10.0, 10.0)),
         shape=voxel_shape,
     )
     camera = Camera(
-        eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.6,
-                  focal_length=25.0, position=(0.0, 0.0))],
-        screen=Screen(screen_shape="rectangle", screen_size=(10.0, 10.0),
-                      pixel_shape=pixel_shape, subpixel_resolution=detector_res),
-        apertures=Aperture(shape="circle", size=12.0, position=(0.0, 0.0, 40.0),
-                           resolution=24, max_size=30.0),
+        eyes=[
+            Eye(
+                eye_type="pinhole",
+                eye_shape="circle",
+                eye_size=0.6,
+                focal_length=25.0,
+                position=(0.0, 0.0),
+            )
+        ],
+        screen=Screen(
+            screen_shape="rectangle",
+            screen_size=(10.0, 10.0),
+            pixel_shape=pixel_shape,
+            subpixel_resolution=detector_res,
+        ),
+        apertures=Aperture(
+            shape="circle",
+            size=12.0,
+            position=(0.0, 0.0, 40.0),
+            resolution=24,
+            max_size=30.0,
+        ),
         camera_position=(0.0, 0.0, -150.0),
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
@@ -56,37 +79,53 @@ def _center_ranges_for_spacing(bounds, spacing):
     return tuple(ranges), tuple(shape)
 
 
-def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
-                    detector_res: int = 5, voxel_bounds=None) -> World:
+def build_mst_world(
+    voxel_shape: tuple[int, int, int],
+    voxel_spacing=None,
+    detector_res: int = 5,
+    voxel_bounds=None,
+) -> World:
     """Build a reduced-grid version of the 2026 MST tangential SXR case."""
     camera_center = np.array([1550.7, -1522.4, 210.8])
     forward_point = np.array([1525.9, -1521.1, 207.3])
     right_point = np.array([1551.9, -1511.2, 206.9])
     aperture_model = stl_utils.generate_aperture_stl(
-        shape="circle", size=1.8, resolution=40, max_size=15,
+        shape="circle",
+        size=1.8,
+        resolution=40,
+        max_size=15,
     )
 
     def make_camera(offset):
         aperture = Aperture(stl_model=aperture_model, position=(0.0, 0.0, 13.0))
-        return Camera.single_pinhole(
-            focal_length=25.0,
-            eye_size=1.0,
-            screen_size=7.5,
-            pixel_shape=(61, 61),
-            subpixel_resolution=detector_res,
-            apertures=aperture,
-        ).set_camera_position(camera_center).set_orientation_from_points(
-            look_point=forward_point,
-            right_point=right_point,
-        ).translate_camera((offset, 0.0, 0.0))
+        return (
+            Camera.single_pinhole(
+                focal_length=25.0,
+                eye_size=1.0,
+                screen_size=7.5,
+                pixel_shape=(61, 61),
+                subpixel_resolution=detector_res,
+                apertures=aperture,
+            )
+            .set_camera_position(camera_center)
+            .set_orientation_from_points(
+                look_point=forward_point,
+                right_point=right_point,
+            )
+            .translate_camera((offset, 0.0, 0.0))
+        )
 
     if voxel_spacing is None:
         ranges = ((-2012.5, 2012.5), (-2012.5, 2012.5), (-512.5, 512.5))
     else:
-        bounds = (((-2020.0, 2020.0), (-2020.0, 2020.0), (-520.0, 520.0))
-                  if voxel_bounds is None else voxel_bounds)
+        bounds = (
+            ((-2020.0, 2020.0), (-2020.0, 2020.0), (-520.0, 520.0))
+            if voxel_bounds is None
+            else voxel_bounds
+        )
         ranges, voxel_shape = _center_ranges_for_spacing(
-            bounds, voxel_spacing,
+            bounds,
+            voxel_spacing,
         )
     voxel = Voxel.uniform_voxel_from_centers(
         ranges=ranges,
@@ -94,8 +133,9 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
         coordinate_type="torus_inverse",
         coordinate_parameters={"major_radius": 1500, "minor_radius": 520},
     )
-    wall_path = (Path(__file__).resolve().parents[1] / "examples" / "mst"
-                 / "MST_wall-mesh.stl")
+    wall_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "mst" / "MST_wall-mesh.stl"
+    )
     world = World(
         voxel=voxel,
         cameras={"left": make_camera(-4.15), "right": make_camera(4.15)},
@@ -104,30 +144,44 @@ def build_mst_world(voxel_shape: tuple[int, int, int], voxel_spacing=None,
     )
 
     def inside_condition(x, y, z):
-        radius = np.sqrt((np.sqrt(x ** 2 + y ** 2) - 1500) ** 2 + z ** 2)
+        radius = np.sqrt((np.sqrt(x**2 + y**2) - 1500) ** 2 + z**2)
         return radius <= 500
 
     world.set_inside_vertices(inside_condition)
     return world
 
 
-def run_benchmark(voxel_shape=(16, 16, 16), pixel_shape=(24, 24), res=3, parallel=4,
-                  scene="simple", max_working_memory=1_000_000_000,
-                  mst_spacing=None, detector_res=None):
+def run_benchmark(
+    voxel_shape=(16, 16, 16),
+    pixel_shape=(24, 24),
+    res=3,
+    parallel=4,
+    scene="simple",
+    max_working_memory=1_000_000_000,
+    mst_spacing=None,
+    detector_res=None,
+):
     """Construct a projection matrix and return stable benchmark metrics."""
     if scene == "mst":
         detector_res = 5 if detector_res is None else detector_res
-        world = build_mst_world(tuple(voxel_shape), voxel_spacing=mst_spacing,
-                                detector_res=detector_res)
+        world = build_mst_world(
+            tuple(voxel_shape), voxel_spacing=mst_spacing, detector_res=detector_res
+        )
     elif scene == "simple":
         detector_res = 2 if detector_res is None else detector_res
-        world = build_world(tuple(voxel_shape), tuple(pixel_shape),
-                            detector_res=detector_res)
+        world = build_world(
+            tuple(voxel_shape), tuple(pixel_shape), detector_res=detector_res
+        )
     else:
         raise ValueError(f"unknown benchmark scene: {scene!r}")
     start = time.perf_counter()
-    world.set_projection_matrix(res=res, verbose=0, parallel=parallel, force=True,
-                                max_working_memory=max_working_memory)
+    world.set_projection_matrix(
+        res=res,
+        verbose=0,
+        parallel=parallel,
+        force=True,
+        max_working_memory=max_working_memory,
+    )
     elapsed = time.perf_counter() - start
     projection = next(iter(world.P_matrix.values()))
     camera = next(iter(world.cameras.values()))
@@ -173,10 +227,15 @@ if __name__ == "__main__":
     parser.add_argument("--detector-res", type=int)
     args = parser.parse_args()
 
-    metrics = run_benchmark(args.voxel_shape, args.pixel_shape, args.res, args.parallel,
-                            scene=args.scene,
-                            max_working_memory=int(args.max_working_memory_mb * 1_000_000),
-                            mst_spacing=args.mst_spacing,
-                            detector_res=args.detector_res)
+    metrics = run_benchmark(
+        args.voxel_shape,
+        args.pixel_shape,
+        args.res,
+        args.parallel,
+        scene=args.scene,
+        max_working_memory=int(args.max_working_memory_mb * 1_000_000),
+        mst_spacing=args.mst_spacing,
+        detector_res=args.detector_res,
+    )
     for key, value in metrics.items():
         print(f"{key}: {value}")

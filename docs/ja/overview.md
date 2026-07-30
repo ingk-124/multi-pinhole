@@ -1,101 +1,137 @@
-# プロジェクト概要
+# 概要と最初の投影
 
-Projection matrix の検証項目と今後の改善候補は
-[`projection-roadmap.md`](projection-roadmap.md) にまとめています。
+> **対象:** 初めて使う学部生から、既存のcamera geometryで解析する研究者まで。
+> このページでは内部のray–triangle判定や疎行列組立を説明しません。
+> 数値モデルの根拠が必要になった時だけ[Level 2](README.md#level-2--科学モデルを理解する)
+> へ進んでください。
 
-## 目的
+## 何を計算するライブラリか
 
-`multi_pinhole` は、プラズマの X 線 pinhole カメラ撮像をシミュレートするパッケージです（MST 磁場逆転ピンチ実験のために作られましたが、MST 固有の仕組みではありません）。ボクセルグリッド上に定義された3次元の発光分布と、1台以上のカメラ（それぞれが複数の pinhole または凹レンズの「eye」を持つ）が与えられたとき、ボクセル強度を検出器ピクセル強度へ写像する疎な線形演算子を計算します。この演算子こそがシミュレーションの本質的な出力です——一度これを手に入れれば、任意の発光分布の「画像をレンダリングする」ことは1回の疎行列・ベクトル積で済みますし、逆に画像からの逆問題（トモグラフィ再構成）も同じ行列に対する線形逆問題として扱えます。
+`multi_pinhole`は、3次元のvoxel発光分布をpinhole cameraの検出器画像へ写す
+libraryです。geometryから疎な投影行列
 
-このパッケージは、ワールド・カメラ・pinhole/eye・スクリーン（画像）という4つの座標系を軸に構成されており、これらは `multi_pinhole.core` の中で明確に定式化されています。このパッケージにおけるあらゆる幾何計算は、これらの座標系間の変換の組み合わせです。その変換の連鎖については `docs/core.md` で詳しく解説しています。
+\[
+\mathbf{g}=\mathbf{P}\mathbf{f}
+\]
 
-## 主要コンポーネント
+を一度作ります。`\mathbf{f}`はvoxelごとの発光、`\mathbf{g}`はpixel信号です。
+同じgeometryなら発光分布を変えてもray tracingをやり直さず、`World.project`
+による行列積だけで画像を作れます。
 
-- **コア光学系**（`multi_pinhole.eye`、`multi_pinhole.aperture`、`multi_pinhole.screen`、`multi_pinhole.camera`）—— `Eye`（単一の pinhole／レンズチャンネル）、`Aperture`（解析形状または STL による遮蔽形状）、`Screen`（画素化された検出面とそのラスタライザ）、`Camera`（eye・aperture・screen をまとめ、ワールド空間に配置する）から構成されます。`multi_pinhole.core` は旧importを維持する互換facadeです。詳細は `docs/core.md` を参照してください。
-- **ボクセルモデリング**（`multi_pinhole.voxel`）—— デカルト座標のボクセルグリッド（`Voxel`）と、トーラス状プラズマ発光を合成するためのヘルパー関数群です。詳細は下記「ボクセルグリッドの幾何」を参照してください。
-- **座標変換**（`multi_pinhole.coordinates`）—— デカルト座標のボクセルグリッド点を円筒・トーラス・球座標などで**再解釈**するだけの純粋な関数群です。あくまでプロファイルを評価するための道具であり、グリッド自体は常にデカルト座標のままです。
-- **ワールドの統括**（`multi_pinhole.world`）—— `World` は `Voxel`、1台以上の `Camera`、任意の STL 「壁」を1つのシーンにまとめます。eye ごとの可視性を計算し、ボクセル→スクリーンの投影行列を組み立てます。geometryからmaskへの計算はprivateな `multi_pinhole._visibility`、独立したoptical-bin quadratureとsparse assemblyはprivateな `multi_pinhole._projection_matrix` が担当し、公開methodとcache所有は `World` に残ります。詳細は `docs/world.md` を参照してください。
+最初は次の5つだけ区別できれば十分です。
 
-## 典型的なワークフロー
+| object | 意味 |
+|---|---|
+| `Voxel` | 発光分布を置くCartesian cell |
+| `Eye` | 1つのpinholeまたは有限開口channel |
+| `Aperture` | 光を通す穴と周囲の遮光形状 |
+| `Screen` | pixel化された検出面 |
+| `Camera` / `World` | 光学系 / scene全体と投影cache |
 
-1. **シーンを記述する。** `Voxel` グリッドを構築します——軸配列から直接作るか、等間隔なデカルト空間には `Voxel.uniform_voxel(ranges, shape)` を使います。光線を遮るべき STL の `walls` を必要に応じて読み込みます。
-2. **光学系を設定する。** 1つ以上の `Eye`（pinhole の位置、焦点距離、aperture のサイズ／形状）を作成し、`Aperture` ジオメトリと組み合わせ、`Screen`（物理サイズ、ピクセルグリッド、サブピクセル分割）に取り付けます。
-3. **`Camera` を組み立てる。** eye／aperture／screen から `Camera` を構成し、`camera_position` と回転によってワールド空間に配置します。
-4. **`World` を構築する。** ボクセルグリッドとカメラから `World` を作り、`World.set_inside_vertices(...)` によって、どのボクセル頂点が対象体積の物理的な「内部」であるかをマークします（外部の頂点は以降の可視性・投影計算からスキップされます——これにより、例えば矩形のボクセル箱の中にあるトーラス形状のプラズマ体積を表現できます）。
-5. **可視性と投影行列を計算する。** `World.set_projection_matrix()` は、各カメラの各 eye について、（aperture や壁によって遮られていない）可視なボクセルを判定し、疎な `(N_pixel, N_voxel)` 行列 `world.P_matrix[camera_idx]` を構築します。以下の具体例と `docs/world.md` の全パイプライン解説を参照してください。
-6. **レンダリング、または逆問題を解く。** `emission` は形状 `(N_voxel,)` のベクトルに加え、列ごとに独立な形状 `(N_voxel, N_rhs)` のbatchを使用できます。`world.project(emission, camera_idx)` はそれぞれ形状 `(N_pixel,)` または `(N_pixel, N_rhs)` を返し、`eye_idx`を指定すると1つのeyeの寄与を返します。subpixelは面積積分の一時的な評価点であり、projection cacheには保持されません。
+## 推奨workflow
 
-### 具体例：空の `World` から画像レンダリングまで
+### 1. JSONでsceneを定義する
 
-`examples/small_voxel_projection.py` を要点だけに絞ったものです。
+再現可能な解析では、Python内でobjectを個別に組み立てるよりJSONを推奨します。
 
 ```python
-from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
-import numpy as np
+from multi_pinhole import World
 
-# 1. 各軸 [-3, 3] mm の 3x3x3 ボクセルグリッド。
-voxel = Voxel.uniform_voxel(ranges=[[-3, 3], [-3, 3], [-3, 3]], shape=[3, 3, 3])
-
-# 2-3. pinhole eye を1つ、円形 aperture を1つ、小さな screen を1つ組み合わせて Camera を構成。
-camera = Camera(
-    eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=1.0,
-              focal_length=12.0, position=[0.0, 0.0])],
-    apertures=Aperture(shape="circle", size=6.0, position=[0.0, 0.0, 25.0],
-                        resolution=24, max_size=24.0),
-    screen=Screen(screen_shape="rectangle", screen_size=[12.0, 12.0],
-                  pixel_shape=(8, 8), subpixel_resolution=2),
-    camera_position=[0.0, 0.0, -60.0],
-)
-
-# 4. ボクセルグリッドとカメラを World に束ね、すべての頂点を「内部」としてマーク。
-world = World(voxel=voxel, cameras=[camera], verbose=0)
-world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
-
-# 5. 可視性と、疎なボクセル→スクリーン投影行列を計算する。
-world.set_projection_matrix(res=1, verbose=0, parallel=1)
-
-# 6. レンダリング：ボクセルごとに発光値を決め、あとは疎行列積1回で画像を得る。
-emission = np.exp(-((voxel.gravity_center[:, 0] / 2.2) ** 2
-                    + (voxel.gravity_center[:, 1] / 1.8) ** 2
-                    + (voxel.gravity_center[:, 2] / 2.6) ** 2))
-pixel_image = world.P_matrix[0] @ emission      # 全eye、形状 (N_pixel,)
-eye_image = world.projection[0][0] @ emission   # eye 0、形状 (N_pixel,)
+world = World.from_config("scene.json")
 ```
 
-内部的には、ステップ5（`set_projection_matrix`）がもっともコストの高い部分です。カメラの各 eye について、(a) すべてのボクセルの8個の角頂点をすべての aperture・壁に対して光線追跡し、不可視／部分的に可視／完全に可視に分類し、(b) 可視なボクセルについてサブボクセル点をサンプリングし、`Camera.calc_image_vec`（`docs/core.md` で説明する pinhole 投影＋ラスタライズのパイプライン）で eye を通して投影し、(c) それらのサブボクセルサンプルを積分してボクセルあたり1つの重みへ戻します。これらの各サブステップは `docs/world.md` で詳しく説明しています。
+JSONにはvoxel範囲、camera位置・向き、eye、screen、aperture、必要ならwallを
+記述します。詳しい組み方は[World JSON設定ガイド](world-config-guide.md)に
+集約しています。全keyの型を調べる場合だけ[JSON schema](config.md)を参照します。
 
-## ボクセルグリッドの幾何
+### 2. 高価な計算の前にgeometryを確認する
 
-`Voxel` は（必ずしも等間隔ではない）矩形格子の3次元グリッドであり、グリッド線の位置を表す3本の1次元軸配列 `x_axis`、`y_axis`、`z_axis` によって定義されます。この軸から、`Voxel.update()` が（ボクセルごとの Python ループを使わず）ベクトル化された方法ですべての派生量を導出します。
+- cameraがplasmaを向いているか
+- wallのportを視線が通っているか
+- 長さの単位がscene全体で統一されているか
+- `inside`が発光させたい領域を覆っているか
 
-* **グリッド点**は3本の軸の直積 `(N_x+1) × (N_y+1) × (N_z+1)` であり、`z` を最も速く変化させ、その次に `y`、最後に `x` の順でフラット化されます（グリッド形状 `(N_x', N_y', N_z')` に対して線形インデックス `n = k + N_z'·(j + N_y'·i)`）。
-* **ボクセル**は隣接するグリッド線の間の `N_x × N_y × N_z` 個のセルです。ボクセル `(i, j, k)` の8個の角頂点は、そのボクセルの基準となる線形グリッドインデックスに固定のオフセットパターン（`{0,1} × {0,1} × {0,1}` の組み合わせを、線形インデックスのオフセット `{0, 1, N_z', N_z'+1, N_z'·N_y', ...}` として表現したもの）を加えることで得られます——これは純粋なインデックス演算のトリックであり、呼び出し側が実際に `Voxel.vertices` を要求しない限り、明示的な `(N_voxel, 8, 3)` の頂点座標配列を構築せずに済みます。
-* 各ボクセルの**体積**は3辺の長さの積（`dx · dy · dz`）であり、**重心**は8個の角の中点です——どちらも軸ごとに計算してブロードキャストされ、ボクセルごとに計算されるわけではありません。
-* **サブボクセルサンプリング。** 補間／積分のために（`World` の投影パイプラインで多用されます。`docs/world.md` を参照）、1つのボクセルを `res = (x_res, y_res, z_res)` のサブボクセルサンプル点グリッドへ細分できます。`interpolate_matrix_from_vertices(res)` は三線形補間の重み行列を構築します。親ボクセル内の分数位置 `(a, b, c)`（`a, b, c ∈ [0, 1]`）にあるサブボクセルサンプル点は、ボクセルの8個の角頂点の値の重み付き和として表現され、重みは `(1−a)(1−b)(1−c)`、`(1−a)(1−b)c`、…、`abc` という標準的な三線形補間の基底になります。
+を確認します。`inside`は発光計算対象を選ぶmaskで、光を遮るwallではありません。
 
-### プロファイル評価のための座標変換
+```python
+world.find_visible_voxels("main", verbose=1)
+work = world.preflight_projection(res=3, partial_res=3)
+print(work.summary())
+```
 
-グリッド自体は常にデカルト座標です。`Voxel.normalized_coordinates()` は、デカルト座標の点（デフォルトではボクセルの重心）を任意で別の座標系に**再解釈**します。これはトーラス座標や円筒座標で書いたプロファイル関数を、その装置の対称性に自然な形で評価できるようにするためです。`multi_pinhole.coordinates` はそのような変換を7種類実装しており、いずれもデカルト座標 `(x, y, z)` を受け取って正規化座標を返します。
+`visible_voxels`の状態は、`0=不可視`, `1=部分可視`, `2=完全可視`です。
+`preflight_projection`は投影行列をまだ作らず、必要sample数の見積りを返します。
 
-* **cartesian（デカルト）** —— 各軸を、その設定された半分の範囲でスケーリングするだけです。
-* **cylindrical（円筒）** `(r, theta, z)` —— `r = sqrt(x²+y²)/a`、`theta = atan2(y, x)`、`z` は `h/2` でスケーリングされます。
-* **torus（トーラス）** `(r, theta, phi)` —— 主半径 `R_0`、副半径 `a` のトーラスに対して：`R = sqrt(x²+y²)`、`r = sqrt((R−R_0)² + z²)/a`、`theta = atan2(z, R−R_0)`（poloidal 角、outboard 中間面で `0`）、`phi = atan2(−y, x)`（toroidal 角、`+z` 側から見て時計回りに増加）。`torus_inverse` は同じ構成で両方の角度の符号／基準を反転したもの（`theta` は inboard 中間面基準、`phi` は反時計回り）で、いずれも右手系の `(r, theta, phi)` です。
-* **poloidal Cartesian** `(x, y, phi)` —— `x=R−R_0`は常にR外向き、`y=z`は上向きで、正規化時は両方を`a`で割ります。`poloidal_cartesian`の`phi`は`torus`と同じ時計回り、`poloidal_cartesian_inverse`は反時計回りです。inverseでもpoloidal `x`の向きは変わりません。どちらもkeyword成分からCartesianへの逆変換に対応します。
-* **spherical（球）** `(r, theta, phi)` —— `distance = sqrt(x²+y²+z²)`、`r = distance/a`、`theta = arccos(z/distance)`（`+z` から測る `[0, pi]` の極角）、`phi = atan2(y, x)`（`+x` から反時計回りの `[-pi, pi]` の方位角）。reference radius `a` は `r` だけをscaleし、角度には影響しません。原点では `theta=nan`、z軸上の `phi` は数学的には未定義ですが NumPy `atan2` の結果に従います。
+### 3. 投影行列を作る
 
-解析時には `Voxel.to_coordinates()` により、Voxelに設定されたprofile用座標系を変更せず、任意の規約を都度選択できます。`points="centers"`、`points="vertices"`、または任意のCartesian配列を受け取り、`normalized=True`を指定しない限り物理座標を返します。逆変換にはkeyword-only成分を受け取る`Voxel.from_coordinates()`を使用します（例：`from_coordinates("cylindrical", R=..., Z=..., phi=...)`）。各成分はNumPy規則でbroadcastされ、最後にCartesianの3成分軸が追加されます。新APIで`normalized=True`を使う場合、必要なscale parameterはすべて明示する必要があり、暗黙のunit scaleは使われません。使用可能な規約は`voxel.available_coordinate_types`からimmutable tupleとして取得できます。座標規約を追加してもVoxel methodを増やす必要はありません。従来の`normalized_coordinates()`はprofile設定との互換APIとして維持されます。
+```python
+world.set_projection_matrix(
+    res=3,
+    partial_res=3,
+    parallel=4,
+    verbose=1,
+)
+```
 
-Cartesian voxel重心上の値は`Voxel.center_interpolator(values, **interpolator_kwargs)`で再利用できます。返されたcallableはCartesianの`points`、または明示的な`coordinate_type`とkeyword成分を受け取ります。named成分はCartesianへ逆変換され、NumPy規則でbroadcastされた後に補間されます。scalar値に加えて末尾にvector/tensor shapeを持つ値も扱えます。この通常補間APIは、projection組立で使うprivateな体積重み付きsource quadrature行列とは別物です。
+`res`を大きくするとsource積分は細かくなりますが、計算量も増えます。
+値は精度保証ではないため、最終解析では`res`を変えた収束確認が必要です。
+wallやaperture境界を横切る部分可視voxelでは、特に`partial_res`が効きます。
 
-`multi_pinhole.profiles` は、正規化poloidal Cartesian `(x, y)`を入力とする、物理量に依存しない組み合わせ可能なprofile helperを提供します。非軸対称modelには、poloidal `+x` 軸から反時計回りに測った `center_angle_xy` を明示します。`profiles.helical_center_angle(phi, center_angle_xy_ref, m=..., n=..., phi_ref=...)` はhelical pitchをNumPy broadcastで展開しますが、`phi`が通常規約かinverse規約かは判定しません。呼び出し側が座標規約と整合するsigned `n`を渡し、Hilbert phaseから参照角への変換と回転方向も外側で決定します。これにより座標・mode規約をprofile数式から分離します。描画、フィッティング、実験固有の診断はcore profile APIの外側に置く想定です。
+### 4. emissionを投影する
 
-## 注目すべき機能
+```python
+import numpy as np
 
-- カメラは複数の eye を同時にサポートし（マルチ pinhole 撮像）、各 eye は独立した位置・焦点距離・aperture の形状／サイズ・波長域を持てます。
-- aperture は解析形状（円／楕円／矩形）または任意の STL メッシュを受け付け、硬い遮蔽物として扱われます。`check_visible` は eye と各候補点の間で2段階の可視性テスト（コーンによる事前フィルタ、その後の Möller–Trumbore 三角形交差判定）を実行します——詳しくは `docs/utilities.md` を参照してください。
-- スクリーンのラスタライズ（`Screen.ray2image_grid`）は etendue で重み付けされた疎な CSR/CSC 行列を用いるため、数百万本の光線を密な配列を一切実体化せずにサブピクセル画像へ蓄積できます——詳しくは `docs/core.md` を参照してください。
-- `World.set_projection_matrix` は、コストの高いサブボクセルのサンプリング・投影処理を `ThreadPoolExecutor` で並列化し、推定された疎度に基づいて適応的にチャンク分割することでメモリ使用量を抑えます——詳しくは `docs/world.md` を参照してください。
+x, y, z = world.voxel.gravity_center.T
+emission = np.exp(-((x / 100)**2 + (y / 100)**2 + (z / 150)**2))
 
-## 拡張性
+image = world.project(emission, camera_idx="main")
+world.cameras["main"].screen.show_image(image)
+```
 
-このプロジェクトは、STL 処理（`multi_pinhole.utils.stl_utils`）、進捗表示に対応したロギング（`multi_pinhole.utils.my_stdio`）といったユーティリティ関数を主要クラスの下層に配置しています。そのため、新しい光学要素やカスタムのワークフローは、既存の座標変換・可視性判定・可視化ルーチンを再利用でき、内部のジオメトリ計算を一から実装し直す必要はありません。これらの構成要素の詳細は `docs/utilities.md` を参照してください。
+`emission`は`(N_voxel,)`、複数時刻なら`(N_voxel, N_time)`です。非有限値は
+行列積へ伝播するため、計算対象外を表す値にはNaNではなく0を使います。
+
+voxel profileの3D表示と断面表示は[可視化ガイド](visualization.md)にあります。
+
+### 5. 必要なら計算済みWorldを保存する
+
+```python
+world.save("checkpoint.mpw")
+```
+
+JSONはscene入力だけ、`.mpw`はvisibilityとprojection cacheを含むcheckpointです。
+使い分けとsecurity上の注意は[serialization](serialization.md)にまとめています。
+
+## 座標について最低限知ること
+
+- voxel gridとworldはCartesian `(x, y, z)`です。
+- camera内部にはcamera/eye/screen座標がありますが、通常利用では変換をlibraryに
+  任せます。
+- plasma profileの評価時だけ、同じCartesian点をcylindrical、torus、
+  poloidal Cartesian等へ変換できます。grid自体が曲線座標になるわけではありません。
+- angleの符号と基準は解析結果を左右します。使用する座標系は
+  `Voxel.to_coordinates()`のdocstringと
+  [optics・座標の説明](core.md#利用者が知るべき座標系)で確認してください。
+
+## よくある間違い
+
+- **単位の混在:** libraryはmmとmを判別しません。
+- **wallとinsideの混同:** wallは遮蔽、insideはsource領域です。
+- **NaNを不可視voxelに入れる:** `P @ emission`全体へNaNが伝播し得ます。
+- **pixel配列を通常画像と同じ向きだと思う:** `Screen.show_image`を優先します。
+- **1つのresolutionだけで精度を判断する:** 最終値は収束確認します。
+- **JSONだけでcacheも保存されると思う:** cache保存は`.mpw`です。
+
+> **通常利用はここまでで十分です。**
+> 以下のページは必要になった目的に応じて選んでください。
+
+## 次に読むページ
+
+- cameraをJSONで組む → [World JSON設定ガイド](world-config-guide.md)
+- plasma profileを作る、R–Z断面を補間する →
+  [座標・profile・補間](coordinates-profiles.md)
+- 結果を描く → [可視化](visualization.md)
+- pinhole式、finite-eye、detector積分を理解する → [core](core.md)
+- visibility、source積分、近似精度を調べる → [world](world.md)
+- 正確なJSON keyを引く → [config reference](config.md)

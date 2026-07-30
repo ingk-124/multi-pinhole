@@ -19,7 +19,9 @@ def test_world_public_identity_and_signature_remain_in_world_module():
     assert multi_pinhole.World is world_module.World
     assert World.__module__ == "multi_pinhole.world"
     parameters = inspect.signature(World.find_visible_points).parameters
-    assert tuple((name, parameter.default) for name, parameter in parameters.items()) == (
+    assert tuple(
+        (name, parameter.default) for name, parameter in parameters.items()
+    ) == (
         ("self", inspect.Parameter.empty),
         ("points", inspect.Parameter.empty),
         ("camera_idx", inspect.Parameter.empty),
@@ -39,11 +41,13 @@ def test_visibility_module_shares_world_stl_utils_for_monkeypatch_compatibility(
 
 
 def test_point_visibility_front_mask_has_fixed_shape_and_dtype():
-    points = np.array([
-        [0.0, 0.0, -2.0],
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 2.0],
-    ])
+    points = np.array(
+        [
+            [0.0, 0.0, -2.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 2.0],
+        ]
+    )
     actual = _visibility.calculate_point_visibility(
         camera_points=points,
         eyes=[_Eye(-1.0), _Eye(1.0)],
@@ -52,10 +56,13 @@ def test_point_visibility_front_mask_has_fixed_shape_and_dtype():
         walls_in_camera=[],
         verbose=0,
     )
-    expected = np.array([
-        [False, True, True],
-        [False, False, True],
-    ], dtype=bool)
+    expected = np.array(
+        [
+            [False, True, True],
+            [False, False, True],
+        ],
+        dtype=bool,
+    )
     np.testing.assert_array_equal(actual, expected)
     assert actual.shape == (2, 3)
     assert actual.dtype == np.dtype(bool)
@@ -63,19 +70,26 @@ def test_point_visibility_front_mask_has_fixed_shape_and_dtype():
 
 def test_vertex_expansion_and_voxel_classification_have_fixed_values():
     inside = np.array([True, True, True, False, True, True, True, True])
-    inside_visibility = np.array([
-        [False, True, True, True, True, True, True],
-        [True, True, True, True, True, True, True],
-        [False, False, False, False, False, False, False],
-    ], dtype=bool)
-    visible_vertices = _visibility.calculate_visible_vertex_mask(
-        inside, inside_visibility,
+    inside_visibility = np.array(
+        [
+            [False, True, True, True, True, True, True],
+            [True, True, True, True, True, True, True],
+            [False, False, False, False, False, False, False],
+        ],
+        dtype=bool,
     )
-    expected_vertices = np.array([
-        [False, True, True, False, True, True, True, True],
-        [True, True, True, False, True, True, True, True],
-        [False, False, False, False, False, False, False, False],
-    ], dtype=bool)
+    visible_vertices = _visibility.calculate_visible_vertex_mask(
+        inside,
+        inside_visibility,
+    )
+    expected_vertices = np.array(
+        [
+            [False, True, True, False, True, True, True, True],
+            [True, True, True, False, True, True, True, True],
+            [False, False, False, False, False, False, False, False],
+        ],
+        dtype=bool,
+    )
     np.testing.assert_array_equal(visible_vertices, expected_vertices)
 
     states = _visibility.classify_visible_voxels(

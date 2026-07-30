@@ -1,7 +1,12 @@
 """Public optics, voxel, projection, and scene-orchestration API."""
 
-from .core import Rays, Eye, Aperture, Screen, Camera
+from .__about__ import __version__
+from .aperture import Aperture
+from .camera import Camera
+from .eye import Eye
 from .projection import EyeProjectionWorkEstimate, ProjectionWorkEstimate
+from .rays import Rays
+from .screen import Screen
 from .voxel import Voxel
 from .world import World
 
@@ -15,6 +20,7 @@ __all__ = [
     "Screen",
     "Voxel",
     "World",
+    "__version__",
     "cli",
 ]
 
@@ -26,5 +32,7 @@ def cli() -> None:
     (registered via ``pyproject.toml``'s ``[project.scripts]``) currently
     only prints a short usage hint and performs no simulation work itself.
     """
-    print("This is the multi_pinhole package. "
-          "Use it as a library to create multi-pinhole camera simulations.")
+    print(
+        "This is the multi_pinhole package. "
+        "Use it as a library to create multi-pinhole camera simulations."
+    )

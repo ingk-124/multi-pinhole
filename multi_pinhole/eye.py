@@ -1,4 +1,5 @@
 """Eye geometry and ray generation."""
+
 from numbers import Number
 from typing import List, Literal, Tuple, Union
 
@@ -19,13 +20,15 @@ class Eye:
     full parameter and attribute reference.
     """
 
-    def __init__(self,
-                 position: Vector2DLike,
-                 focal_length: float,
-                 eye_type: Literal["pinhole", "concave_lens", 1, 2] = 1,
-                 eye_size: Union[float, Vector2DLike] = 0.5,
-                 eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
-                 wavelength_range: Tuple[float, float] = (0.01, 0.1), ):
+    def __init__(
+        self,
+        position: Vector2DLike,
+        focal_length: float,
+        eye_type: Literal["pinhole", "concave_lens", 1, 2] = 1,
+        eye_size: Union[float, Vector2DLike] = 0.5,
+        eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
+        wavelength_range: Tuple[float, float] = (0.01, 0.1),
+    ):
         """Create an optical Eye.
 
         Eye class is used to calculate matrices for transportation and projection.
@@ -94,19 +97,25 @@ class Eye:
         if eye_type == "pinhole" or eye_type == 1:
             self._eye_type = "pinhole"
             if focal_length <= 0:
-                raise ValueError("when eye_type is 'pinhole', focal_length must be positive")
+                raise ValueError(
+                    "when eye_type is 'pinhole', focal_length must be positive"
+                )
             self._focal_length = focal_length
             self._position = np.array([position[0], position[1], self._focal_length])
         elif eye_type == "concave_lens" or eye_type == 2:
             self._eye_type = "concave_lens"
             if focal_length >= 0:
-                raise ValueError("when eye_type is 'concave_lens', focal_length must be negative")
+                raise ValueError(
+                    "when eye_type is 'concave_lens', focal_length must be negative"
+                )
             self._focal_length = focal_length
             self._position = np.array([position[0], position[1], 0])
         else:
             raise ValueError("eye_type must be 'pinhole(1)' or 'concave_lens(2)'")
 
-        self._principal_point = np.array([position[0], position[1], abs(self._focal_length)])
+        self._principal_point = np.array(
+            [position[0], position[1], abs(self._focal_length)]
+        )
         if eye_shape in ["circle", "ellipse", "rectangle"]:
             self._eye_shape = eye_shape
         else:
@@ -123,7 +132,9 @@ class Eye:
             elif isinstance(eye_size, Number):
                 self._eye_size = np.array([eye_size, eye_size])
             else:
-                raise ValueError(f"if eye_shape is '{self._eye_shape}', eye_size must be float or array of two floats")
+                raise ValueError(
+                    f"if eye_shape is '{self._eye_shape}', eye_size must be float or array of two floats"
+                )
 
         self._wavelength_range = wavelength_range
         self._camera = None
@@ -158,10 +169,10 @@ class Eye:
         return points_in_camera - self.position.reshape((1, 3))  # (n, 3)
 
     def calc_rays(
-            self,
-            points_in_camera: np.ndarray,
-            visible: np.ndarray | None = None,
-            front_only: bool = True
+        self,
+        points_in_camera: np.ndarray,
+        visible: np.ndarray | None = None,
+        front_only: bool = True,
     ) -> Rays:
         """Rays: Project world points through the eye onto the screen plane.
 
@@ -190,23 +201,41 @@ class Eye:
             4. Calculate the zoom rate of the projected image on the screen (1 + f/z)
         """
         # camera coordinate -> eye coordinate
-        points_in_camera = points_in_camera if points_in_camera.ndim == 2 else points_in_camera.reshape((1, 3))
+        points_in_camera = (
+            points_in_camera
+            if points_in_camera.ndim == 2
+            else points_in_camera.reshape((1, 3))
+        )
         points_in_eye = self.camera2eye(points_in_camera)  # (n, 3)
         Z = points_in_eye[:, 2]  # (n, )
 
-        visible = np.ones(points_in_camera.shape[0], dtype=bool) if visible is None else visible
+        visible = (
+            np.ones(points_in_camera.shape[0], dtype=bool)
+            if visible is None
+            else visible
+        )
         if front_only:
-            front_and_visible = (Z > 0) & visible  # (n, ) True if the point is in front of the eye and visible
+            front_and_visible = (
+                Z > 0
+            ) & visible  # (n, ) True if the point is in front of the eye and visible
         else:
             front_and_visible = visible
 
         XY = np.tile(np.zeros_like(Z) * np.nan, (2, 1)).T
         zoom_rate = np.zeros_like(Z) * np.nan
-        XY[front_and_visible] = (-points_in_eye[front_and_visible, :2] / Z[front_and_visible, None] * self.focal_length
-                                 + self.principal_point[None, :2])  # (n_front, 2)
-        zoom_rate[front_and_visible] = 1 + self.focal_length / Z[front_and_visible]  # (n_front, )
+        XY[front_and_visible] = (
+            -points_in_eye[front_and_visible, :2]
+            / Z[front_and_visible, None]
+            * self.focal_length
+            + self.principal_point[None, :2]
+        )  # (n_front, 2)
+        zoom_rate[front_and_visible] = (
+            1 + self.focal_length / Z[front_and_visible]
+        )  # (n_front, )
 
-        return Rays(Z=Z, XY=XY, zoom_rate=zoom_rate, front_and_visible=front_and_visible)
+        return Rays(
+            Z=Z, XY=XY, zoom_rate=zoom_rate, front_and_visible=front_and_visible
+        )
 
     def set_camera(self, camera_obj: object) -> None:
         """None: Register the parent :class:`Camera` that owns this eye.

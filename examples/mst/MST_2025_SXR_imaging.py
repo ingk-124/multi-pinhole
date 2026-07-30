@@ -12,22 +12,22 @@ from stl import mesh
 from multi_pinhole import Aperture, Camera, Voxel, World
 from multi_pinhole.utils import stl_utils
 
-plt.rcParams.update({'font.size': 12})
-plt.rcParams['xtick.direction'] = 'in'
-plt.rcParams['ytick.direction'] = 'in'
+plt.rcParams.update({"font.size": 12})
+plt.rcParams["xtick.direction"] = "in"
+plt.rcParams["ytick.direction"] = "in"
 
 
 def shifted_torus(r, theta, phi, delta):
     R = r * np.cos(theta) + delta
     Z = r * np.sin(theta)
-    r_shifted = np.sqrt(R ** 2 + Z ** 2)
+    r_shifted = np.sqrt(R**2 + Z**2)
     theta_shifted = np.arctan2(Z, R)
     return r_shifted, theta_shifted, phi
 
 
 def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
     r_ = r * np.exp(m_ * theta * 1j)
-    xi = xi_0 * np.exp(-(r / r_1) ** d) * np.exp(n_ * (phi - phi_0) * 1j)
+    xi = xi_0 * np.exp(-((r / r_1) ** d)) * np.exp(n_ * (phi - phi_0) * 1j)
     r_new_complex = r_ - xi
     r_new = np.abs(r_new_complex)
     theta = np.angle(r_new_complex)
@@ -37,8 +37,8 @@ def helical_displacement(r, theta, phi, m_, n_, phi_0, d, r_1, xi_0):
 
 
 def hollow(r, A, p, q, h, w):
-    f1 = (1 - r ** p) ** q
-    f2 = np.exp(-(r / w) ** 2)
+    f1 = (1 - r**p) ** q
+    f2 = np.exp(-((r / w) ** 2))
     return A * (f1 - h * f2)
 
 
@@ -67,8 +67,17 @@ def emission_profile(r, theta, phi, allow_negative=False, **params):
     w = params.get("w", 0.5)
 
     r_shifted, theta_shifted, phi_shifted = shifted_torus(r, theta, phi, delta)
-    r_new, theta_new, phi_new = helical_displacement(r_shifted, theta_shifted, phi_shifted,
-                                                     m_=m_, n_=n_, phi_0=phi_0, d=d, r_1=r_1, xi_0=xi_0)
+    r_new, theta_new, phi_new = helical_displacement(
+        r_shifted,
+        theta_shifted,
+        phi_shifted,
+        m_=m_,
+        n_=n_,
+        phi_0=phi_0,
+        d=d,
+        r_1=r_1,
+        xi_0=xi_0,
+    )
     y = hollow(r_new, A=A, p=p, q=q, h=h, w=w)
     if not allow_negative:
         y = np.maximum(y, 0)
@@ -86,21 +95,26 @@ def build_mst_cameras(model_aperture):
             stl_model=model_aperture,
             position=[0, 0, 13],
         )
-        return Camera.single_pinhole(
-            focal_length=25,
-            eye_size=1,
-            screen_size=7.5,
-            pixel_shape=(61, 61),
-            subpixel_resolution=5,
-            apertures=aperture,
-            camera_name="left" if camera_offset < 0 else "right",
-        ).set_camera_position(
-            camera_center,
-        ).set_orientation_from_points(
-            look_point=forward_point,
-            right_point=right_point,
-        ).translate_camera(
-            [camera_offset, 0, 0],
+        return (
+            Camera.single_pinhole(
+                focal_length=25,
+                eye_size=1,
+                screen_size=7.5,
+                pixel_shape=(61, 61),
+                subpixel_resolution=5,
+                apertures=aperture,
+                camera_name="left" if camera_offset < 0 else "right",
+            )
+            .set_camera_position(
+                camera_center,
+            )
+            .set_orientation_from_points(
+                look_point=forward_point,
+                right_point=right_point,
+            )
+            .translate_camera(
+                [camera_offset, 0, 0],
+            )
         )
 
     return {
@@ -109,7 +123,7 @@ def build_mst_cameras(model_aperture):
     }
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     HERE = Path(__file__).resolve().parent
     OUTPUT_DIR = HERE / "outputs"
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -151,25 +165,27 @@ if __name__ == '__main__':
             coordinate_parameters=dict(a=500, R_0=1500),
         )
 
-        world = World(voxel=voxel,
-                      cameras=cameras,
-                      walls=mst_wall)
-
+        world = World(voxel=voxel, cameras=cameras, walls=mst_wall)
 
         def inside_condition(x, y, z):
-            R = np.sqrt(x ** 2 + y ** 2)
+            R = np.sqrt(x**2 + y**2)
             Z = z
-            r = np.sqrt((R - 1500) ** 2 + Z ** 2)
+            r = np.sqrt((R - 1500) ** 2 + Z**2)
             return r <= 500
-
 
         world.set_inside_vertices(inside_condition)
         del cameras, voxel
         gc.collect()
 
         fig = go.Figure()
-        stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey",
-                                  opacity=0.2, show_fig=False, show_edges=False)
+        stl_utils.plotly_show_stl(
+            mst_wall,
+            fig,
+            color="lightgrey",
+            opacity=0.2,
+            show_fig=False,
+            show_edges=False,
+        )
         for camera in world.cameras.values():
             camera.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
         fig.show()
@@ -189,17 +205,41 @@ if __name__ == '__main__':
     # plot field of view
     cmap_bw2 = ListedColormap(["white", "gray"])
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.pcolormesh(voxel.cx_axis, voxel.cy_axis,
-                  world.visible_voxels[camera_key][0].reshape(voxel.shape)[:, :, voxel.shape[2] // 2].T,
-                  cmap=cmap_bw2, rasterized=True)
-    ax.plot(2000 * np.cos(np.linspace(0, 2 * np.pi)),
-            2000 * np.sin(np.linspace(0, 2 * np.pi)), "k-", lw=2)
-    ax.plot(1000 * np.cos(np.linspace(0, 2 * np.pi)),
-            1000 * np.sin(np.linspace(0, 2 * np.pi)), "k-", lw=2)
-    ax.plot(1500 * np.cos(np.linspace(0, 2 * np.pi)),
-            1500 * np.sin(np.linspace(0, 2 * np.pi)), "k--", lw=1.5, label="toroidal axis")
-    ax.plot(np.array([2000, 1000]) * np.cos(np.radians(255 - 90)),
-            np.array([2000, 1000]) * np.sin(np.radians(255 - 90)), "r--", lw=2, label="FIR")
+    ax.pcolormesh(
+        voxel.cx_axis,
+        voxel.cy_axis,
+        world.visible_voxels[camera_key][0]
+        .reshape(voxel.shape)[:, :, voxel.shape[2] // 2]
+        .T,
+        cmap=cmap_bw2,
+        rasterized=True,
+    )
+    ax.plot(
+        2000 * np.cos(np.linspace(0, 2 * np.pi)),
+        2000 * np.sin(np.linspace(0, 2 * np.pi)),
+        "k-",
+        lw=2,
+    )
+    ax.plot(
+        1000 * np.cos(np.linspace(0, 2 * np.pi)),
+        1000 * np.sin(np.linspace(0, 2 * np.pi)),
+        "k-",
+        lw=2,
+    )
+    ax.plot(
+        1500 * np.cos(np.linspace(0, 2 * np.pi)),
+        1500 * np.sin(np.linspace(0, 2 * np.pi)),
+        "k--",
+        lw=1.5,
+        label="toroidal axis",
+    )
+    ax.plot(
+        np.array([2000, 1000]) * np.cos(np.radians(255 - 90)),
+        np.array([2000, 1000]) * np.sin(np.radians(255 - 90)),
+        "r--",
+        lw=2,
+        label="FIR",
+    )
     ax.set_aspect(1)
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
@@ -215,7 +255,7 @@ if __name__ == '__main__':
     R_grid = np.sqrt(voxel.gravity_center[:, 0] ** 2 + voxel.gravity_center[:, 1] ** 2)
     phi_grid = np.arctan2(voxel.gravity_center[:, 1], voxel.gravity_center[:, 0])
     Z_grid = voxel.gravity_center[:, 2]
-    r_grid = np.sqrt((R_grid - 1500) ** 2 + Z_grid ** 2)
+    r_grid = np.sqrt((R_grid - 1500) ** 2 + Z_grid**2)
     theta_grid = np.arctan2(Z_grid, R_grid - 1500)
     X, Y, Z = voxel.gravity_center.T
 
@@ -226,12 +266,16 @@ if __name__ == '__main__':
 
     fig, ax = plt.subplots()
     for i in range(len(camera_0.eyes)):
-        toroidal_axis_UV = world.trace_line(toroidal_axis,
-                                            camera_idx=camera_key, eye_idx=i, coord_type="UV")
-        ax.plot(toroidal_axis_UV[:, 1], toroidal_axis_UV[:, 0],
-                label=f"Toroidal Axis Projection eye {i}")
+        toroidal_axis_UV = world.trace_line(
+            toroidal_axis, camera_idx=camera_key, eye_idx=i, coord_type="UV"
+        )
+        ax.plot(
+            toroidal_axis_UV[:, 1],
+            toroidal_axis_UV[:, 0],
+            label=f"Toroidal Axis Projection eye {i}",
+        )
 
-    ax.set_aspect('equal', adjustable='box')
+    ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("v [mm]")
     ax.set_ylabel("u [mm]")
     ax.set_xlim(0, camera_0.screen.screen_size[1])
@@ -244,45 +288,59 @@ if __name__ == '__main__':
         toroidal_axis_y = R_ * np.sin(np.linspace(np.pi / 2, 3 / 2 * np.pi, 200))
         toroidal_axis_z = np.zeros_like(toroidal_axis_x)
         toroidal_axis = np.vstack([toroidal_axis_x, toroidal_axis_y, toroidal_axis_z]).T
-        toroidal_axis_UV = world.trace_line(toroidal_axis,
-                                            camera_idx=camera_key, eye_idx=0, coord_type="UV")
-        visible = world.find_visible_points(toroidal_axis, camera_idx=camera_key, eye_idx=0, verbose=0)[0]
+        toroidal_axis_UV = world.trace_line(
+            toroidal_axis, camera_idx=camera_key, eye_idx=0, coord_type="UV"
+        )
+        visible = world.find_visible_points(
+            toroidal_axis, camera_idx=camera_key, eye_idx=0, verbose=0
+        )[0]
         lines = np.split(toroidal_axis_UV, np.where(np.diff(visible))[0] + 1)
 
         flag_first = True
-        for line, vis in zip(lines, np.split(visible, np.where(np.diff(visible))[0] + 1)):
+        for line, vis in zip(
+            lines, np.split(visible, np.where(np.diff(visible))[0] + 1)
+        ):
             if len(line) <= 1:
                 continue
             if vis[0]:
                 if flag_first:
-                    ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
-                            linestyle="-", label=f"R={R_} mm")
+                    ax.plot(
+                        line[:, 1],
+                        line[:, 0],
+                        color=f"C{i}",
+                        linestyle="-",
+                        label=f"R={R_} mm",
+                    )
                     flag_first = False
                 else:
-                    ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
-                            linestyle="-")
+                    ax.plot(line[:, 1], line[:, 0], color=f"C{i}", linestyle="-")
             else:
-                ax.plot(line[:, 1], line[:, 0], color=f"C{i}",
-                        linestyle="--")
+                ax.plot(line[:, 1], line[:, 0], color=f"C{i}", linestyle="--")
 
     X_axis_x = np.linspace(-2000, -1000, 100)
     X_axis = np.vstack([X_axis_x, np.zeros_like(X_axis_x), np.zeros_like(X_axis_x)]).T
-    X_axis_UV = world.trace_line(X_axis, camera_idx=camera_key, eye_idx=0, coord_type="UV")
-    visible = world.find_visible_points(X_axis, camera_idx=camera_key, eye_idx=0, verbose=0)[0]
+    X_axis_UV = world.trace_line(
+        X_axis, camera_idx=camera_key, eye_idx=0, coord_type="UV"
+    )
+    visible = world.find_visible_points(
+        X_axis, camera_idx=camera_key, eye_idx=0, verbose=0
+    )[0]
     lines = np.split(X_axis_UV, np.where(np.diff(visible))[0] + 1)
     for line, vis in zip(lines, np.split(visible, np.where(np.diff(visible))[0] + 1)):
         if len(line) <= 1:
             continue
         if vis[0]:
-            ax.plot(line[:, 1], line[:, 0], 'k-', label="X axis")
+            ax.plot(line[:, 1], line[:, 0], "k-", label="X axis")
         else:
-            ax.plot(line[:, 1], line[:, 0], 'k--')
+            ax.plot(line[:, 1], line[:, 0], "k--")
 
     t = np.linspace(0, 2 * np.pi, 50)
     edge_points = np.vstack([1.8 * np.cos(t), 1.8 * np.sin(t), np.zeros_like(t) + 13]).T
-    edge_points_UV = camera_0.screen.xy2uv(camera_0.eyes[0].calc_rays(edge_points, front_only=False).XY)
-    ax.plot(edge_points_UV[:, 1], edge_points_UV[:, 0], 'k-', lw=2)
-    ax.set_aspect('equal', adjustable='box')
+    edge_points_UV = camera_0.screen.xy2uv(
+        camera_0.eyes[0].calc_rays(edge_points, front_only=False).XY
+    )
+    ax.plot(edge_points_UV[:, 1], edge_points_UV[:, 0], "k-", lw=2)
+    ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("v [mm]")
     ax.set_ylabel("u [mm]")
     ax.set_xlim(0, camera_0.screen.screen_size[1])
@@ -301,64 +359,116 @@ if __name__ == '__main__':
     ax = camera_0.draw_optical_system()
     # ax.set_xlim(-10, 50)
     ax.set_box_aspect([1, 1, 1])
-    ax.view_init(elev=20., azim=60)
+    ax.view_init(elev=20.0, azim=60)
     ax.figure.show()
 
     r, theta, phi = r_grid / 500, theta_grid, phi_grid
-    toroidal_axis_UV = [world.trace_line(toroidal_axis,
-                                         camera_idx=camera_key, eye_idx=i, coord_type="UV")
-                        for i in range(len(camera_0.eyes))]
+    toroidal_axis_UV = [
+        world.trace_line(
+            toroidal_axis, camera_idx=camera_key, eye_idx=i, coord_type="UV"
+        )
+        for i in range(len(camera_0.eyes))
+    ]
     vis = world.find_visible_points(toroidal_axis, camera_idx=camera_key, verbose=0)
 
-
     def plot_emission_profile_sample(f):
-        fig, axes = plt.subplots(1, 2, figsize=(8, 3),
-                                 gridspec_kw={'width_ratios': [1, 2], 'wspace': 0.4})
+        fig, axes = plt.subplots(
+            1, 2, figsize=(8, 3), gridspec_kw={"width_ratios": [1, 2], "wspace": 0.4}
+        )
         axes[0].set_title("Emission Profile at Y=0")
-        cm = axes[0].contourf(voxel.cx_axis, voxel.cz_axis,
-                              f.reshape(voxel.shape)[:, voxel.shape[1] // 2, :].T,
-                              levels=15, cmap="viridis")
-        axes[0].plot(-1500 + 500 * np.cos(np.linspace(0, 2 * np.pi, 100)),
-                     500 * np.sin(np.linspace(0, 2 * np.pi, 100)), "w--", linewidth=2,
-                     label="Chamber wall")
+        cm = axes[0].contourf(
+            voxel.cx_axis,
+            voxel.cz_axis,
+            f.reshape(voxel.shape)[:, voxel.shape[1] // 2, :].T,
+            levels=15,
+            cmap="viridis",
+        )
+        axes[0].plot(
+            -1500 + 500 * np.cos(np.linspace(0, 2 * np.pi, 100)),
+            500 * np.sin(np.linspace(0, 2 * np.pi, 100)),
+            "w--",
+            linewidth=2,
+            label="Chamber wall",
+        )
         axes[0].set_xlim(-2000, -1000)
         axes[0].set_ylim(*voxel.cz_axis[[0, -1]])
         axes[0].set_xlabel("X [mm]")
         axes[0].set_ylabel("Z [mm]")
-        axes[0].set_aspect('equal', adjustable='box')
+        axes[0].set_aspect("equal", adjustable="box")
         axes[0].legend(loc="upper right")
-        fig.colorbar(cm, label="Emission Intensity", ax=axes[0], fraction=0.046, pad=0.04)
+        fig.colorbar(
+            cm, label="Emission Intensity", ax=axes[0], fraction=0.046, pad=0.04
+        )
 
         im = P @ f
-        camera_0.screen.show_image(im, ax=axes[1], pm=False, cmap="viridis", colorbar=False)
-        axes[1].plot(toroidal_axis_UV[0][vis[0], 1], toroidal_axis_UV[0][vis[0], 0], "k--")
-        fig.colorbar(axes[1]._children[0], label="Projected Intensity (a.u.)", ax=axes[1], fraction=0.046, pad=0.04)
+        camera_0.screen.show_image(
+            im, ax=axes[1], pm=False, cmap="viridis", colorbar=False
+        )
+        axes[1].plot(
+            toroidal_axis_UV[0][vis[0], 1], toroidal_axis_UV[0][vis[0], 0], "k--"
+        )
+        fig.colorbar(
+            axes[1]._children[0],
+            label="Projected Intensity (a.u.)",
+            ax=axes[1],
+            fraction=0.046,
+            pad=0.04,
+        )
         return fig, axes
-
 
     # --- Plot sample emission profiles ---
     # sample 0: axisymmetric
-    sample_params = {"m_": 0, "n_": 0, "delta": 0.,
-                     "d": 3, "r_1": 0.8, "xi_0": 0.,
-                     "A": 1, "p": 2, "q": 17, "h": 0, "w": 0.2}
+    sample_params = {
+        "m_": 0,
+        "n_": 0,
+        "delta": 0.0,
+        "d": 3,
+        "r_1": 0.8,
+        "xi_0": 0.0,
+        "A": 1,
+        "p": 2,
+        "q": 17,
+        "h": 0,
+        "w": 0.2,
+    }
     symmetric_f = emission_profile(r, theta, phi, **sample_params)
     fig, axes = plot_emission_profile_sample(symmetric_f)
     fig.suptitle("Sample Emission Profile: Axisymmetric")
     fig.show()
 
     # sample 1: hollow tube
-    sample_params = {"m_": 1, "n_": 0, "delta": 0.,
-                     "d": 3, "r_1": 0.8, "xi_0": 0.,
-                     "A": 1, "p": 2, "q": 17, "h": 1, "w": 0.2}
+    sample_params = {
+        "m_": 1,
+        "n_": 0,
+        "delta": 0.0,
+        "d": 3,
+        "r_1": 0.8,
+        "xi_0": 0.0,
+        "A": 1,
+        "p": 2,
+        "q": 17,
+        "h": 1,
+        "w": 0.2,
+    }
     tube_f = emission_profile(r, theta, phi, **sample_params)
     fig, axes = plot_emission_profile_sample(tube_f)
     fig.suptitle("Sample Emission Profile: Hollow Tube")
     fig.show()
 
     # sample 2: helical
-    sample_params = {"m_": 1, "n_": 1, "delta": 0.1,
-                     "d": 3, "r_1": 0.8, "xi_0": 0.3,
-                     "A": 1, "p": 2, "q": 9, "h": 0., "w": 0.2}
+    sample_params = {
+        "m_": 1,
+        "n_": 1,
+        "delta": 0.1,
+        "d": 3,
+        "r_1": 0.8,
+        "xi_0": 0.3,
+        "A": 1,
+        "p": 2,
+        "q": 9,
+        "h": 0.0,
+        "w": 0.2,
+    }
     helical_f = emission_profile(r, theta, phi, **sample_params)
     fig, axes = plot_emission_profile_sample(helical_f)
     fig.suptitle("Sample Emission Profile: Helical Structure")
@@ -366,39 +476,80 @@ if __name__ == '__main__':
 
     # --- Plot sample emission profile ---
 
-    sample_params = {"m_": 1, "n_": 1, "delta": 0.1,
-                     "d": 3, "r_1": 0.8, "xi_0": 0.3,
-                     "A": 1, "p": 2, "q": 9, "h": 0.8, "w": 0.2}
+    sample_params = {
+        "m_": 1,
+        "n_": 1,
+        "delta": 0.1,
+        "d": 3,
+        "r_1": 0.8,
+        "xi_0": 0.3,
+        "A": 1,
+        "p": 2,
+        "q": 9,
+        "h": 0.8,
+        "w": 0.2,
+    }
     hellical_hollow_f = emission_profile(r, theta, phi, **sample_params)
     fig, axes = plot_emission_profile_sample(hellical_hollow_f)
     fig.suptitle("Sample Emission Profile: Helical Hollow Structure")
     fig.show()
 
     fig, axes = plt.subplots(3, 4, figsize=(12, 9))
-    f_list = [emission_profile(r, theta, phi, **sample_params, phi_0=2 * np.pi * i / 12) for i in range(axes.size)]
+    f_list = [
+        emission_profile(r, theta, phi, **sample_params, phi_0=2 * np.pi * i / 12)
+        for i in range(axes.size)
+    ]
     ims = P * np.stack(f_list, axis=1)
     ims -= np.mean(ims, axis=1, keepdims=True)
     for i, (im, ax) in enumerate(zip(ims.T, axes.ravel())):
         vmax = np.abs(ims).max()
-        _ = camera_0.screen.show_image(im, pm=True, cmap="bwr", ax=ax, colorbar=False,
-                                       vmin=-vmax, vmax=vmax)
-        ax.text(0.1, 0.9, rf"2$\pi$*{i}/{len(axes.ravel())}",
-                transform=ax.transAxes,
-                color="black", fontsize=12, fontweight="bold",
-                bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=2))
-    fig.colorbar(_._children[0],
-                 ax=axes, location='right', fraction=0.02, pad=0.04, label="Projected Intensity (a.u.)")
+        _ = camera_0.screen.show_image(
+            im, pm=True, cmap="bwr", ax=ax, colorbar=False, vmin=-vmax, vmax=vmax
+        )
+        ax.text(
+            0.1,
+            0.9,
+            rf"2$\pi$*{i}/{len(axes.ravel())}",
+            transform=ax.transAxes,
+            color="black",
+            fontsize=12,
+            fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2),
+        )
+    fig.colorbar(
+        _._children[0],
+        ax=axes,
+        location="right",
+        fraction=0.02,
+        pad=0.04,
+        label="Projected Intensity (a.u.)",
+    )
     fig.show()
 
     fig = go.Figure()
     camera_0.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
-    stl_utils.plotly_show_stl(mst_wall, fig, color="lightgrey", linearg={'width': 0.5, 'color': 'black'},
-                              opacity=0.1, show_fig=False)
-    fig.add_trace(go.Volume(x=X, y=Y, z=Z, value=hellical_hollow_f,
-                            isomin=0.01 * np.max(hellical_hollow_f), isomax=np.max(hellical_hollow_f),
-                            colorscale="Jet", opacity=0.5, surface_count=21,
-                            # opacityscale=[[0, 0], [0.1, 0.05], [0.3, 0.1], [0.6, 0.3], [1, 0.6]],
-                            opacityscale="extreme",
-                            caps=dict(x_show=True, y_show=False, z_show=False),  # no caps
-                            ))
+    stl_utils.plotly_show_stl(
+        mst_wall,
+        fig,
+        color="lightgrey",
+        linearg={"width": 0.5, "color": "black"},
+        opacity=0.1,
+        show_fig=False,
+    )
+    fig.add_trace(
+        go.Volume(
+            x=X,
+            y=Y,
+            z=Z,
+            value=hellical_hollow_f,
+            isomin=0.01 * np.max(hellical_hollow_f),
+            isomax=np.max(hellical_hollow_f),
+            colorscale="Jet",
+            opacity=0.5,
+            surface_count=21,
+            # opacityscale=[[0, 0], [0.1, 0.05], [0.3, 0.1], [0.6, 0.3], [1, 0.6]],
+            opacityscale="extreme",
+            caps=dict(x_show=True, y_show=False, z_show=False),  # no caps
+        )
+    )
     fig.show()

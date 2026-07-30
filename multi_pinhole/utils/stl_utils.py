@@ -27,7 +27,6 @@ from scipy import sparse
 from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation
 from stl import mesh
-from tqdm.auto import trange
 
 from .my_stdio import my_print, my_range
 
@@ -42,7 +41,13 @@ Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 # 3D vector like object (accepts numpy.ndarray, list, tuple)
 Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
 # Matrix like object (2D array) (accepts numpy.ndarray, list of list, tuple of tuple, etc.)
-MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[List[Number]], Tuple[Tuple[Number]]]
+MatrixLike = Union[
+    np.ndarray,
+    List[List[Number]],
+    Tuple[List[Number]],
+    Tuple[List[Number]],
+    Tuple[Tuple[Number]],
+]
 
 # Internal visibility work sizes.  These are implementation details rather
 # than World/projection settings: changing them must not alter visibility.
@@ -52,9 +57,9 @@ _VISIBILITY_TRIANGLE_BATCH = 512
 
 # MARK: - STL utilities
 def shape_check(
-        shape: str,
-        size: Union[Number, Vector2DLike],
-        ok_shapes: dict[str, int] | None = None
+    shape: str,
+    size: Union[Number, Vector2DLike],
+    ok_shapes: dict[str, int] | None = None,
 ) -> Tuple[str, Vector2DLike]:
     """Normalize aperture ``shape`` and ``size`` specifications.
 
@@ -76,9 +81,9 @@ def shape_check(
         containing positive ``(height, width)`` values.
     """
     # 許可形状
-    allowed = {'circle', 'ellipse', 'rectangle', 'square'}
+    allowed = {"circle", "ellipse", "rectangle", "square"}
     if ok_shapes is None:
-        ok_shapes = {'circle': 1, 'ellipse': 2, 'rectangle': 2, 'square': 1}
+        ok_shapes = {"circle": 1, "ellipse": 2, "rectangle": 2, "square": 1}
     if shape not in allowed:
         raise ValueError(f"shape must be one of {sorted(allowed)}")
 
@@ -89,7 +94,7 @@ def shape_check(
         arr = np.array(size, dtype=float).ravel()
 
     # 形状ごとの許容と展開
-    if shape in ('circle', 'square'):
+    if shape in ("circle", "square"):
         if arr.size == 1:
             s = float(arr[0])
             size_hw = np.array([s, s], dtype=float)
@@ -101,7 +106,7 @@ def shape_check(
             size_hw = np.array([s, s], dtype=float)
         else:
             raise ValueError(f"{shape} size must be a number or a 2-element sequence")
-    elif shape in ('ellipse', 'rectangle'):
+    elif shape in ("ellipse", "rectangle"):
         if arr.size == 1:
             s = float(arr[0])
             size_hw = np.array([s, s], dtype=float)  # 正方形/正円相当も許容
@@ -115,16 +120,18 @@ def shape_check(
 
     # 数値チェック（正・有限）
     if not np.all(np.isfinite(size_hw)) or np.any(size_hw <= 0):
-        raise ValueError(f"size must be positive finite numbers: got {size_hw.tolist()}")
+        raise ValueError(
+            f"size must be positive finite numbers: got {size_hw.tolist()}"
+        )
 
     return shape, size_hw
 
 
 def generate_aperture_stl(
-        shape: str,
-        size: Union[Number, Vector2DLike],
-        resolution: Union[Number, Vector2DLike],
-        max_size: Union[Number, Vector2DLike] | None = None
+    shape: str,
+    size: Union[Number, Vector2DLike],
+    resolution: Union[Number, Vector2DLike],
+    max_size: Union[Number, Vector2DLike] | None = None,
 ) -> mesh.Mesh:
     """Create a planar STL mesh representing an aperture outline.
 
@@ -151,10 +158,21 @@ def generate_aperture_stl(
     shape, size = shape_check(shape, size)
     if max_size is None:
         max_size = 1.5 * size
-    max_size = [max_size, ] * 2 if isinstance(max_size, Number) else np.array(max_size)
-    x_arr, y_arr = np.linspace(-max_size[0], max_size[0], 10), np.linspace(-max_size[1], max_size[1], 10)
+    max_size = (
+        [
+            max_size,
+        ]
+        * 2
+        if isinstance(max_size, Number)
+        else np.array(max_size)
+    )
+    x_arr, y_arr = (
+        np.linspace(-max_size[0], max_size[0], 10),
+        np.linspace(-max_size[1], max_size[1], 10),
+    )
 
-    if shape == 'circle' or shape == 'ellipse':
+    if shape == "circle" or shape == "ellipse":
+
         def condition(x, y):
             """bool ndarray: True where ``(x, y)`` lies inside the circle/ellipse."""
             return (x / size[0]) ** 2 + (y / size[1]) ** 2 <= 1
@@ -162,7 +180,8 @@ def generate_aperture_stl(
         t = np.linspace(0, 2 * np.pi, resolution)
         edge_points = np.array([size[0] * np.cos(t), size[1] * np.sin(t)]).T
 
-    elif shape == 'rectangle':
+    elif shape == "rectangle":
+
         def condition(x, y):
             """bool ndarray: True where ``(x, y)`` lies inside the rectangle."""
             return np.all([np.abs(x) <= size[0] / 2, np.abs(y) <= size[1] / 2], axis=0)
@@ -177,18 +196,23 @@ def generate_aperture_stl(
     else:
         raise ValueError("shape must be one of ['circle', 'ellipse', 'rectangle']")
 
-    outer_points = np.array(np.meshgrid(x_arr, y_arr, indexing='ij')).reshape(2, -1).T
-    outer_points = outer_points[~condition(outer_points[:, 0] / 1.5, outer_points[:, 1] / 1.5)]
+    outer_points = np.array(np.meshgrid(x_arr, y_arr, indexing="ij")).reshape(2, -1).T
+    outer_points = outer_points[
+        ~condition(outer_points[:, 0] / 1.5, outer_points[:, 1] / 1.5)
+    ]
     points = np.concatenate([outer_points, edge_points])
 
     return make_2D_surface(points, condition)
 
 
-def rotate_model(model: mesh.Mesh, order: str = 'xyz',
-                 angles: Vector3DLike = (0, 0, 0),
-                 matrix: np.ndarray | None = None,
-                 origin: Vector3DLike = (0, 0, 0),
-                 degrees: bool = True) -> mesh.Mesh:
+def rotate_model(
+    model: mesh.Mesh,
+    order: str = "xyz",
+    angles: Vector3DLike = (0, 0, 0),
+    matrix: np.ndarray | None = None,
+    origin: Vector3DLike = (0, 0, 0),
+    degrees: bool = True,
+) -> mesh.Mesh:
     """Rotate an STL mesh either by Euler angles or by an explicit matrix.
 
     Parameters
@@ -212,8 +236,11 @@ def rotate_model(model: mesh.Mesh, order: str = 'xyz',
         Deep copy of ``model`` rotated in place.
     """
     origin = np.array(origin)
-    rotation_matrix = Rotation.from_euler(order, angles, degrees=degrees).as_matrix() if (
-            matrix is None) else np.array(matrix)
+    rotation_matrix = (
+        Rotation.from_euler(order, angles, degrees=degrees).as_matrix()
+        if (matrix is None)
+        else np.array(matrix)
+    )
 
     # copy the model
     model = copy_model(model)
@@ -224,9 +251,9 @@ def rotate_model(model: mesh.Mesh, order: str = 'xyz',
 
 
 def copy_model(
-        model: mesh.Mesh,
-        translate: np.ndarray = (0, 0, 0),
-        rotation_matrix: np.ndarray | None = None
+    model: mesh.Mesh,
+    translate: np.ndarray = (0, 0, 0),
+    rotation_matrix: np.ndarray | None = None,
 ) -> mesh.Mesh:
     """Return a transformed deep copy of ``model``.
 
@@ -252,8 +279,13 @@ def copy_model(
 
 
 # MARK: - Visibility calculation utilities
-def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points: np.ndarray,
-                       behind_start_included: float | bool = False, eps: float = 1e-6) -> np.ndarray:
+def check_intersection(
+    triangle: np.ndarray,
+    start_point: np.ndarray,
+    end_points: np.ndarray,
+    behind_start_included: float | bool = False,
+    eps: float = 1e-6,
+) -> np.ndarray:
     """Test intersection between a triangle and one or more line segments.
 
     Parameters
@@ -300,10 +332,12 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
     # basic vectors
     a, b, c = triangle  # three vectors of a triangle (a, b, c: (3,))
     e_1, e_2 = b - a, c - a  # two edges of a triangle (e_1, e_2: (3,))
-    d_ = np.subtract(end_points, start_point)  # direction of the line segment (d: (N, 3))
+    d_ = np.subtract(
+        end_points, start_point
+    )  # direction of the line segment (d: (N, 3))
     r = np.subtract(start_point, a)  # vector from the start point to a (r: (3,))
     n_0 = np.cross(e_1, e_2)  # normal vector of the triangle (n_0: (3,))
-    det = -np.einsum('ij,j->i', d_, n_0)  # (N,) array
+    det = -np.einsum("ij,j->i", d_, n_0)  # (N,) array
 
     dtype = det.dtype
     eps = dtype.type(eps)
@@ -317,19 +351,19 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
     inv_det[non_parallel] = 1.0 / det[non_parallel]
 
     n_2 = np.cross(d_, e_2)  # (N, 3)
-    u = np.einsum('i,ji,j->j', r, n_2, inv_det)  # (N,) array
+    u = np.einsum("i,ji,j->j", r, n_2, inv_det)  # (N,) array
     ok = non_parallel & (u >= -eps)  # (N,) boolean array (u condition)
     if not np.any(ok):
         return np.zeros_like(N, dtype=bool)
 
     n_1 = np.cross(e_1, d_)  # (N, 3)
-    v = np.einsum('i,ji,j->j', r, n_1, inv_det)  # (N,) array
+    v = np.einsum("i,ji,j->j", r, n_1, inv_det)  # (N,) array
     ok &= (v >= -eps) & (u + v <= 1 + eps)  # (N,) boolean array (v condition)
     if not np.any(ok):
         return np.zeros_like(N, dtype=bool)
 
     # t = np.einsum('ij,j->i', r, n_0) * inv_det  # (N,) array
-    t = np.einsum('i,i,j->j', r, n_0, inv_det)  # (N,) array
+    t = np.einsum("i,i,j->j", r, n_0, inv_det)  # (N,) array
 
     if isinstance(behind_start_included, bool):
         t_min = np.full(N, -np.inf if behind_start_included else 0, dtype=dtype)
@@ -337,7 +371,7 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
         # d_norm = np.linalg.norm(d_, axis=1)
         z = d_[..., 2]
         f = dtype.type(behind_start_included)
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             t_min = np.where(z > eps, f / z, np.inf).astype(dtype, copy=False)
     else:
         raise ValueError("behind_start_included must be bool or float (default: False)")
@@ -345,10 +379,13 @@ def check_intersection(triangle: np.ndarray, start_point: np.ndarray, end_points
     return ok
 
 
-def _check_intersection_pairs(triangles: np.ndarray, start_point: np.ndarray,
-                              end_points: np.ndarray,
-                              behind_start_included: float | bool = False,
-                              eps: float = 1e-6) -> np.ndarray:
+def _check_intersection_pairs(
+    triangles: np.ndarray,
+    start_point: np.ndarray,
+    end_points: np.ndarray,
+    behind_start_included: float | bool = False,
+    eps: float = 1e-6,
+) -> np.ndarray:
     """Vectorized equivalent of :func:`check_intersection` for triangle-ray pairs.
 
     ``triangles[i]`` is tested only against the segment ending at
@@ -365,7 +402,7 @@ def _check_intersection_pairs(triangles: np.ndarray, start_point: np.ndarray,
     d_ = end_points - start_point
     r = start_point - a
     n_0 = np.cross(e_1, e_2)
-    det = -np.einsum('ij,ij->i', d_, n_0)
+    det = -np.einsum("ij,ij->i", d_, n_0)
 
     dtype = det.dtype
     eps = dtype.type(eps)
@@ -374,14 +411,14 @@ def _check_intersection_pairs(triangles: np.ndarray, start_point: np.ndarray,
     inv_det[non_parallel] = 1.0 / det[non_parallel]
 
     n_2 = np.cross(d_, e_2)
-    u = np.einsum('ij,ij,i->i', r, n_2, inv_det)
+    u = np.einsum("ij,ij,i->i", r, n_2, inv_det)
     ok = non_parallel & (u >= -eps)
 
     n_1 = np.cross(e_1, d_)
-    v = np.einsum('ij,ij,i->i', r, n_1, inv_det)
+    v = np.einsum("ij,ij,i->i", r, n_1, inv_det)
     ok &= (v >= -eps) & (u + v <= 1 + eps)
 
-    t = np.einsum('ij,ij,i->i', r, n_0, inv_det)
+    t = np.einsum("ij,ij,i->i", r, n_0, inv_det)
     if isinstance(behind_start_included, bool):
         t_min = np.full(
             end_points.shape[0],
@@ -391,7 +428,7 @@ def _check_intersection_pairs(triangles: np.ndarray, start_point: np.ndarray,
     elif isinstance(behind_start_included, Number):
         z = d_[..., 2]
         f = dtype.type(behind_start_included)
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             t_min = np.where(z > eps, f / z, np.inf).astype(dtype, copy=False)
     else:
         raise ValueError("behind_start_included must be bool or float (default: False)")
@@ -429,32 +466,44 @@ def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
     """
 
     # check if the start point is on the plane defined by the mesh
-    zero_volume = ~np.isclose(0., np.einsum('ij,ij->i', mesh_obj.normals, start_point - mesh_obj.v0))  # (M,)
+    zero_volume = ~np.isclose(
+        0.0, np.einsum("ij,ij->i", mesh_obj.normals, start_point - mesh_obj.v0)
+    )  # (M,)
 
     # origin: np.ndarray of shape (3, )
     # vector oa, ob, oc: np.ndarray of shape (M,3) (from origin to a, b, c)
-    oa, ob, oc = mesh_obj.v0 - start_point, mesh_obj.v1 - start_point, mesh_obj.v2 - start_point
+    oa, ob, oc = (
+        mesh_obj.v0 - start_point,
+        mesh_obj.v1 - start_point,
+        mesh_obj.v2 - start_point,
+    )
     # vectors p: np.ndarray of shape (N, 3) (from origin to grid points)
     # p = grid_points - start
 
     # plane oab: (b - a) x (origin - a) dot (b - a) = 0
     n_oab = np.cross(oa, ob)  # normal vectors of plane oab (M, 3)
     # n_oab_dot = np.einsum('ij,ij->i', oc - oa, n_oab)  # (M,)
-    n_oab *= np.sign(np.einsum('ij,ij->i', oc - oa, n_oab))[:, None]  # normal vectors with sign (M, 3)
+    n_oab *= np.sign(np.einsum("ij,ij->i", oc - oa, n_oab))[
+        :, None
+    ]  # normal vectors with sign (M, 3)
     # p_oab = np.einsum('ij,kj->ik', p, n_oab) * n_oab_dot >= 0  # (N, M) <- too large. Use sparse matrix & list comp.
     # p_oab = sparse.hstack([sparse.csr_matrix((p @ n) >= 0).T for n in n_oab], format='csr')  # (N, M)
 
     # plane obc: (c - b) x (origin - b) dot (c - b) = 0
     n_obc = np.cross(ob, oc)  # normal vectors of plane obc (M, 3)
     # n_obc_dot = np.einsum('ij,ij->i', oa - ob, n_obc)  # (M,)
-    n_obc *= np.sign(np.einsum('ij,ij->i', oa - ob, n_obc))[:, None]  # normal vectors with sign (M, 3)
+    n_obc *= np.sign(np.einsum("ij,ij->i", oa - ob, n_obc))[
+        :, None
+    ]  # normal vectors with sign (M, 3)
     # p_obc = np.einsum('ij,kj->ik', p, n_obc) * n_obc_dot >= 0  # (N, M)
     # p_obc = sparse.hstack([sparse.csr_matrix((p @ n) >= 0).T for n in n_obc], format='csr')  # (N, M)
 
     # plane oca: (a - c) x (origin - c) dot (a - c) = 0
     n_oca = np.cross(oc, oa)  # normal vectors of plane oca (M, 3)
     # n_oca_dot = np.einsum('ij,ij->i', ob - oc, n_oca)  # (M,)
-    n_oca *= np.sign(np.einsum('ij,ij->i', ob - oc, n_oca))[:, None]  # normal vectors with sign (M, 3)
+    n_oca *= np.sign(np.einsum("ij,ij->i", ob - oc, n_oca))[
+        :, None
+    ]  # normal vectors with sign (M, 3)
     # p_oca = np.einsum('ij,kj->ik', p, n_oca) * n_oca_dot >= 0  # (N, M)
     # p_oca = sparse.hstack([sparse.csr_matrix((p @ n) >= 0).T for n in n_oca], format='csr')  # (N, M)
 
@@ -471,9 +520,7 @@ def delta_cone(mesh_obj: mesh.Mesh, start_point: np.ndarray) -> np.ndarray:
 
 
 def delta_cone_prepare(
-        triangles: np.ndarray,
-        start_point: np.ndarray,
-        eps: float = 1e-6
+    triangles: np.ndarray, start_point: np.ndarray, eps: float = 1e-6
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate oriented cone planes for a batch of triangles.
 
@@ -509,30 +556,35 @@ def delta_cone_prepare(
     c = triangles[:, 2, :] - start_point  # (M, 3)
 
     # ignore zero volume triangles
-    volume = np.einsum('ij,ij->i', a, np.cross(b, c))  # (M,)
+    volume = np.einsum("ij,ij->i", a, np.cross(b, c))  # (M,)
     # valid = np.linalg.norm(tri_n, axis=1) > eps  # (M,)
     valid = np.abs(volume) > eps  # (M,)
     # calculate normal vectors of planes oab, obc, oca with correct sign (the third point side is positive)
     n_oab = np.cross(a, b)  # (M, 3)
-    s = np.sign(np.einsum('ij,ij->i', c, n_oab))  # (M,)
+    s = np.sign(np.einsum("ij,ij->i", c, n_oab))  # (M,)
     n_oab *= s[:, None]  # (M, 3)
 
     n_obc = np.cross(b, c)  # (M, 3)
-    s = np.sign(np.einsum('ij,ij->i', a, n_obc))  # (M,)
+    s = np.sign(np.einsum("ij,ij->i", a, n_obc))  # (M,)
     n_obc *= s[:, None]  # (M, 3)
 
     n_oca = np.cross(c, a)  # (M, 3)
-    s = np.sign(np.einsum('ij,ij->i', b, n_oca))  # (M,)
+    s = np.sign(np.einsum("ij,ij->i", b, n_oca))  # (M,)
     n_oca *= s[:, None]  # (M, 3)
 
     planes = np.stack([n_oab, n_obc, n_oca], axis=1)  # (M, 3, 3) (triangles, n_*, xyz)
     return planes, valid
 
 
-def delta_cone_apply(triangles: np.ndarray, start_point: np.ndarray, end_points: np.ndarray,
-                     eps: float = 1e-6, allow_behind: bool = False,
-                     batch_size: int = 65536, verbose: int = 0
-                     ) -> sparse.csr_matrix:
+def delta_cone_apply(
+    triangles: np.ndarray,
+    start_point: np.ndarray,
+    end_points: np.ndarray,
+    eps: float = 1e-6,
+    allow_behind: bool = False,
+    batch_size: int = 65536,
+    verbose: int = 0,
+) -> sparse.csr_matrix:
     """Test which points fall inside the cones defined by ``triangles``.
 
     Parameters
@@ -647,32 +699,80 @@ def delta_cone_apply_test() -> go.Figure:
     plotly.graph_objects.Figure
         The interactive debug figure (also displayed via ``fig.show()``).
     """
-    triangles = np.array([[[-1, -1, 1], [-1, 2, 1], [2, -1, 1]], ], dtype=np.float32)
+    triangles = np.array(
+        [
+            [[-1, -1, 1], [-1, 2, 1], [2, -1, 1]],
+        ],
+        dtype=np.float32,
+    )
     start_point = np.array([0, 0, 0], dtype=np.float32)
-    points = np.meshgrid(np.linspace(-2, 2, 25),
-                         np.linspace(-2, 2, 25),
-                         np.linspace(-2, 2, 25), indexing='ij')
+    points = np.meshgrid(
+        np.linspace(-2, 2, 25),
+        np.linspace(-2, 2, 25),
+        np.linspace(-2, 2, 25),
+        indexing="ij",
+    )
     points = np.array(points).reshape(3, -1).T.astype(np.float32)
 
-    cone, valid = delta_cone_apply(triangles, start_point, points, allow_behind=True, verbose=1)
+    cone, valid = delta_cone_apply(
+        triangles, start_point, points, allow_behind=True, verbose=1
+    )
     fig = go.Figure()
-    fig.add_trace(go.Scatter3d(x=triangles[0, :, 0], y=triangles[0, :, 1], z=triangles[0, :, 2],
-                               mode='lines+markers', name='Triangle 1', line=dict(color='blue')))
-    fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[1],
-                               mode='markers', name='start', marker=dict(color='black')))
-    fig.add_trace(go.Scatter3d(x=points[..., 0], y=points[..., 1], z=points[..., 2],
-                               mode='markers', name='start', marker=dict(color='black', size=1)))
+    fig.add_trace(
+        go.Scatter3d(
+            x=triangles[0, :, 0],
+            y=triangles[0, :, 1],
+            z=triangles[0, :, 2],
+            mode="lines+markers",
+            name="Triangle 1",
+            line=dict(color="blue"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0],
+            y=[0],
+            z=[1],
+            mode="markers",
+            name="start",
+            marker=dict(color="black"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=points[..., 0],
+            y=points[..., 1],
+            z=points[..., 2],
+            mode="markers",
+            name="start",
+            marker=dict(color="black", size=1),
+        )
+    )
     for i in range(triangles.shape[0]):
         inside_points = points[cone.getrow(i).nonzero()[1]]
-        fig.add_trace(go.Scatter3d(x=inside_points[:, 0], y=inside_points[:, 1], z=inside_points[:, 2],
-                                   mode='markers', name=f'Inside Points {i + 1}', marker=dict(size=5)))
+        fig.add_trace(
+            go.Scatter3d(
+                x=inside_points[:, 0],
+                y=inside_points[:, 1],
+                z=inside_points[:, 2],
+                mode="markers",
+                name=f"Inside Points {i + 1}",
+                marker=dict(size=5),
+            )
+        )
     fig.show()
     return fig
 
 
-def _check_visible_reference(mesh_obj, start: np.ndarray, grid_points: np.ndarray, verbose: int = 0,
-                             behind_start_included: float | bool = False, dtype: type = np.float32,
-                             batch_points: int = 65536) -> np.ndarray:
+def _check_visible_reference(
+    mesh_obj,
+    start: np.ndarray,
+    grid_points: np.ndarray,
+    verbose: int = 0,
+    behind_start_included: float | bool = False,
+    dtype: type = np.float32,
+    batch_points: int = 65536,
+) -> np.ndarray:
     """Determine which ``grid_points`` are visible from ``start``.
 
     Parameters
@@ -727,32 +827,56 @@ def _check_visible_reference(mesh_obj, start: np.ndarray, grid_points: np.ndarra
     grid_points = grid_points.astype(dtype, copy=False)  # (N, 3)
     my_print(f"{N=}, {M=}", show=verbose > 0)
 
-    allow_behind = isinstance(behind_start_included, Number) or behind_start_included is True
+    allow_behind = (
+        isinstance(behind_start_included, Number) or behind_start_included is True
+    )
     start_time = time.time()
-    cand, valid = delta_cone_apply(triangles, start, grid_points,
-                                   allow_behind=allow_behind,
-                                   batch_size=batch_points, verbose=verbose,
-                                   eps=1e-6)  # (M, N)
-    my_print(f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0)
+    cand, valid = delta_cone_apply(
+        triangles,
+        start,
+        grid_points,
+        allow_behind=allow_behind,
+        batch_size=batch_points,
+        verbose=verbose,
+        eps=1e-6,
+    )  # (M, N)
+    my_print(
+        f"delta_cone_apply done in {time.time() - start_time:.3f} sec", show=verbose > 0
+    )
     visible = np.ones(N, dtype=bool)
 
     start_time = time.time()
     for i in my_range(M, disable=verbose <= 0, desc="Check intersection"):
         if valid[i]:
-            inside_grid_points = cand.getrow(i).nonzero()[1]  # 点 i が三角形 j のコーン内にあるインデックス
+            inside_grid_points = cand.getrow(i).nonzero()[
+                1
+            ]  # 点 i が三角形 j のコーン内にあるインデックス
             if inside_grid_points.size > 0:
-                intersected = check_intersection(triangles[i], start, grid_points[inside_grid_points],
-                                                 behind_start_included=behind_start_included, eps=1e-6)
+                intersected = check_intersection(
+                    triangles[i],
+                    start,
+                    grid_points[inside_grid_points],
+                    behind_start_included=behind_start_included,
+                    eps=1e-6,
+                )
                 visible[inside_grid_points[intersected]] = False
-    my_print(f"check_intersection done in {time.time() - start_time:.3f} sec", show=verbose > 0)
+    my_print(
+        f"check_intersection done in {time.time() - start_time:.3f} sec",
+        show=verbose > 0,
+    )
 
     return visible
 
 
-def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
-                  grid_points: np.ndarray, verbose: int = 0,
-                  behind_start_included: float | bool = False, dtype: type = np.float32,
-                  batch_points: int = _VISIBILITY_POINT_BATCH) -> np.ndarray:
+def check_visible(
+    mesh_obj: mesh.Mesh,
+    start: np.ndarray,
+    grid_points: np.ndarray,
+    verbose: int = 0,
+    behind_start_included: float | bool = False,
+    dtype: type = np.float32,
+    batch_points: int = _VISIBILITY_POINT_BATCH,
+) -> np.ndarray:
     """Determine point visibility using bounded point and triangle batches.
 
     This implements the same cone filter and Möller--Trumbore test as
@@ -817,8 +941,9 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
         segment_z_max = max(float(start[2]), float(np.max(grid_points[:, 2])))
         triangle_z_min = np.min(triangles[:, :, 2], axis=1)
         triangle_z_max = np.max(triangles[:, :, 2], axis=1)
-        z_overlap = ((triangle_z_max >= segment_z_min - eps)
-                     & (triangle_z_min <= segment_z_max + eps))
+        z_overlap = (triangle_z_max >= segment_z_min - eps) & (
+            triangle_z_min <= segment_z_max + eps
+        )
         triangles = triangles[z_overlap]
         M = triangles.shape[0]
         if M == 0:
@@ -827,12 +952,15 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
     planes, valid = delta_cone_prepare(triangles, start, eps=eps)
     valid_idx = np.flatnonzero(valid)
     visible = np.ones(N, dtype=bool)
-    allow_behind = isinstance(behind_start_included, Number) or behind_start_included is True
+    allow_behind = (
+        isinstance(behind_start_included, Number) or behind_start_included is True
+    )
 
     my_print(f"{N=}, {M=}", show=verbose > 0)
     started = time.time()
     for point_start in my_range(
-            0, N, batch_points, disable=verbose <= 0, desc="Check visibility"):
+        0, N, batch_points, disable=verbose <= 0, desc="Check visibility"
+    ):
         point_stop = min(point_start + batch_points, N)
         batch_indices = np.arange(point_start, point_stop)
         batch_points_array = grid_points[point_start:point_stop]
@@ -842,7 +970,7 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
             if not np.any(alive):
                 break
             triangle_indices = valid_idx[
-                triangle_start:triangle_start + _VISIBILITY_TRIANGLE_BATCH
+                triangle_start : triangle_start + _VISIBILITY_TRIANGLE_BATCH
             ]
             active_local = np.flatnonzero(alive)
             relative_points = batch_points_array[active_local] - start
@@ -861,9 +989,11 @@ def check_visible(mesh_obj: mesh.Mesh, start: np.ndarray,
             candidate_local = active_local[point_rows]
             candidate_triangles = triangle_indices[triangle_cols]
             intersected = _check_intersection_pairs(
-                triangles[candidate_triangles], start,
+                triangles[candidate_triangles],
+                start,
                 batch_points_array[candidate_local],
-                behind_start_included=behind_start_included, eps=eps,
+                behind_start_included=behind_start_included,
+                eps=eps,
             )
             if np.any(intersected):
                 alive[candidate_local[intersected]] = False
@@ -893,105 +1023,83 @@ def check_visible_test() -> go.Figure:
     model = make_stl(vertices, faces)
     triangles = model.vectors
     start_point = np.array([0, 0, 0.5], dtype=np.float32)
-    points = np.meshgrid(np.linspace(-2, 2, 25),
-                         np.linspace(-2, 2, 25),
-                         np.linspace(-2, 2, 25), indexing='ij')
+    points = np.meshgrid(
+        np.linspace(-2, 2, 25),
+        np.linspace(-2, 2, 25),
+        np.linspace(-2, 2, 25),
+        indexing="ij",
+    )
     points = np.array(points).reshape(3, -1).T.astype(np.float32)
-    cone, valid = delta_cone_apply(triangles, start_point, points, allow_behind=True, verbose=1)
-    visible = check_visible(model,
-                            start_point, points, verbose=1)
-    visible2 = check_visible(model,
-                             start_point, points, verbose=1, behind_start_included=True)
+    cone, valid = delta_cone_apply(
+        triangles, start_point, points, allow_behind=True, verbose=1
+    )
+    visible = check_visible(model, start_point, points, verbose=1)
+    visible2 = check_visible(
+        model, start_point, points, verbose=1, behind_start_included=True
+    )
     # 1 x 3 figures
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[1],
-                               mode='markers', name='start', marker=dict(color='black')))
-    fig.add_trace(go.Scatter3d(x=points[..., 0], y=points[..., 1], z=points[..., 2],
-                               mode='markers', name='start', marker=dict(color='black', size=1)))
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0],
+            y=[0],
+            z=[1],
+            mode="markers",
+            name="start",
+            marker=dict(color="black"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=points[..., 0],
+            y=points[..., 1],
+            z=points[..., 2],
+            mode="markers",
+            name="start",
+            marker=dict(color="black", size=1),
+        )
+    )
     inside_points = points[cone.getrow(0).nonzero()[1]]
-    fig.add_trace(go.Scatter3d(x=inside_points[:, 0], y=inside_points[:, 1], z=inside_points[:, 2],
-                               mode='markers', name='Inside Points 1', marker=dict(size=2)))
+    fig.add_trace(
+        go.Scatter3d(
+            x=inside_points[:, 0],
+            y=inside_points[:, 1],
+            z=inside_points[:, 2],
+            mode="markers",
+            name="Inside Points 1",
+            marker=dict(size=2),
+        )
+    )
     invisible_points = points[~visible]
-    fig.add_trace(go.Scatter3d(x=invisible_points[:, 0], y=invisible_points[:, 1], z=invisible_points[:, 2],
-                               mode='markers', name='Invisible Points (no mesh)', marker=dict(size=4, color='red')))
+    fig.add_trace(
+        go.Scatter3d(
+            x=invisible_points[:, 0],
+            y=invisible_points[:, 1],
+            z=invisible_points[:, 2],
+            mode="markers",
+            name="Invisible Points (no mesh)",
+            marker=dict(size=4, color="red"),
+        )
+    )
     invisible_points2 = points[~visible2]
-    fig.add_trace(go.Scatter3d(x=invisible_points2[:, 0], y=invisible_points2[:, 1], z=invisible_points2[:, 2],
-                               mode='markers', name='Invisible Points (with mesh)',
-                               marker=dict(size=3, color='green')))
+    fig.add_trace(
+        go.Scatter3d(
+            x=invisible_points2[:, 0],
+            y=invisible_points2[:, 1],
+            z=invisible_points2[:, 2],
+            mode="markers",
+            name="Invisible Points (with mesh)",
+            marker=dict(size=3, color="green"),
+        )
+    )
     fig.show()
     return fig
 
 
-def check_visible_old(mesh_obj: mesh.Mesh, start: np.ndarray, grid_points: np.ndarray,
-                      verbose: int = 0, behind_start_included: bool = False) -> np.ndarray:
-    """Legacy visibility algorithm retained for regression testing.
-
-    Parameters
-    ----------
-    mesh_obj : mesh.Mesh
-        STL mesh containing ``M`` triangles.
-    start : np.ndarray, shape (3,)
-        Viewpoint or ray origin.
-    grid_points : np.ndarray, shape (N, 3)
-        Locations to test for visibility.
-    verbose : int, optional
-        Verbosity level forwarded to progress utilities.
-    behind_start_included : bool, optional
-        When ``True`` any points located behind ``start`` are treated as occluded.
-
-    Returns
-    -------
-    np.ndarray, shape (N,), dtype=bool
-        Boolean visibility mask comparable to :func:`check_visible`.
-    """
-    if verbose > 0:
-        _trange = trange
-    else:
-        _trange = range
-    N = grid_points.shape[0]
-    M = mesh_obj.vectors.shape[0]
-    p = grid_points - start  # (N, 3)
-    # calculate bounding sphere
-    r_grid = np.linalg.norm(p, axis=-1)  # (N, )
-    r_mesh_max = np.linalg.norm(mesh_obj.vectors - start, axis=-1).max(axis=-1, initial=0)  # (M, 3, 3) -> (M, 3)
-
-    my_print(f"{N=}, {M=}", show=verbose > 0)
-
-    # inside_cone = delta_cone(mesh_obj, start, grid_points)  # list of sparse.csr_matrix of shape (N, 1) (len = M)
-    n_oab, n_obc, n_oca, zero_volume = delta_cone(mesh_obj, start)
-    my_print("delta_cone done", show=verbose > 0)
-
-    # check if the grid is farther than the bounding sphere for each mesh
-    shadow = np.zeros(N, dtype=bool)  # (N, )
-    for m in _trange(M):
-        shadow += (p @ n_oab[m] >= 0) & (p @ n_obc[m] >= 0) & (p @ n_oca[m] >= 0) & zero_volume[m] & (
-                r_grid > r_mesh_max[m])
-    my_print("shadow_check done", show=verbose > 0)
-
-    time.sleep(0.05)
-    intersection = shadow.copy()  # (N, )
-    # grid points which we can see from the start point
-    for m in _trange(M):
-        # check if the grid is not in the shadow of any mesh and inside the bounding sphere of m-th mesh
-        # not in shadow of any mesh & inside the bounding sphere of m-th mesh -> True
-        check_list = (p @ n_oab[m] >= 0) & (p @ n_obc[m] >= 0) & (p @ n_oca[m] >= 0) & zero_volume[m] & ~shadow
-        # If any grid is inside the bounding sphere of m-th mesh, check intersection
-        # if np.any(check_list):
-        intersection[check_list] += check_intersection(mesh_obj.vectors[m], start, grid_points[check_list],
-                                                       behind_start_included)
-    time.sleep(0.05)
-    my_print("intersection check done", show=verbose > 0)
-
-    # (True if the grid points are not visible from the start point)
-    visible = np.logical_not(intersection)  # (N, )
-
-    return visible
-
-
 # MARK: STL visualization utilities
 def stl2mesh3d(
-        stl_mesh: mesh.Mesh
+    stl_mesh: mesh.Mesh,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """Convert ``numpy-stl`` triangle data into a Plotly ``Mesh3d`` representation.
 
@@ -1011,18 +1119,25 @@ def stl2mesh3d(
     p, q, r = stl_mesh.vectors.shape  # (p, 3, 3)
     # the array stl_mesh.vectors.reshape(p*q, r) can contain multiple copies of the same vertex;
     # extract unique vertices from all mesh triangles
-    vertices, ixr = np.unique(stl_mesh.vectors.reshape(p * q, r), return_inverse=True, axis=0)
+    vertices, ixr = np.unique(
+        stl_mesh.vectors.reshape(p * q, r), return_inverse=True, axis=0
+    )
     face_i = np.take(ixr, [3 * k for k in range(p)])
     face_j = np.take(ixr, [3 * k + 1 for k in range(p)])
     face_k = np.take(ixr, [3 * k + 2 for k in range(p)])
     return vertices, (face_i, face_j, face_k)
 
 
-def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure | None = None,
-                    color: str = 'lightblue',
-                    opacity: float = 0.5, show_edges: bool = False, show_fig: bool = True,
-                    linearg: dict[str, object] | None = None,
-                    **kwargs: Any) -> go.Figure:
+def plotly_show_stl(
+    stl_mesh: mesh.Mesh,
+    fig: go.Figure | None = None,
+    color: str = "lightblue",
+    opacity: float = 0.5,
+    show_edges: bool = False,
+    show_fig: bool = True,
+    linearg: dict[str, object] | None = None,
+    **kwargs: Any,
+) -> go.Figure:
     """Render ``stl_mesh`` into a Plotly figure with optional edge overlays.
 
     Parameters
@@ -1052,12 +1167,20 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure | None = None,
     if fig is None:
         fig = go.Figure()
     if linearg is None:
-        linearg = dict(color='black', width=1)
+        linearg = dict(color="black", width=1)
 
     vertices, (face_i, face_j, face_k) = stl2mesh3d(stl_mesh)
-    mesh3d = go.Mesh3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
-                       i=face_i, j=face_j, k=face_k,
-                       color=color, opacity=opacity, showscale=False)
+    mesh3d = go.Mesh3d(
+        x=vertices[:, 0],
+        y=vertices[:, 1],
+        z=vertices[:, 2],
+        i=face_i,
+        j=face_j,
+        k=face_k,
+        color=color,
+        opacity=opacity,
+        showscale=False,
+    )
     fig.add_trace(mesh3d)
     if show_edges:
         Xe = []
@@ -1067,10 +1190,10 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure | None = None,
             Xe.extend([T[k % 3][0] for k in range(4)] + [None])
             Ye.extend([T[k % 3][1] for k in range(4)] + [None])
             Ze.extend([T[k % 3][2] for k in range(4)] + [None])
-        edges = go.Scatter3d(x=Xe, y=Ye, z=Ze, mode='lines', line=linearg)
+        edges = go.Scatter3d(x=Xe, y=Ye, z=Ze, mode="lines", line=linearg)
         fig.add_trace(edges)
     # update axes ranges and aspect ratio of 3d plot
-    fig.update_layout(scene=dict(aspectmode='data'))
+    fig.update_layout(scene=dict(aspectmode="data"))
     fig.update_layout(**kwargs)
 
     if show_fig:
@@ -1078,11 +1201,16 @@ def plotly_show_stl(stl_mesh: mesh.Mesh, fig: go.Figure | None = None,
     return fig
 
 
-def plotly_show_axes(R: Rotation | np.ndarray,
-                     origin: np.ndarray | None = None,
-                     fig: go.Figure | None = None, show_fig: bool = True,
-                     axis_length: float = 1.0, cone_scale: float = 0.2,
-                     name: str = 'axes', **kwargs: Any) -> go.Figure:
+def plotly_show_axes(
+    R: Rotation | np.ndarray,
+    origin: np.ndarray | None = None,
+    fig: go.Figure | None = None,
+    show_fig: bool = True,
+    axis_length: float = 1.0,
+    cone_scale: float = 0.2,
+    name: str = "axes",
+    **kwargs: Any,
+) -> go.Figure:
     """Plot a triad of axes derived from ``R`` in a Plotly figure.
 
     Parameters
@@ -1122,35 +1250,79 @@ def plotly_show_axes(R: Rotation | np.ndarray,
     else:
         raise TypeError("R must be a Rotation or a numpy.ndarray")
     # plot the axes
-    line_x = go.Scatter3d(x=[origin[0], origin[0] + X[0]],
-                          y=[origin[1], origin[1] + X[1]],
-                          z=[origin[2], origin[2] + X[2]],
-                          mode='lines', line=dict(color='red', width=4), name=None)
-    line_y = go.Scatter3d(x=[origin[0], origin[0] + Y[0]],
-                          y=[origin[1], origin[1] + Y[1]],
-                          z=[origin[2], origin[2] + Y[2]],
-                          mode='lines', line=dict(color='green', width=4), name=None)
-    line_z = go.Scatter3d(x=[origin[0], origin[0] + Z[0]],
-                          y=[origin[1], origin[1] + Z[1]],
-                          z=[origin[2], origin[2] + Z[2]],
-                          mode='lines', line=dict(color='blue', width=4), name=None)
-    cone_x = go.Cone(x=[origin[0] + X[0]], y=[origin[1] + X[1]], z=[origin[2] + X[2]],
-                     u=[X[0] * cone_scale], v=[X[1] * cone_scale], w=[X[2] * cone_scale], anchor="tail",
-                     colorscale=[[0, 'red'], [1, 'red']], showscale=False, name=None)
-    cone_y = go.Cone(x=[origin[0] + Y[0]], y=[origin[1] + Y[1]], z=[origin[2] + Y[2]],
-                     u=[Y[0] * cone_scale], v=[Y[1] * cone_scale], w=[Y[2] * cone_scale], anchor="tail",
-                     colorscale=[[0, 'green'], [1, 'green']], showscale=False, name=None)
-    cone_z = go.Cone(x=[origin[0] + Z[0]], y=[origin[1] + Z[1]], z=[origin[2] + Z[2]],
-                     u=[Z[0] * cone_scale], v=[Z[1] * cone_scale], w=[Z[2] * cone_scale], anchor="tail",
-                     colorscale=[[0, 'blue'], [1, 'blue']], showscale=False, name=None)
+    line_x = go.Scatter3d(
+        x=[origin[0], origin[0] + X[0]],
+        y=[origin[1], origin[1] + X[1]],
+        z=[origin[2], origin[2] + X[2]],
+        mode="lines",
+        line=dict(color="red", width=4),
+        name=None,
+    )
+    line_y = go.Scatter3d(
+        x=[origin[0], origin[0] + Y[0]],
+        y=[origin[1], origin[1] + Y[1]],
+        z=[origin[2], origin[2] + Y[2]],
+        mode="lines",
+        line=dict(color="green", width=4),
+        name=None,
+    )
+    line_z = go.Scatter3d(
+        x=[origin[0], origin[0] + Z[0]],
+        y=[origin[1], origin[1] + Z[1]],
+        z=[origin[2], origin[2] + Z[2]],
+        mode="lines",
+        line=dict(color="blue", width=4),
+        name=None,
+    )
+    cone_x = go.Cone(
+        x=[origin[0] + X[0]],
+        y=[origin[1] + X[1]],
+        z=[origin[2] + X[2]],
+        u=[X[0] * cone_scale],
+        v=[X[1] * cone_scale],
+        w=[X[2] * cone_scale],
+        anchor="tail",
+        colorscale=[[0, "red"], [1, "red"]],
+        showscale=False,
+        name=None,
+    )
+    cone_y = go.Cone(
+        x=[origin[0] + Y[0]],
+        y=[origin[1] + Y[1]],
+        z=[origin[2] + Y[2]],
+        u=[Y[0] * cone_scale],
+        v=[Y[1] * cone_scale],
+        w=[Y[2] * cone_scale],
+        anchor="tail",
+        colorscale=[[0, "green"], [1, "green"]],
+        showscale=False,
+        name=None,
+    )
+    cone_z = go.Cone(
+        x=[origin[0] + Z[0]],
+        y=[origin[1] + Z[1]],
+        z=[origin[2] + Z[2]],
+        u=[Z[0] * cone_scale],
+        v=[Z[1] * cone_scale],
+        w=[Z[2] * cone_scale],
+        anchor="tail",
+        colorscale=[[0, "blue"], [1, "blue"]],
+        showscale=False,
+        name=None,
+    )
     # annotations of the axes
-    labels = go.Scatter3d(x=[origin[0] + X[0], origin[0] + Y[0], origin[0] + Z[0]],
-                          y=[origin[1] + X[1], origin[1] + Y[1], origin[1] + Z[1]],
-                          z=[origin[2] + X[2], origin[2] + Y[2], origin[2] + Z[2]],
-                          mode='text', text=[f"{name}_{ax}" for ax in "xyz"],
-                          textposition="middle center", name=None)
-    fig.add_traces([line_x, cone_x, line_y, cone_y, line_z, cone_z, labels]
-                   ).update_layout(scene=dict(aspectmode='data'))
+    labels = go.Scatter3d(
+        x=[origin[0] + X[0], origin[0] + Y[0], origin[0] + Z[0]],
+        y=[origin[1] + X[1], origin[1] + Y[1], origin[1] + Z[1]],
+        z=[origin[2] + X[2], origin[2] + Y[2], origin[2] + Z[2]],
+        mode="text",
+        text=[f"{name}_{ax}" for ax in "xyz"],
+        textposition="middle center",
+        name=None,
+    )
+    fig.add_traces(
+        [line_x, cone_x, line_y, cone_y, line_z, cone_z, labels]
+    ).update_layout(scene=dict(aspectmode="data"))
     fig.update_layout(**kwargs)
 
     if show_fig:
@@ -1160,22 +1332,22 @@ def plotly_show_axes(R: Rotation | np.ndarray,
 
 
 def show_stl(
-        model: mesh.Mesh,
-        ax: plt.Axes | None = None,
-        fsz: float = 10,
-        elev: float = 30,
-        azim: float = 30,
-        facecolors: str = "lightblue",
-        edgecolors: str = "k",
-        lw: float = 0.1,
-        x_lim: tuple[float, float] | None = None,
-        y_lim: tuple[float, float] | None = None,
-        z_lim: tuple[float, float] | None = None,
-        modify_axes: bool = False,
-        full_model: bool = True,
-        show_origin: bool = False,
-        show_fig: bool = False,
-        **kwargs: Any
+    model: mesh.Mesh,
+    ax: plt.Axes | None = None,
+    fsz: float = 10,
+    elev: float = 30,
+    azim: float = 30,
+    facecolors: str = "lightblue",
+    edgecolors: str = "k",
+    lw: float = 0.1,
+    x_lim: tuple[float, float] | None = None,
+    y_lim: tuple[float, float] | None = None,
+    z_lim: tuple[float, float] | None = None,
+    modify_axes: bool = False,
+    full_model: bool = True,
+    show_origin: bool = False,
+    show_fig: bool = False,
+    **kwargs: Any,
 ) -> plt.Axes:
     """Visualize an STL ``model`` with Matplotlib's 3D toolkit.
 
@@ -1217,7 +1389,7 @@ def show_stl(
         Axes instance containing the rendered mesh.
     """
     if ax is None:
-        ax = plt.subplot(projection='3d')
+        ax = plt.subplot(projection="3d")
     # Get the x, y, z ranges of the object
     model.update_min()
     model.update_max()
@@ -1233,17 +1405,49 @@ def show_stl(
     ax.set_box_aspect((np.ptp(x_lim), np.ptp(y_lim), np.ptp(z_lim)))
 
     if show_origin:
-        ax.scatter(0, 0, 0, color='k', s=50, zorder=1)
-        ax.quiver(0, 0, 0, x_lim[1] * 1.2, 0, 0,
-                  color='k', linewidth=1, zorder=-1, arrow_length_ratio=0.1)
-        ax.quiver(0, 0, 0, 0, y_lim[1] * 1.2, 0, color='k', linewidth=1, zorder=-1, arrow_length_ratio=0.1)
-        ax.quiver(0, 0, 0, 0, 0, z_lim[1] * 1.2, color='k', linewidth=1, zorder=-1, arrow_length_ratio=0.1)
-        ax.text(x_lim[1] * 1.25, 0, 0, 'x', fontsize=fsz)
-        ax.text(0, y_lim[1] * 1.25, 0, 'y', fontsize=fsz)
-        ax.text(0, 0, z_lim[1] * 1.25, 'z', fontsize=fsz)
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_zlabel('z')
+        ax.scatter(0, 0, 0, color="k", s=50, zorder=1)
+        ax.quiver(
+            0,
+            0,
+            0,
+            x_lim[1] * 1.2,
+            0,
+            0,
+            color="k",
+            linewidth=1,
+            zorder=-1,
+            arrow_length_ratio=0.1,
+        )
+        ax.quiver(
+            0,
+            0,
+            0,
+            0,
+            y_lim[1] * 1.2,
+            0,
+            color="k",
+            linewidth=1,
+            zorder=-1,
+            arrow_length_ratio=0.1,
+        )
+        ax.quiver(
+            0,
+            0,
+            0,
+            0,
+            0,
+            z_lim[1] * 1.2,
+            color="k",
+            linewidth=1,
+            zorder=-1,
+            arrow_length_ratio=0.1,
+        )
+        ax.text(x_lim[1] * 1.25, 0, 0, "x", fontsize=fsz)
+        ax.text(0, y_lim[1] * 1.25, 0, "y", fontsize=fsz)
+        ax.text(0, 0, z_lim[1] * 1.25, "z", fontsize=fsz)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
 
     ls = LightSource(azdeg=225.0, altdeg=45.0)
     if full_model:
@@ -1251,12 +1455,26 @@ def show_stl(
     else:
         # Get the vectors that are inside the limits
         # If all the vertices of a triangle are inside the limits, show the triangle
-        condition = np.all((model.vectors >= np.array([x_lim[0], y_lim[0], z_lim[0]])[None, None, :]) &
-                           (model.vectors <= np.array([x_lim[1], y_lim[1], z_lim[1]])[None, None, :]), axis=(1, 2))
+        condition = np.all(
+            (model.vectors >= np.array([x_lim[0], y_lim[0], z_lim[0]])[None, None, :])
+            & (
+                model.vectors <= np.array([x_lim[1], y_lim[1], z_lim[1]])[None, None, :]
+            ),
+            axis=(1, 2),
+        )
         vectors = model.vectors[condition]
 
-    mesh_data = mplot3d.art3d.Poly3DCollection(vectors, lightsource=ls, shade=True, zsort='min', zorder=1,
-                                               facecolors=facecolors, edgecolors=edgecolors, lw=lw, **kwargs)
+    mesh_data = mplot3d.art3d.Poly3DCollection(
+        vectors,
+        lightsource=ls,
+        shade=True,
+        zsort="min",
+        zorder=1,
+        facecolors=facecolors,
+        edgecolors=edgecolors,
+        lw=lw,
+        **kwargs,
+    )
 
     # Create a new plot
     ax.add_collection3d(mesh_data)
@@ -1296,9 +1514,12 @@ def make_stl(vertices: np.ndarray, faces: np.ndarray) -> mesh.Mesh:
     return stl_data
 
 
-def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
-                   func: Callable[..., tuple[np.ndarray, np.ndarray, np.ndarray]],
-                   **func_kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
+def meshed_surface(
+    para_1: np.ndarray,
+    para_2: np.ndarray,
+    func: Callable[..., tuple[np.ndarray, np.ndarray, np.ndarray]],
+    **func_kwargs: Any,
+) -> Tuple[np.ndarray, np.ndarray]:
     """Sample ``func`` across a parameter grid and triangulate the resulting surface.
 
     Parameters
@@ -1324,10 +1545,7 @@ def meshed_surface(para_1: np.ndarray, para_2: np.ndarray,
 
 
 def torus(
-        theta: np.ndarray,
-        phi: np.ndarray,
-        a: float = 1,
-        R: float = 2
+    theta: np.ndarray, phi: np.ndarray, a: float = 1, R: float = 2
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate torus surface coordinates for grids of ``theta`` and ``phi``.
 
@@ -1354,9 +1572,7 @@ def torus(
 
 
 def sphere(
-        theta: np.ndarray,
-        phi: np.ndarray,
-        r: float = 1
+    theta: np.ndarray, phi: np.ndarray, r: float = 1
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate spherical surface coordinates for the supplied angles.
 
@@ -1405,53 +1621,72 @@ def make_2D_surface(points: np.ndarray, condition: Callable) -> mesh.Mesh:
     return stl_data
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # delta_cone_apply_test()
     check_visible_test()
 
-    vertices = np.array([[5, 3, -3],
-                         [5, -3, 3],
-                         [5, -3, -3]])
+    vertices = np.array([[5, 3, -3], [5, -3, 3], [5, -3, -3]])
     faces = np.array([[0, 2, 1]])
     model = make_stl(vertices, faces)
 
     eye_position = np.array([0, 0, 0])
-    points = np.stack(np.meshgrid(10,
-                                  np.linspace(-15, 15, 51),
-                                  np.linspace(-15, 15, 51),
-                                  indexing="ij")).reshape((3, -1)).T
+    points = (
+        np.stack(
+            np.meshgrid(
+                10, np.linspace(-15, 15, 51), np.linspace(-15, 15, 51), indexing="ij"
+            )
+        )
+        .reshape((3, -1))
+        .T
+    )
 
     cond = check_visible(model, eye_position, points)
     fig = go.Figure()
     plotly_show_stl(model, fig=fig, show_fig=False)
-    fig.add_trace(go.Scatter3d(x=[eye_position[0]],
-                               y=[eye_position[1]],
-                               z=[eye_position[2]], mode="markers",
-                               marker=dict(size=3, color="green")))
+    fig.add_trace(
+        go.Scatter3d(
+            x=[eye_position[0]],
+            y=[eye_position[1]],
+            z=[eye_position[2]],
+            mode="markers",
+            marker=dict(size=3, color="green"),
+        )
+    )
     x, y, z = points[cond.squeeze()].T
-    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
-                               marker=dict(size=3, color="red")))
+    fig.add_trace(
+        go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=dict(size=3, color="red"))
+    )
     x, y, z = points[~cond.squeeze()].T
-    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
-                               marker=dict(size=3, color="blue")))
+    fig.add_trace(
+        go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=dict(size=3, color="blue"))
+    )
     for x, y, z in vertices:
         a = x - eye_position[0]
         yy = y * 10 / a
         zz = z * 10 / a
-        fig.add_trace(go.Scatter3d(x=[0, 10],
-                                   y=[0, yy],
-                                   z=[0, zz], mode="lines",
-                                   marker=dict(size=3, color="black")))
+        fig.add_trace(
+            go.Scatter3d(
+                x=[0, 10],
+                y=[0, yy],
+                z=[0, zz],
+                mode="lines",
+                marker=dict(size=3, color="black"),
+            )
+        )
     fig.show()
 
-    vertices = np.array([[-5, 3, -3],
-                         [-5, -3, 3],
-                         [-5, -3, -3],
-                         [-5, 3, 3],
-                         [-10, 3, -3],
-                         [-10, -3, 3],
-                         [-10, -3, -3],
-                         [-10, 3, 3]])
+    vertices = np.array(
+        [
+            [-5, 3, -3],
+            [-5, -3, 3],
+            [-5, -3, -3],
+            [-5, 3, 3],
+            [-10, 3, -3],
+            [-10, -3, 3],
+            [-10, -3, -3],
+            [-10, 3, 3],
+        ]
+    )
     # faces = np.array([[0, 2, 1], [0, 1, 3]])
     faces = np.array([[0, 1, 2], [4, 5, 7]])
     # faces = np.array([[0, 1, 3]])
@@ -1460,25 +1695,40 @@ if __name__ == '__main__':
     model.translate([0, 0, 5])
     # model.rotate([0, 1, 0], np.pi/2)
     eye_position = np.array([0, 0, 10])
-    points = np.stack(np.meshgrid(np.linspace(-15, 15, 51),
-                                  np.linspace(0, 15, 51),
-                                  np.linspace(5, 15, 5),
-                                  indexing="ij")).reshape((3, -1)).T
+    points = (
+        np.stack(
+            np.meshgrid(
+                np.linspace(-15, 15, 51),
+                np.linspace(0, 15, 51),
+                np.linspace(5, 15, 5),
+                indexing="ij",
+            )
+        )
+        .reshape((3, -1))
+        .T
+    )
 
     cond = check_visible(model, eye_position, points, behind_start_included=-7)
     # cond = check_visible(model, eye_position, points, behind_start_included=True)
     fig = go.Figure()
     plotly_show_stl(model, fig=fig, show_fig=False)
-    fig.add_trace(go.Scatter3d(x=[eye_position[0]],
-                               y=[eye_position[1]],
-                               z=[eye_position[2]], mode="markers",
-                               marker=dict(size=3, color="green")))
+    fig.add_trace(
+        go.Scatter3d(
+            x=[eye_position[0]],
+            y=[eye_position[1]],
+            z=[eye_position[2]],
+            mode="markers",
+            marker=dict(size=3, color="green"),
+        )
+    )
     x, y, z = points[cond.squeeze()].T
-    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
-                               marker=dict(size=2, color="red")))
+    fig.add_trace(
+        go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=dict(size=2, color="red"))
+    )
     x, y, z = points[~cond.squeeze()].T
-    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers",
-                               marker=dict(size=2, color="blue")))
+    fig.add_trace(
+        go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=dict(size=2, color="blue"))
+    )
     # for x, y, z in vertices:
     #     a = x - eye_position[0]
     #     yy = y * 10 / a

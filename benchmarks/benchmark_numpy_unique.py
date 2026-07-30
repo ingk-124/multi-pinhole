@@ -29,8 +29,11 @@ def random_a(shape_a, seed=1234):
     return a
 
 
-if __name__ == '__main__':
-    lst = [np.where(np.random.random(i) > 0.7)[0] for i in np.random.randint(0, 2000, size=1000)]
+if __name__ == "__main__":
+    lst = [
+        np.where(np.random.random(i) > 0.7)[0]
+        for i in np.random.randint(0, 2000, size=1000)
+    ]
 
     start = time.time()
     arr1 = np.unique(np.concatenate(lst))

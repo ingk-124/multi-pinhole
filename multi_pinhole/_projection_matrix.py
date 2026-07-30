@@ -44,8 +44,7 @@ def sparse_nbytes(matrix: sparse.spmatrix) -> int:
 
 
 def sum_eye_projections(
-        matrices: Sequence[sparse.spmatrix],
-        shape: tuple[int, int]
+    matrices: Sequence[sparse.spmatrix], shape: tuple[int, int]
 ) -> sparse.csr_matrix:
     """Add per-eye pixel matrices into one CSR matrix.
 
@@ -65,15 +64,21 @@ def sum_eye_projections(
 
 
 def build_optical_projection_matrix(
-        *, voxel: Voxel, camera: Camera, eye_idx: int,
-        full_voxels: np.ndarray, partial_voxels: np.ndarray,
-        full_subvoxel_res: int | tuple[int, int, int],
-        partial_subvoxel_res: int | tuple[int, int, int],
-        max_nnz: int, max_working_memory: int,
-        optical_bin_width_pixels: float | tuple[float, float], verbose: int,
-        point_visibility: Callable[[np.ndarray], np.ndarray],
-        inside_points: Callable[[np.ndarray], np.ndarray],
-        make_binning: Callable[..., object],
+    *,
+    voxel: Voxel,
+    camera: Camera,
+    eye_idx: int,
+    full_voxels: np.ndarray,
+    partial_voxels: np.ndarray,
+    full_subvoxel_res: int | tuple[int, int, int],
+    partial_subvoxel_res: int | tuple[int, int, int],
+    max_nnz: int,
+    max_working_memory: int,
+    optical_bin_width_pixels: float | tuple[float, float],
+    verbose: int,
+    point_visibility: Callable[[np.ndarray], np.ndarray],
+    inside_points: Callable[[np.ndarray], np.ndarray],
+    make_binning: Callable[..., object],
 ) -> sparse.csr_matrix:
     """Build one eye's CSR projection using optical-bin work ordering.
 
@@ -128,10 +133,12 @@ def build_optical_projection_matrix(
     full_cost = int(np.prod(full_resolution))
     partial_cost = int(np.prod(partial_resolution))
     visible_voxels = np.concatenate((full_voxels, partial_voxels))
-    sample_costs = np.concatenate((
-        np.full(full_voxels.size, full_cost, dtype=np.int64),
-        np.full(partial_voxels.size, partial_cost, dtype=np.int64),
-    ))
+    sample_costs = np.concatenate(
+        (
+            np.full(full_voxels.size, full_cost, dtype=np.int64),
+            np.full(partial_voxels.size, partial_cost, dtype=np.int64),
+        )
+    )
     voxel_centers = voxel.get_gravity_center(visible_voxels)
     if visible_voxels.size == 0:
         return sparse.csr_matrix((screen.N_pixel, n_vox))
@@ -140,25 +147,33 @@ def build_optical_projection_matrix(
     # storage. This lets the work scheduler honor memory and nnz budgets
     # without first materializing the full point-to-pixel matrix.
     if full_voxels.size:
-        sample_voxels = full_voxels[:min(full_voxels.size, 20)]
+        sample_voxels = full_voxels[: min(full_voxels.size, 20)]
         sample_resolution = full_resolution
     else:
-        sample_voxels = partial_voxels[:min(partial_voxels.size, 20)]
+        sample_voxels = partial_voxels[: min(partial_voxels.size, 20)]
         sample_resolution = partial_resolution
     sample_points = voxel.get_sub_voxel_centers(
-        sample_voxels, res=sample_resolution,
+        sample_voxels,
+        res=sample_resolution,
     )
     sample_S = voxel._build_source_quadrature_matrix(
-        sample_voxels, res=sample_resolution, points=sample_points,
+        sample_voxels,
+        res=sample_resolution,
+        points=sample_points,
     )
     sample_I = camera.calc_image_vec(
-        eye_idx, points=sample_points, verbose=0, check_visibility=False,
+        eye_idx,
+        points=sample_points,
+        verbose=0,
+        check_visibility=False,
     )
     sample_result = screen.transform_matrix @ (sample_I @ sample_S)
     sample_count = sample_points.shape[0]
     transient_bytes = (
-            sample_points.nbytes + sparse_nbytes(sample_I) + sparse_nbytes(sample_S)
-            + sparse_nbytes(sample_result)
+        sample_points.nbytes
+        + sparse_nbytes(sample_I)
+        + sparse_nbytes(sample_S)
+        + sparse_nbytes(sample_result)
     )
     bytes_per_sample = max(1.0, transient_bytes / sample_count)
     memory_samples = max(1, int((max_working_memory // 2) // bytes_per_sample))
@@ -172,7 +187,9 @@ def build_optical_projection_matrix(
     # Nearby detector footprints are processed together so each chunk touches
     # a compact region of the sparse pixel-by-voxel result.
     binning = make_binning(
-        camera, eye_idx, voxel_centers,
+        camera,
+        eye_idx,
+        voxel_centers,
         bin_width_pixels=optical_bin_width_pixels,
         max_scope_samples=max_samples,
         sample_costs=sample_costs,
@@ -191,7 +208,7 @@ def build_optical_projection_matrix(
     result = sparse.csr_matrix((screen.N_pixel, n_vox))
     data_buf, row_buf, col_buf = [], [], []
     buffer_nbytes = 0
-    result_buffer_limit = max(1, min(128 * 2 ** 20, max_working_memory // 4))
+    result_buffer_limit = max(1, min(128 * 2**20, max_working_memory // 4))
 
     def flush():
         """Merge buffered COO triplets before their Python lists grow large."""
@@ -199,8 +216,10 @@ def build_optical_projection_matrix(
         if not data_buf:
             return
         block = sparse.coo_matrix(
-            (np.concatenate(data_buf),
-             (np.concatenate(row_buf), np.concatenate(col_buf))),
+            (
+                np.concatenate(data_buf),
+                (np.concatenate(row_buf), np.concatenate(col_buf)),
+            ),
             shape=result.shape,
         ).tocsr()
         result += block
@@ -213,7 +232,9 @@ def build_optical_projection_matrix(
             return None
         points = voxel.get_sub_voxel_centers(owners, res=resolution)
         interpolator = voxel._build_source_quadrature_matrix(
-            owners, res=resolution, points=points,
+            owners,
+            res=resolution,
+            points=points,
         )
         if check_point_visibility:
             # Full voxels need no per-sample geometry checks. Partial voxels
@@ -225,15 +246,16 @@ def build_optical_projection_matrix(
             points = points[mask]
             interpolator = interpolator[mask]
         subpixel_image = camera.calc_image_vec(
-            eye_idx, points=points, verbose=0, check_visibility=False,
+            eye_idx,
+            points=points,
+            verbose=0,
+            check_visibility=False,
         )
-        return (
-                screen.transform_matrix @ (subpixel_image @ interpolator)
-        ).tocoo()
+        return (screen.transform_matrix @ (subpixel_image @ interpolator)).tocoo()
 
     for chunk in my_tqdm(
-            work_chunks, desc="Processing optical work chunks",
-            disable=verbose <= 0):
+        work_chunks, desc="Processing optical work chunks", disable=verbose <= 0
+    ):
         ordered_voxels = visible_voxels[chunk]
         is_full = chunk < full_voxels.size
         chunk_results = (
@@ -247,8 +269,9 @@ def build_optical_projection_matrix(
             row_buf.append(projection_chunk.row)
             col_buf.append(projection_chunk.col)
             buffer_nbytes += (
-                    projection_chunk.data.nbytes + projection_chunk.row.nbytes
-                    + projection_chunk.col.nbytes
+                projection_chunk.data.nbytes
+                + projection_chunk.row.nbytes
+                + projection_chunk.col.nbytes
             )
         if buffer_nbytes >= result_buffer_limit:
             flush()

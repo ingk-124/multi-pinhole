@@ -1,43 +1,65 @@
-# ワールドモジュールガイド
+# Worldの投影モデル
 
-## Source quadrature と adaptive resolution の契約
-
-source 体積積分は subvoxel 中心を用いる複合 midpoint quadrature です。
-emission は voxel center 値から三線形補間され、各 sample は owner voxel
-の体積 / sample 数で重み付けされます。定数 field を保存し、内部 cell では
-affine field を再現しますが、外端 half-cell は nearest center に clamp
-されます。partial visibility と inside 境界は sample center の Boolean
-判定であり、解析的な切断体積積分ではありません。境界精度は
-`partial_res` に依存するため、resolution sweep で収束確認してください。
-
-adaptive resolution は voxel center の local perspective scale に基づく
-heuristic で、有限 voxel 全体に対する厳密な上界ではありません。Eye に近い
-大きな voxel の projected size を過小評価し得ます。`ideal` は uncapped
-heuristic で数値誤差保証ではなく、`point_source_threshold` も画像誤差
-許容値ではありません。capped axis は推奨値未達の可能性があり、invalid
-geometry は設定 resolution へ fallback します。
+> **Level 2 — 科学モデル。** 通常の計算は[概要](overview.md)に従えば実行
+> できます。このページはsource resolutionの選択、visibilityとprojectionの
+> 解釈、数値近似の監査に使います。**内部実装**と明記した部分は読み飛ばせます。
 
 `multi_pinhole.world` モジュールはボクセル、カメラ、そして必要に応じて遮蔽物（STL の「壁」）をまとめ、シミュレートされたシーンを構成します。このモジュールが存在する目的は本質的に2つの計算に集約されます。**各カメラの各 eye からどのボクセルが見えるか（可視性）**と、**ボクセルの発光強度を検出器ピクセル強度へ写像する疎行列（投影行列）**です。本ドキュメントでは、この2つの計算——可視性判定と投影行列の組み立て——を、`multi_pinhole/world.py` の実装に基づいて順を追って説明し、最後にパイプライン全体の具体例を示します。
 
-## ヘルパーユーティリティ
+## 読み方
 
-配列の管理を円滑にするヘルパーがあります。
+| 目的 | 読む節 |
+|---|---|
+| cacheと保存の関係 | scene lifecycle |
+| visibilityの0/1/2を解釈 | visibility model |
+| `res`, `partial_res`, adaptiveを選択 | 投影精度とAPI |
+| `P`, `P.T`, array shapeを理解 | 投影精度とAPI |
+| chunking・sparse assemblyを監査 | 内部実装 |
 
-* `multi_pinhole.utils.type_check_and_list`（このモジュールでは定義されておらず `multi_pinhole.utils` からインポートされる）は単一オブジェクトまたはリストを受け取り、要素型を強制しながらリストに変換し、`None` の場合のデフォルト値も指定できます。`cameras`・`walls` など複数のセッターを実際に支えており、呼び出し側が単体または複数のインスタンスを渡せるようにします。
-* このモジュールにローカルで定義されている `type_list` は同様の正規化を行いますが、現在の `world.py` 内ではどこからも呼び出されておらず、`type_check_and_list` が切り出される前の名残として事実上未使用（デッドコード）です。
-* `_blocks_lengths` と `_slice_blocks` は点群および疎行列ブロックのコレクションを扱い、後続の投影処理のために軽量なスライシング機能を提供します。
+## scene lifecycle
 
-## ワールドの構築
+### Worldの構築
 
 `World.__init__` はオプションのボクセル、カメラ、壁、`inside_func` 引数を受け取ります。入力が省略された場合は既定値（空の `Voxel()`、カメラなし、壁なし）にフォールバックし、`voxel.set_world(self)`・`camera.set_world(self)` によって直ちにワールドへ再接続されるため、可視性の判定結果など共有状態を各コンポーネントが参照できるようになります。カメラはstable keyのマッピングへ正規化されます。listを渡すと `range(len(cameras))` の整数keyが割り当てられ、dictを渡すと `{"left": camera_left, "right": camera_right}` のような明示keyが維持されます。Cameraを削除しても残りのkeyは再採番されず、`add_camera(key, camera)` ではkeyの指定が必須です。`world.cameras` はread-only mappingとして公開され、変更は `add_camera`、`change_camera`、`remove_camera` を通して行います。明示的なkeyリセット機能はfuture workとしています。カメラごとの可視フラグ（`_visible_vertices`、`_visible_voxels`）と投影行列（各 eye ごとの `_projection`、カメラ全体で集約した `_P_matrix`）にも同じkeyを使う並行ディクショナリが確保されます——いずれも対応する計算が実行されるまでは `None` のままです。`inside_func` を与えると `set_inside_vertices` が即座に呼ばれ内部頂点マスクが初期化されます。指定しない場合は「すべての頂点が内部」という遅延初期化のままです（後述の `inside_vertices` を参照）。
 
 壁は `stl.mesh.Mesh` オブジェクトのリストに正規化されます。変更（`walls` セッター）があるとキャッシュを無効化し、`update_min` と `update_max` を通じて事前計算済みのメッシュ境界を更新し、後のプロットに備えて結合した軸方向の限界値（`wall_ranges`）を保存します。
 
-## シーンの内省と永続化
+### sceneの確認と永続化
 
-`camera_info` と `voxel_info` は登録済みのセンサーおよびグリッドの概要を提供します。`save_world`/`load_world` は `dill`（`coordinate_transform` が内部で使うクロージャなども含めてシリアライズできる、`pickle` 互換のライブラリ）を用いてシーン全体をシリアライズし、長時間のシミュレーションを容易にチェックポイントできます。projection cacheにはschema versionを保存し、versionがない旧pickleまたは非互換versionを読み込んだ場合は、再利用可能なvisibilityを残して `_projection` と `_P_matrix` だけを無効化します。カメラ、ボクセル、壁のプロパティセッターは可能な限りキャッシュ済みの可視性・投影データを再利用しますが、それが不可能な場合は `_invalidate_visibility_cache()` を呼び出し、`_visible_vertices`・`_visible_voxels`・`_projection`・`_P_matrix` を `None` のプレースホルダーへリセットして、次回のクエリで最初から再計算させます。
+`camera_info` と `voxel_info` は登録済みセンサーとグリッドを要約します。
+scene構築と計算済みcheckpointには、独立した形式を使います。
 
-## 可視性の評価
+- `World.from_config(path_or_mapping)` と `world.to_config(path)` はcacheを
+  含まないJSON scene schemaを使います。詳細は
+  [config schema reference](config.md)を参照してください。
+- `world.save(path)`、`World.inspect_archive(path)`、`World.load(path)` は、
+  平文JSON manifestとdill payloadからなるversion付きarchiveを使います。
+  `save_world`と`load_world`は互換aliasとして残します。詳細は
+  [serialization reference](serialization.md)を参照してください。
+
+archive manifestではlibrary version、World serialization schema、projection
+cache schemaを分離します。schema 3のprojection cacheは再利用します。非互換な
+projection cache schemaを読み込んだ場合、再利用可能なvisibilityを維持しながら
+`_projection`と`_P_matrix`だけを無効化します。旧direct-dill Worldは読み込んだ直後に
+新archiveへ保存できます。pickle/dillは任意codeを実行できるため、信頼できるfileだけを
+読み込んでください。
+
+camera、voxel、wallのproperty setterは可能な限りcache済みのvisibility／projectionを
+再利用します。不可能な場合は`_invalidate_visibility_cache()`を呼び、
+`_visible_vertices`、`_visible_voxels`、`_projection`、`_P_matrix`を`None`へ戻します。
+
+## visibility model
+
+通常利用では`find_visible_voxels(camera_idx)`を呼びます。返り値は
+`(N_eye, N_voxel)`で、`0=不可視`, `1=部分可視`, `2=完全可視`です。
+分類はvoxelの8頂点に基づき、部分可視voxelは投影時に内部を再sampleします。
+
+これは解析的な可視体積計算ではありません。境界は最終的にsubvoxel中心で
+近似されるため、wall、aperture、`inside`境界が結果に効く場合はresolution
+sweepが必要です。
+
+> **内部実装:** この節の残りはpoint→vertex→voxel maskの作り方です。数値設定
+> だけを決める場合は[投影精度とAPI](#投影精度とapi)へ進んで構いません。
 
 `World` はscene状態とcameraごとのvisibility cacheを所有し、privateな
 `multi_pinhole._visibility` moduleはgeometryからmaskを求める計算だけを
@@ -72,22 +94,20 @@ projection cache無効化は、引き続き `World` だけが担当します。
 
 `set_inside_vertices(function)` は、そもそも「モデル化された体積」をどう定義するかを指定する手段です。`function` はボクセルグリッドの `(x, y, z)` 座標に対して評価され、グリッド頂点上の真偽値マスク（例えば「トーラス内部」「真空容器内部」）を返す必要があります。このマスクの外側にある頂点は可視性・投影計算から完全に除外されます。これは正確性のためのツールであると同時に（物理デバイスの外側からの発光をレンダリングしないため）、大部分が空の空間であるグリッドに対しては大きな性能最適化にもなります。
 
-## 投影の組み立て
-
-projection設定とcache lifecycleは `World` が所有します。privateな
-`multi_pinhole._projection_matrix` moduleは、明示的な `Voxel`、`Camera`、
-voxel index、resolution、geometry queryを入力にできるoptical-bin
-quadratureとsparse assemblyを担当します。このbuilderは `World` cacheへ
-アクセスせずCSR matrixを返します。公開引数の検証と解決、visibility計算の
-開始、eyeごとの `_projection` とcamera合算 `_P_matrix` への代入は
-`World` に残ります。
-
-既存のcontiguous-voxel strategyは、adaptive-resolution scheduling、
-visibility callback、進捗policy、parallel task lifecycleがまだ密結合なため、
-今回は無理に移さず `World` に残します。optical strategy側はcache-awareな
-小helperではなく、独立した完全なbuilderとして分離されています。
+## 投影精度とAPI
 
 `set_projection_matrix(res, ...)` は、`Voxel` グリッドと可視ボクセルの情報を、すべてのカメラ・すべての eye についてボクセル強度を検出器信号へ写像する疎行列に変換するエントリポイントです。各 `(camera, eye)` の組について `_calc_voxel_image_for_eye` を呼び出し、その後1つのカメラ上のすべての eye をそのカメラのピクセル空間 `P_matrix` へ集約します。
+
+source体積積分はsubvoxel中心を使う複合midpoint quadratureです。emissionは
+voxel center値から三線形補間され、各sampleはowner voxelの体積/sample数で
+重み付けされます。定数fieldを保存し、内部cellではaffine fieldを再現しますが、
+外端half-cellはnearest centerにclampされます。partial visibilityと`inside`
+境界はsample centerのBoolean判定で、解析的な切断体積積分ではありません。
+
+adaptive resolutionはlocal perspective scaleに基づくgeometry heuristicであり、
+画像誤差の上限ではありません。`point_source_threshold`は誤差許容値ではなく、
+`partial_res`も境界精度を保証しません。最終結果はresolution sweepで収束確認
+してください。
 
 重い計算を開始する前に、同じsource resolution設定で `preflight_projection` を実行できます。
 
@@ -102,6 +122,22 @@ print(work.total_samples_upper_bound)
 ```
 
 reportはeyeごとに完全可視・部分可視voxel数を分け、完全可視voxelの採用res bucket、adaptive時のideal res分位点と上限clipされた軸数を整理します。総sample数は、完全可視側については正確な値、部分可視側についてはpoint visibilityとinside maskを適用する前の保守的な上限です。実行時間や疎行列`nnz`の予測値ではありません。preflightはvoxel visibilityを計算・cacheしますが、`projection`や`P_matrix`は構築・変更しません。後続の実計算はvisibility cacheを再利用できます。
+
+構築後は`world.project(emission, camera_idx, eye_idx=None)`でcamera合算行列、
+または1つのEye行列を適用します。`world.backproject(...)`は同じ行列の転置を
+適用する離散随伴で、逆問題の解や逆行列ではありません。vectorと列方向batch
+`(N_voxel, N_rhs)` / `(N_pixel, N_rhs)`を扱えます。対象行列がcacheされて
+いなければ、暗黙に構築せず`RuntimeError`を送出します。
+
+> **通常の科学利用はここまでで十分です。** 以下は同じ契約の実装と最適化です。
+
+## 内部実装
+
+projection設定とcache lifecycleは`World`が所有します。privateな
+`multi_pinhole._projection_matrix`は明示的なgeometry入力からoptical-bin
+quadratureとsparse assemblyを行い、World cacheを変更せずCSRを返します。
+contiguous-voxel経路はadaptive scheduling、visibility callback、parallel taskを
+まとめて調整するため、引き続き`World`にあります。
 
 ### `_calc_voxel_image_for_eye`：完全可視ボクセルと部分可視ボクセル
 
@@ -134,25 +170,12 @@ P_eye = T_pixel_from_subpixel @ calc_image_vec(eye, sub_voxel_centers) @ S
 
 各subvoxelの投影像には、chunkの組み立て中にスクリーンの `transform_matrix`（subpixel→pixelへのビニング。`docs/core.md` 参照）を直ちに適用します。eyeごとのpixel空間の結果を `self._projection[camera_idx][eye_idx]` に格納し、`set_projection_matrix` はすべてのeyeを合算して `self._P_matrix[camera_idx]` を生成します。subpixel行は積分中だけの一時データであり、projection cacheには保持しません。
 
-構築後は `world.project(emission, camera_idx, eye_idx=None)` でcamera合算行列を適用でき、`eye_idx`を指定すると1つのEye行列だけを適用できます。`world.backproject(image, camera_idx, eye_idx=None)` は同じ行列の転置を適用します。両methodはベクトルだけでなく列ごとのbatchを受け入れ、`(N_voxel, N_rhs)` と `(N_pixel, N_rhs)` の末尾の `N_rhs` を結果でも維持します。backprojectionは離散随伴 `P.T @ image` であり、逆問題の解や逆行列ではありません。どちらのmethodも投影行列を暗黙に構築せず、対象行列がcacheされていなければ `RuntimeError` を送出します。
-
 ### `trace_line`：完全な行列を構築せずに少数の点を投影する
 
 「この特定の点はスクリーン上のどこに写るか」といった簡単な確認を、投影パイプライン全体を実行せずに行いたい場合、`trace_line(points, camera_idx, eye_idx, coord_type)` は `points` を1つの eye を通して投影し、カメラ平面の `XY` 座標かスクリーンの `UV` ピクセル座標のいずれかを返します。`calc_image_vec` と異なり、aperture／壁の可視性判定やサブピクセルへのラスタライズは行いません——`Eye.calc_rays` の薄いラッパーであり、レンダリングのためではなく幾何のデバッグのために有用です。
 
-## 可視化
+## 関連する作業ガイド
 
-`draw_camera_orientation` は、ボクセル境界、カメラ姿勢（各 `Camera.draw_camera_orientation` に委譲）、登録された壁を1つの3D Matplotlib プロットに重ね合わせます。軸の範囲はデフォルトでボクセルと壁の範囲（10%拡張）を結合したものになりますが、キーワード引数で上書きできます。
-
-## 具体例：可視性 → 投影 → 画像
-
-パイプライン全体を実際に流してみます（実行可能な版は `examples/small_voxel_projection.py`、完全なセットアップコードは `docs/overview.md` を参照）。
-
-1. `world = World(voxel=voxel, cameras=[camera])` により、3×3×3 のボクセルグリッドと1台のカメラ（pinhole eye を1つ搭載）を登録します。
-2. `world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))` によって、すべてのグリッド頂点を「内部」としてマークします——`inside_func` を渡さなくても同じデフォルトが自動的に適用されますが、ここでは明示的に行っています。
-3. `world.set_projection_matrix(res=1, parallel=1)` を呼ぶと、eye ごとに次が実行されます。
-   * `_find_visible_vertices` がグリッドの 4×4×4 = 64 個の頂点をカメラの aperture に対して光線追跡します（ここには壁はありません）。結果は `(1, 64)` の真偽値配列としてキャッシュされます。
-   * `find_visible_voxels` がその64個の頂点結果を27個のボクセルそれぞれの8つの角に集約し、`(1, 27)` の 0/1/2 可視性フラグの配列を生成します。
-   * `_calc_voxel_image_for_eye` がボクセルごとに1個のサブボクセル中心をサンプリングし（`res=1` なので、サブボクセル中心はボクセル自身の重心と一致します）、完全可視ボクセルの中心を `calc_image_vec` で eye を通して投影します（部分可視ボクセルがあれば、投影の前にサンプル単位で可視性を再確認します）。
-   * pixelビニングは各chunkの組み立て中に適用されます。eyeごとのpixel行列は `world.projection[0][0]`（形状 `(N_pixel, 27)`）に格納され、`set_projection_matrix` はeye行列を合算して同じ形状の `world.P_matrix[0]` を生成します。
-4. 任意の27要素の `emission` ベクトルに対して、`world.P_matrix[0] @ emission` がシミュレートされたピクセル画像になります——ジオメトリ（カメラ、ボクセルグリッド、aperture、壁、あるいは内部頂点マスク）が変わらない限り、追加の光線追跡は不要です。ジオメトリが変わった場合は対応するキャッシュが無効化され、次の `set_projection_matrix` 呼び出しで変更された部分だけが再計算されます。
+実行workflowは重複させず[概要と最初の投影](overview.md)に集約しています。
+camera姿勢、voxel field、検出器画像の描画は[可視化](visualization.md)を
+参照してください。

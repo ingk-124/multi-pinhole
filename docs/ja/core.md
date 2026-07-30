@@ -1,22 +1,23 @@
-# Core モジュールリファレンス
+# pinhole opticsと検出器モデル
 
-## Detector quadrature の契約
+> **Level 2 — 科学モデル。** 通常のsimulationではこのページを読む必要は
+> ありません。[概要](overview.md)に従ってください。座標・光学modelは結果を
+> 解釈する時、後半の内部実装は数値監査やlibrary改修時だけ読みます。
 
-`Screen.ray2image_grid` は有限 Eye の spot を detector cell へ積分します。
-ellipse と cell の重なり**面積**は解析的に求めるため、小さい spot が cell
-中心を外れただけで消えることはありません。一方、局所密度は rectangle
-で 2×2 Gauss、1 cell 内に完全に入る ellipse で radial 2 × angular 8、
-clipped ellipse の境界 cell で 4×4 masked midpoint により評価します。
-最後の局所平均は近似で厳密な誤差保証はありません。subpixel refinement
-は局所 PSF 精度に影響し、screen 境界で切れた spot は検出総量が減ります。
-有限 Eye では detector 点を Eye 上へ戻す Jacobian と source/Eye 位置に
-依存する局所立体角正規化密度を用います。
+このドキュメントはtop-level `multi_pinhole`から公開される光学classを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。
 
-このドキュメントは `multi_pinhole.core` から再エクスポートされるクラスを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。
+実装は責務別に、`multi_pinhole.eye`（Eye と ray 生成）、`multi_pinhole.aperture`（aperture／STL geometry）、`multi_pinhole.screen`（detector overlap、etendue quadrature、rasterizer）、`multi_pinhole.camera`（構成、座標変換、姿勢、描画）へ分割されています。`multi_pinhole.core` は旧class importとpickle globalを解決するlegacy-loading専用facadeであり、新規codeの公開入口ではありません。旧pathと新moduleから得られるclassは同一objectです。
 
-実装は責務別に、`multi_pinhole.eye`（Eye と ray 生成）、`multi_pinhole.aperture`（aperture／STL geometry）、`multi_pinhole.screen`（detector overlap、etendue quadrature、rasterizer）、`multi_pinhole.camera`（構成、座標変換、姿勢、描画）へ分割されています。`multi_pinhole.core` は後方互換 facade であり、旧import pathと新moduleから得られるclassは同一objectです。
+## 読み方
 
-## 4つの座標系
+| 目的 | 読む節 |
+|---|---|
+| `XY`, `UV`, 画像の上下を確認 | 利用者が知るべき座標系 |
+| pinhole式と物理weightを確認 | Eye、Screen |
+| apertureの意味を確認 | Aperture |
+| sparse rasterizerを監査・改修 | 内部実装 |
+
+## 利用者が知るべき座標系
 
 コア光学moduleの計算は、4つの座標系の間で点を移動させています。この連鎖を理解することが、本ドキュメントの残りを読み解く鍵になります。
 
@@ -40,7 +41,9 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 これは `Eye.__init__` で強制されており、同時に `eye_size` を `(height, width)` のペアに正規化し、`eye_shape` を検証します。
 
-## Rays
+## 科学的な光学モデル
+
+### Rays
 
 `Rays` は `multi_pinhole.rays` で定義され、`multi_pinhole.core`／`multi_pinhole` から再エクスポートされる immutable な dataclass で、1つの eye を通してシーンの点を投影した結果の幾何情報を保持します。各入力点について次を記録します。
 
@@ -53,7 +56,7 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 `Rays` インスタンスは `Eye.calc_rays`（これを生成する側）と `Screen` のラスタライザ（これを消費する側）の間に位置します——純粋なデータであり、生成元の `Eye` や `Camera` への参照は持ちません。
 
-## Eye：pinhole 投影
+### Eye：pinhole 投影
 
 `Eye` は、すでにカメラ座標系で表現された3次元の点を、screen 上の2次元の着地点へ変換します。`Eye.calc_rays` はこれを次の4ステップで行います（ドキュメント文字列自身の要約に対応します）。
 
@@ -70,21 +73,37 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 `Eye.camera2eye` はステップ1のためのベクトル化された構成要素であり、それ以降はすべて `calc_rays` にインラインで記述されています。
 
-## Aperture：遮蔽形状
+### Aperture：遮蔽形状
 
 `Aperture` は eye に届く光を制限する物理的な開口部を表します。解析形状（円／楕円／矩形）または明示的な STL メッシュのいずれかを受け付けます。解析形状の場合、`Aperture.set_model` が必要に応じて `stl_utils.generate_aperture_stl`（形状内部の Delaunay 三角形分割——メッシュがどう構築されるかは `docs/utilities.md` を参照）で STL メッシュを構築し、aperture の位置へ平行移動します。
 
 この STL メッシュは飾りではなく、遮蔽判定に実際に使われるジオメトリです。`Camera` が点を投影するとき（`calc_image_vec`、後述）、カメラ上のすべての aperture について `stl_utils.check_visible(mesh_obj=aperture.stl_model, start=eye.position, grid_points=points_in_camera, ...)` を呼び出し、点が**すべての** aperture のメッシュをクリアした場合にのみ可視とします。つまり、**aperture は光を遮る面として扱われます**：STL メッシュは開口部の周囲にある不透明な材質であり、`check_visible` は eye と各候補点の間のレイ・メッシュ交差判定（Möller–Trumbore、コーンによる事前フィルタ付き——`docs/utilities.md` を参照）です。ある点が生き残るのは、eye からその点までの線分がメッシュを**横切らない**場合だけです。
 
-## Screen：ピクセル／サブピクセルの幾何とラスタライズ
+### Screen：pixel／subpixelの幾何と検出器積分
 
 `Screen` は検出面を表します。`Screen.__init__` は物理的な `screen_shape`／`screen_size` を検証し、その矩形に `pixel_shape = (U_p, V_p)` のピクセルグリッドを敷き詰め、各ピクセルの中心を `positions()`（各軸に沿った単純な `linspace` を、ピクセル半分だけオフセットして、中心がセルの端ではなく真ん中に来るようにしたもの）によって計算します。`subpixel_resolution = k` を設定すると、各ピクセルが `k × k` のより細かいサブグリッドに分割され（`_set_variables`）、各ピクセルの `k²` 個のサブピクセルを合算する疎な `transform_matrix` が構築されます——これが `Screen.subpixel_to_pixel` が高解像度のサブピクセル画像を、Python ループではなく1回の疎行列・ベクトル積でより粗いピクセルグリッドへダウンサンプルする仕組みです。`image_mask` は円形／楕円形の screen の外側にあるピクセル／サブピクセルにマークを付けます（矩形の screen の場合はマスクなし）。これにより表示画像でゼロにできます。
 
-### cosine による減衰と etendue 重み
+#### cosineによる減衰とetendue weight
 
 `Screen.cosine(eye)` は、各**サブピクセル**について、eye の光軸とそのサブピクセルへの直線とのなす角の余弦を計算します。`tangent = |subpixel_position − eye.position| / focal_length` とすると `cosine = 1 / sqrt(1 + tangent²)` です。`etendue_per_subpixel` は小開口近似の診断値 `A_subpixel · cos⁴(θ) / (4π)` として残していますが、有限EyeではsourceとEye内部位置の両方に依存するため、実際のラスタライザはこのdetector側だけの値を再利用しません。
 
-### `ray2image_grid`：光線バンドルを疎な画像へ変換する
+#### detector quadratureと精度の境界
+
+ellipseとcellの重なり**面積**は解析的に求めるため、小さいspotがcell中心を
+外れただけで消えることはありません。一方、局所密度はrectangleで2×2 Gauss、
+1 cell内に完全に入るellipseでradial 2 × angular 8、clipped ellipseの
+境界cellで4×4 masked midpointにより評価します。この局所平均に厳密な誤差
+保証はありません。有限Eyeではdetector点をEye上へ戻すJacobianと局所立体角
+正規化密度を用い、screen境界で切れたspotは検出総量が減ります。
+
+ここまでが科学的な精度契約です。以下は監査・開発時だけ必要です。
+
+## 内部実装
+
+> **読み飛ばし可:** 以下はsparse buffer、class間の受け渡し、ray単位の処理順を
+> 説明します。simulationを実行するための追加操作ではありません。
+
+### `ray2image_grid`：光線bundleを疎な画像へ変換する
 
 `Screen.ray2image_grid` は現在のコードで唯一のラスタライザです（本ドキュメントの以前のバージョンでは `ray2image`／`ray2image2` という別のバリアントにも言及していましたが、それらは削除されており、`Camera.calc_image_vec` にコメントアウトされた呼び出し箇所だけが残っています）。ある `Rays` バンドルに対して、列 `r` が光線 `r` の etendue 重み付きサブピクセル足跡を保持する `(N_subpixel, n_rays)` の疎行列を構築します。アルゴリズムは以下の通りです。
 
@@ -96,26 +115,33 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 
 `Screen` のその他のヘルパーは、より単純な座標変換／集約用のユーティリティです：`xy2uv`（カメラの `(X,Y)` → 画像の `(u,v)`。上述）、`uv2subpixel_index`（画像座標 → 整数のサブピクセルインデックス。範囲外のヒットは除外）、`subpixel_to_pixel`（疎なダウンサンプリング。上述）、`show_image`（Matplotlib によるピクセル／サブピクセル画像の表示）。
 
-## Camera：eye・aperture・screen を結びつける
+### Camera：eye・aperture・screenを結びつける
 
 `Camera` は（すべて同じ `eye_type` を共有する）1つ以上の `Eye` インスタンス、`Aperture` オブジェクトのリスト、1つの `Screen` をまとめ、`camera_position` と `rotation_matrix` によってアセンブリ全体をワールド空間に配置・向き付けします。Eye spotはpixel/subpixelより小さくても構いません。解析的な重なり面積で光量を保存するため、Camera生成時にdetector解像度の制約は課しません。
 
 1つのscreenと1つのpinholeからなる一般的な構成には、`Camera.single_pinhole(...)` を利用できます。このファクトリは、screen中心とeye中心をカメラ原点に置き、`camera_position=(0, 0, 0)`、単位回転行列のローカル基準姿勢で光学系を生成します。その後、Camera全体を配置します。
 
 ```python
-camera = Camera.single_pinhole(
-    focal_length=25,
-    eye_size=1,
-    screen_size=61 * 0.13,
-    pixel_shape=(61, 61),
-    subpixel_resolution=5,
-    apertures=aperture,
-).set_rotation_euler(
-    "zxz", (2.9, 98, -19), degrees=True,
-).set_camera_position(
-    world_position,
-).translate_camera(
-    (4.15, 0, 0),
+camera = (
+    Camera.single_pinhole(
+        focal_length=25,
+        eye_size=1,
+        screen_size=61 * 0.13,
+        pixel_shape=(61, 61),
+        subpixel_resolution=5,
+        apertures=aperture,
+    )
+    .set_rotation_euler(
+        "zxz",
+        (2.9, 98, -19),
+        degrees=True,
+    )
+    .set_camera_position(
+        world_position,
+    )
+    .translate_camera(
+        (4.15, 0, 0),
+    )
 )
 ```
 
@@ -123,7 +149,7 @@ camera = Camera.single_pinhole(
 
 Cameraを `World` に登録すると、その光学構成はfreezeされます。Cameraの姿勢と、すべての `Eye`、`Screen`、`Aperture` のジオメトリは変更不可になり、公開されるNumPy配列、screenの疎行列マッピング、STLデータバッファもread-onlyになります。変更メソッドは `RuntimeError` を送出し、`eyes` と `apertures` は外部からコレクションを変更できないtupleとして公開されます。登録済みの構成を変更する場合は、新しいCameraを作って `World.change_camera` で交換します。freezeされたCameraは複数Worldで安全に共有でき、Worldから削除してもfreezeは解除されません。
 
-### `calc_image_vec`：ワールド座標の点から疎な screen 画像へ、ステップごとの解説
+#### `calc_image_vec`：world座標の点から疎なscreen画像へ
 
 `Camera.calc_image_vec(eye_num, points, ...)` は、`World` が（カメラの eye ごとに1回）点のバッチを1つの eye を通して投影するために呼び出す、トップレベルのエントリポイントです。次の3ステップを実行します。
 
@@ -133,7 +159,7 @@ Cameraを `World` に登録すると、その光学構成はfreezeされます�
 
 この行列は、*各点の光線がどのサブピクセルに到達し、どんな etendue 重みを持つか*だけをエンコードしていることに注意してください——各点の発光強度は知りません。これに点ごと（積分後はボクセルごと）の強度ベクトルを掛け合わせることで、初めて実際の画像が得られます。その積分ステップは `multi_pinhole.world.World` が担当します（`docs/world.md` を参照）。
 
-### 具体例：1本の光線を最初から最後まで追跡する
+#### 具体例：1本の光線を最後まで追跡する
 
 `position=(5, 0)`、`focal_length=20` で作った pinhole eye（`eye.position = (5, 0, 20)`）を、`camera_position=(0, 0, -60)`、単位回転行列のカメラに搭載した場合：
 
@@ -143,7 +169,7 @@ Cameraを `World` に登録すると、その光学構成はfreezeされます�
 4. `Screen.xy2uv` は `(11, 0)` を、軸の順序を反転しシフトすることで画像座標へ変換します：`uv = (0, 11) + screen_size/2`。
 5. `ray2image_grid` は、この1本の光線を、その `uv` 点から `eye_size/2 · zoom_rate`（ステップ3の拡大率でスケーリングされた、円形 eye の場合は円板）以内にあるすべてのサブピクセルに広げ、上述の etendue 係数で各ヒットに重み付けします。
 
-### 可視化ヘルパー
+#### 可視化helper
 
 `draw_optical_system`、`draw_camera_orientation_plotly`、`draw_camera_orientation` は、eye・aperture・screen を Matplotlib または Plotly の3Dシーンに描画し、アライメントやデバッグに役立てます。これらは純粋な可視化であり、上記の投影計算には影響しません。
 

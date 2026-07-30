@@ -12,8 +12,12 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
-os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl")
+)
+os.environ.setdefault(
+    "XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache")
+)
 
 import matplotlib
 
@@ -31,9 +35,28 @@ def build_small_world():
         shape=[3, 3, 3],
     )
     camera = Camera(
-        eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=1.0, focal_length=12.0, position=[0.0, 0.0])],
-        screen=Screen(screen_shape="rectangle", screen_size=[12.0, 12.0], pixel_shape=(8, 8), subpixel_resolution=2),
-        apertures=Aperture(shape="circle", size=6.0, position=[0.0, 0.0, 25.0], resolution=24, max_size=24.0),
+        eyes=[
+            Eye(
+                eye_type="pinhole",
+                eye_shape="circle",
+                eye_size=1.0,
+                focal_length=12.0,
+                position=[0.0, 0.0],
+            )
+        ],
+        screen=Screen(
+            screen_shape="rectangle",
+            screen_size=[12.0, 12.0],
+            pixel_shape=(8, 8),
+            subpixel_resolution=2,
+        ),
+        apertures=Aperture(
+            shape="circle",
+            size=6.0,
+            position=[0.0, 0.0, 25.0],
+            resolution=24,
+            max_size=24.0,
+        ),
         camera_position=[0.0, 0.0, -60.0],
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
@@ -114,8 +137,11 @@ def draw_projection_result(world, emission, output_path):
 
 def run(output_dir=None):
     """Run the full tiny projection workflow and save figures."""
-    output_dir = Path(output_dir) if output_dir is not None else Path(
-        tempfile.gettempdir()) / "multi_pinhole_small_voxel"
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_small_voxel"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     world = build_small_world()
@@ -141,4 +167,6 @@ if __name__ == "__main__":
     result = run()
     print(f"geometry: {result['geometry_path']}")
     print(f"projection: {result['projection_path']}")
-    print(f"P shape: {result['world'].P_matrix[0].shape}, nnz: {result['world'].P_matrix[0].nnz}")
+    print(
+        f"P shape: {result['world'].P_matrix[0].shape}, nnz: {result['world'].P_matrix[0].nnz}"
+    )

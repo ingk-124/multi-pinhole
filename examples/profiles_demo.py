@@ -22,10 +22,15 @@ def plot_radial_cross_sections(x, parameters):
     full_flattening = parameters["full_flattening"]
 
     rho_shifted, _ = profiles.shifted_polar(
-        x, 0, cx=axisymmetric["delta"], cy=0,
+        x,
+        0,
+        cx=axisymmetric["delta"],
+        cy=0,
     )
     rho_kinked, _ = profiles.kinked_rho(
-        x, 0, **{key: kinked[key] for key in ("delta", "xi_0", "rho_s", "d")},
+        x,
+        0,
+        **{key: kinked[key] for key in ("delta", "xi_0", "rho_s", "d")},
         center_angle_xy=kinked["center_angle_xy"],
     )
     rho_flattened, _ = profiles.flattening_rho(
@@ -81,20 +86,27 @@ def plot_phase_slices(x, y, center_angles, parameters, profile_name):
     """Plot one non-axisymmetric profile at several poloidal center angles."""
     xx, yy, aa = np.meshgrid(x, y, center_angles, indexing="ij")
     axisymmetric = profiles.axisymmetric_profile(
-        xx, yy, **parameters["axisymmetric"],
+        xx,
+        yy,
+        **parameters["axisymmetric"],
     )
 
     if profile_name == "kinked":
         values = profiles.kinked_profile(
-            xx, yy, **(parameters["kinked"] | {"center_angle_xy": aa}),
+            xx,
+            yy,
+            **(parameters["kinked"] | {"center_angle_xy": aa}),
         )
     elif profile_name == "flattened":
         values = profiles.flattening_profile(
-            xx, yy, **(parameters["flattened"] | {"center_angle_xy": aa}),
+            xx,
+            yy,
+            **(parameters["flattened"] | {"center_angle_xy": aa}),
         )
     elif profile_name == "full flattening":
         values = profiles.flattening_profile(
-            xx, yy,
+            xx,
+            yy,
             **(parameters["full_flattening"] | {"center_angle_xy": aa}),
         )
     else:
@@ -118,7 +130,11 @@ def plot_phase_slices(x, y, center_angles, parameters, profile_name):
             ax.set_visible(False)
             continue
         contour = ax.contourf(
-            x, y, values[:, :, index].T, levels=levels, cmap="viridis",
+            x,
+            y,
+            values[:, :, index].T,
+            levels=levels,
+            cmap="viridis",
         )
         ax.contour(
             x,
@@ -159,10 +175,15 @@ def main():
 
     axisymmetric = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
     kinked = axisymmetric | dict(
-        xi_0=0.4, rho_s=0.3, d=2.0, center_angle_xy=0.0,
+        xi_0=0.4,
+        rho_s=0.3,
+        d=2.0,
+        center_angle_xy=0.0,
     )
     flattened = kinked | dict(
-        w=0.4, gamma=0.1, lam_0=0.5,
+        w=0.4,
+        gamma=0.1,
+        lam_0=0.5,
         flattening_angle_offset=np.pi,
     )
     full_flattening = flattened | dict(lam_0=1.0)

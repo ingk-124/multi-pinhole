@@ -72,7 +72,12 @@ def make_mst_like_world():
             Eye(position=(-aperture_offset, 0.0), focal_length=5.0, eye_size=0.5),
             Eye(position=(aperture_offset, 0.0), focal_length=5.0, eye_size=0.5),
         ],
-        screen=Screen(screen_shape="rectangle", screen_size=[8.0, 8.0], pixel_shape=(4, 4), subpixel_resolution=5),
+        screen=Screen(
+            screen_shape="rectangle",
+            screen_size=[8.0, 8.0],
+            pixel_shape=(4, 4),
+            subpixel_resolution=5,
+        ),
         apertures=[Aperture(stl_model=aperture_model, position=[0.0, 0.0, 3.0])],
         camera_position=[0.0, 0.0, -15.0],
     )
@@ -88,7 +93,12 @@ def make_mst_like_world():
 
 
 def test_mst_2025_example_builds_two_independent_cad_positioned_cameras():
-    example_path = Path(__file__).resolve().parents[1] / "examples" / "mst" / "MST_2025_SXR_imaging.py"
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "mst"
+        / "MST_2025_SXR_imaging.py"
+    )
     spec = importlib.util.spec_from_file_location("mst_2025_sxr_imaging", example_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -104,15 +114,29 @@ def test_mst_2025_example_builds_two_independent_cad_positioned_cameras():
     center = np.array([1550.7, -1522.4, 210.8])
 
     assert set(cameras) == {"left", "right"}
-    np.testing.assert_allclose((left.camera_position + right.camera_position) / 2, center, atol=1e-12)
-    np.testing.assert_allclose(right.camera_position - left.camera_position, 8.3 * right.camera_x, atol=1e-12)
+    np.testing.assert_allclose(
+        (left.camera_position + right.camera_position) / 2, center, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        right.camera_position - left.camera_position, 8.3 * right.camera_x, atol=1e-12
+    )
     np.testing.assert_allclose(left.rotation_matrix, right.rotation_matrix, atol=1e-12)
-    np.testing.assert_allclose(left.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12)
-    np.testing.assert_allclose(right.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12)
-    np.testing.assert_allclose(left.screen.screen_size, np.array([7.5, 7.5]), atol=1e-12)
+    np.testing.assert_allclose(
+        left.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        right.eyes[0].position, np.array([0.0, 0.0, 25.0]), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        left.screen.screen_size, np.array([7.5, 7.5]), atol=1e-12
+    )
     np.testing.assert_array_equal(left.screen.pixel_shape, np.array([61, 61]))
-    np.testing.assert_allclose(left.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12)
-    np.testing.assert_allclose(right.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12)
+    np.testing.assert_allclose(
+        left.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        right.apertures[0].position, np.array([0.0, 0.0, 13.0]), atol=1e-12
+    )
 
 
 def test_standard_torus_normalized_coordinates_are_right_handed_by_convention():
@@ -133,9 +157,15 @@ def test_standard_torus_normalized_coordinates_are_right_handed_by_convention():
 
     normalized = voxel.normalized_coordinates(points)
 
-    np.testing.assert_allclose(normalized[:, 0], np.array([1.0, 1.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(normalized[:, 1], np.array([0.0, np.pi, np.pi / 2, 0.0]), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(normalized[:, 2], np.array([0.0, 0.0, 0.0, -np.pi / 2]), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        normalized[:, 0], np.array([1.0, 1.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        normalized[:, 1], np.array([0.0, np.pi, np.pi / 2, 0.0]), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        normalized[:, 2], np.array([0.0, 0.0, 0.0, -np.pi / 2]), rtol=1e-12, atol=1e-12
+    )
 
 
 def test_inverse_torus_normalized_coordinates_reverse_theta_and_phi():
@@ -156,9 +186,15 @@ def test_inverse_torus_normalized_coordinates_reverse_theta_and_phi():
 
     normalized = voxel.normalized_coordinates(points)
 
-    np.testing.assert_allclose(normalized[:, 0], np.array([1.0, 1.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(normalized[:, 1], np.array([np.pi, 0.0, np.pi / 2, 0.0]), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(normalized[:, 2], np.array([0.0, 0.0, 0.0, np.pi / 2]), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        normalized[:, 0], np.array([1.0, 1.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        normalized[:, 1], np.array([np.pi, 0.0, np.pi / 2, 0.0]), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        normalized[:, 2], np.array([0.0, 0.0, 0.0, np.pi / 2]), rtol=1e-12, atol=1e-12
+    )
 
 
 def test_mst_like_double_pinhole_projection_workflow_runs():

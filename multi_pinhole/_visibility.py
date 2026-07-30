@@ -18,12 +18,12 @@ from .utils.my_stdio import my_print
 
 
 def calculate_point_visibility(
-        camera_points: np.ndarray,
-        eyes: Sequence,
-        eye_indices: Sequence[int],
-        apertures: Sequence,
-        walls_in_camera: Sequence,
-        verbose: int = 1,
+    camera_points: np.ndarray,
+    eyes: Sequence,
+    eye_indices: Sequence[int],
+    apertures: Sequence,
+    walls_in_camera: Sequence,
+    verbose: int = 1,
 ) -> np.ndarray:
     """Return per-eye visibility for points expressed in camera coordinates.
 
@@ -111,8 +111,8 @@ def calculate_point_visibility(
 
 
 def calculate_visible_vertex_mask(
-        inside_vertices: np.ndarray,
-        inside_visibility: np.ndarray,
+    inside_vertices: np.ndarray,
+    inside_visibility: np.ndarray,
 ) -> np.ndarray:
     """Expand inside-vertex visibility to the complete vertex grid.
 
@@ -137,8 +137,8 @@ def calculate_visible_vertex_mask(
 
 
 def classify_visible_voxels(
-        visible_vertices: np.ndarray,
-        vertices_indices: np.ndarray,
+    visible_vertices: np.ndarray,
+    vertices_indices: np.ndarray,
 ) -> np.ndarray:
     """Classify each voxel from the visibility of its eight vertices.
 

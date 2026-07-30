@@ -1,4 +1,5 @@
 """Aperture geometry and STL freeze handling."""
+
 from numbers import Number
 from typing import List, Literal, Tuple, Union
 
@@ -21,13 +22,15 @@ class Aperture:
     full parameter reference.
     """
 
-    def __init__(self,
-                 shape: Literal["circle", "ellipse", "rectangle"] | None = None,
-                 size: Union[Number, Vector2DLike] | None = None,
-                 position: Vector3DLike | None = None,
-                 direction: Vector3DLike | None = None,
-                 stl_model: mesh.Mesh | None = None,
-                 **stl_args):
+    def __init__(
+        self,
+        shape: Literal["circle", "ellipse", "rectangle"] | None = None,
+        size: Union[Number, Vector2DLike] | None = None,
+        position: Vector3DLike | None = None,
+        direction: Vector3DLike | None = None,
+        stl_model: mesh.Mesh | None = None,
+        **stl_args,
+    ):
         """Create an aperture object.
 
         Parameters
@@ -46,9 +49,16 @@ class Aperture:
         """
 
         self._stl_model = None
+        self._model_resolution = None
+        self._model_max_size = None
+        self._config_source_path = None
         self._frozen = False
-        self._position = np.array(position) if position is not None else np.array([0, 0, 0])
-        self._direction = np.array(direction) if direction is not None else np.array([0, 0, 1])
+        self._position = (
+            np.array(position) if position is not None else np.array([0, 0, 0])
+        )
+        self._direction = (
+            np.array(direction) if direction is not None else np.array([0, 0, 1])
+        )
 
         if isinstance(stl_model, mesh.Mesh):
             self._shape = "stl"
@@ -75,9 +85,7 @@ class Aperture:
             return False
 
     def set_model(
-            self,
-            resolution: int = 20,
-            max_size: Union[Number, Vector2DLike] | None = None
+        self, resolution: int = 20, max_size: Union[Number, Vector2DLike] | None = None
     ) -> "Aperture":
         """Set the STL model.
 
@@ -97,8 +105,23 @@ class Aperture:
         if self._shape == "stl":
             return self
 
-        self._stl_model = stl_utils.generate_aperture_stl(shape=self._shape, size=self._size,
-                                                          resolution=resolution, max_size=max_size)
+        if isinstance(resolution, bool) or not isinstance(
+            resolution, (int, np.integer)
+        ):
+            raise TypeError("resolution must be an integer")
+        if resolution <= 0:
+            raise ValueError("resolution must be positive")
+        normalized_max_size = None
+        if max_size is not None:
+            _, normalized_max_size = stl_utils.shape_check("rectangle", max_size)
+        self._model_resolution = int(resolution)
+        self._model_max_size = normalized_max_size
+        self._stl_model = stl_utils.generate_aperture_stl(
+            shape=self._shape,
+            size=self._size,
+            resolution=self._model_resolution,
+            max_size=self._model_max_size,
+        )
         self._stl_model.translate(self._position)
         return self
 
@@ -109,7 +132,9 @@ class Aperture:
 
     def _ensure_mutable(self):
         if self._frozen:
-            raise RuntimeError("Aperture geometry is frozen because its Camera is registered in a World")
+            raise RuntimeError(
+                "Aperture geometry is frozen because its Camera is registered in a World"
+            )
 
     def freeze(self) -> "Aperture":
         """Freeze analytic geometry and the underlying STL data buffer."""
@@ -118,6 +143,8 @@ class Aperture:
             self._direction.setflags(write=False)
             if isinstance(self._size, np.ndarray):
                 self._size.setflags(write=False)
+            if isinstance(self._model_max_size, np.ndarray):
+                self._model_max_size.setflags(write=False)
             if self._stl_model is not None:
                 self._stl_model.data.setflags(write=False)
             self._frozen = True
@@ -147,6 +174,16 @@ class Aperture:
     def stl_model(self) -> mesh.Mesh | None:
         """mesh.Mesh or None: Triangulated aperture surface when generated from STL."""
         return self._stl_model
+
+    @property
+    def model_resolution(self) -> int | None:
+        """int or None: Boundary resolution used for an analytic aperture mesh."""
+        return getattr(self, "_model_resolution", None)
+
+    @property
+    def model_max_size(self) -> np.ndarray | None:
+        """np.ndarray or None: Half-extents of the analytic aperture support mesh."""
+        return getattr(self, "_model_max_size", None)
 
     def print_info(self) -> None:
         """None: Print the aperture's spatial configuration and dimensions."""

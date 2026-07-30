@@ -25,7 +25,13 @@ def _point_on_ray_at_z(start, end, z):
     return start + t * (end - start)
 
 
-def plot_geometry(eye, apertures, sources, combined_visible, output_path="/tmp/aperture_blocking_rays.png"):
+def plot_geometry(
+    eye,
+    apertures,
+    sources,
+    combined_visible,
+    output_path="/tmp/aperture_blocking_rays.png",
+):
     eye_position = eye.position
 
     fig = plt.figure(figsize=(8, 5.5))
@@ -58,7 +64,14 @@ def plot_geometry(eye, apertures, sources, combined_visible, output_path="/tmp/a
             z_lim=z_lim,
             full_model=False,
         )
-        ax.plot([], [], color=color, lw=4, alpha=alpha, label=f"{label} (z={aperture.position[2]:.1f})")
+        ax.plot(
+            [],
+            [],
+            color=color,
+            lw=4,
+            alpha=alpha,
+            label=f"{label} (z={aperture.position[2]:.1f})",
+        )
 
     ax.scatter(*eye_position, color="black", marker="x", s=80, label="eye")
 
@@ -96,16 +109,21 @@ def plot_geometry(eye, apertures, sources, combined_visible, output_path="/tmp/a
 
 def main():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
 
     # The apertures are placed at different z positions. Source A passes through both holes.
     # Source B passes through the larger hole but hits the smaller aperture mask.
-    large_aperture = Aperture(shape="circle", size=1.5, position=(0.0, 0.0, 14.0)).set_model(
-        resolution=40, max_size=10
-    )
-    small_aperture = Aperture(shape="circle", size=0.5, position=(0.0, 0.0, 17.0)).set_model(
-        resolution=40, max_size=10
-    )
+    large_aperture = Aperture(
+        shape="circle", size=1.5, position=(0.0, 0.0, 14.0)
+    ).set_model(resolution=40, max_size=10)
+    small_aperture = Aperture(
+        shape="circle", size=0.5, position=(0.0, 0.0, 17.0)
+    ).set_model(resolution=40, max_size=10)
     apertures = [large_aperture, small_aperture]
 
     sources = np.array(
@@ -128,7 +146,9 @@ def main():
     )
     combined_visible = np.all(per_aperture_visible, axis=0)
 
-    np.testing.assert_array_equal(per_aperture_visible, np.array([[True, True], [True, False]]))
+    np.testing.assert_array_equal(
+        per_aperture_visible, np.array([[True, True], [True, False]])
+    )
     np.testing.assert_array_equal(combined_visible, np.array([True, False]))
 
     camera = Camera(

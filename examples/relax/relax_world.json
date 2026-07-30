@@ -1,0 +1,77 @@
+{
+  "schema": "multi-pinhole/world-config",
+  "schema_version": 1,
+  "units": {
+    "length": "mm",
+    "angle": "rad"
+  },
+  "voxel": {
+    "type": "uniform",
+    "ranges": [
+      [-800.0, 800.0],
+      [-800.0, 800.0],
+      [-300.0, 300.0]
+    ],
+    "shape": [32, 32, 15],
+    "coordinate": {
+      "type": "torus",
+      "parameters": {
+        "major_radius": 508.0,
+        "minor_radius": 250.0
+      }
+    },
+    "sub_voxel_resolution": [1, 1, 1]
+  },
+  "cameras": [
+    {
+      "key": "phi=+45deg",
+      "name": "RELAX equatorial camera at phi=+45 deg",
+      "position": [671.7514421272, 671.7514421272, 0.0],
+      "orientation": {
+        "look_point": [359.2102448428, 359.2102448428, 0.0],
+        "right_point": [601.0407640085, 742.4621202459, 0.0]
+      },
+      "eyes": [
+        {
+          "type": "pinhole",
+          "position": [0.0, 0.0],
+          "focal_length": 20.0,
+          "shape": "circle",
+          "size": [0.25, 0.25],
+          "wavelength_range": [0.01, 0.1]
+        }
+      ],
+      "screen": {
+        "shape": "rectangle",
+        "size": [15.0, 30.0],
+        "pixel_shape": [25, 50],
+        "subpixel_resolution": 2
+      },
+      "apertures": [
+        {
+          "type": "analytic",
+          "shape": "circle",
+          "size": [10.0, 10.0],
+          "position": [0.0, 0.0, 80.0],
+          "direction": [0.0, 0.0, 1.0],
+          "resolution": 40,
+          "max_size": [200.0, 200.0]
+        }
+      ]
+    }
+  ],
+  "walls": [
+    {
+      "type": "stl",
+      "path": "../../multi_pinhole/data/relax_rotated.stl"
+    }
+  ],
+  "inside": {
+    "type": "torus",
+    "parameters": {
+      "major_radius": 508.0,
+      "minor_radius": 250.0
+    }
+  },
+  "verbose": 0
+}

@@ -48,17 +48,16 @@ def my_range(*args: Any, **kwargs: Any) -> tqdm:
         Progress-bar-wrapped range iterator with ``ncols=80`` and
         ``position=0``.
     """
-    return trange(*args, **kwargs,
-                  ncols=NCOLS,
-                  # file=sys.stdout,
-                  position=0)
+    return trange(
+        *args,
+        **kwargs,
+        ncols=NCOLS,
+        # file=sys.stdout,
+        position=0,
+    )
 
 
-def my_tqdm(
-        iterable: Iterable[T],
-        *args: Any,
-        **kwargs: Any
-) -> tqdm:
+def my_tqdm(iterable: Iterable[T], *args: Any, **kwargs: Any) -> tqdm:
     """Wrap ``iterable`` with a ``tqdm`` progress bar using fixed formatting.
 
     Parameters
@@ -76,16 +75,17 @@ def my_tqdm(
     tqdm.std.tqdm
         Progress-bar-wrapped iterator with ``ncols=80`` and ``position=0``.
     """
-    return tqdm(iterable, *args, **kwargs,
-                ncols=NCOLS,
-                # file=sys.stdout,
-                position=0)
+    return tqdm(
+        iterable,
+        *args,
+        **kwargs,
+        ncols=NCOLS,
+        # file=sys.stdout,
+        position=0,
+    )
 
 
-def my_zip(
-        *iterables: Iterable[Any],
-        **kwargs: Any
-) -> Iterator[tuple[Any, ...]]:
+def my_zip(*iterables: Iterable[Any], **kwargs: Any) -> Iterator[tuple[Any, ...]]:
     """Zip ``iterables`` together while displaying a ``tqdm`` progress bar.
 
     Parameters
@@ -102,7 +102,10 @@ def my_zip(
         Progress-bar-wrapped iterator yielding tuples like the built-in
         ``zip``.
     """
-    return tzip(*iterables, **kwargs,
-                ncols=NCOLS,
-                # file=sys.stdout,
-                position=0)
+    return tzip(
+        *iterables,
+        **kwargs,
+        ncols=NCOLS,
+        # file=sys.stdout,
+        position=0,
+    )

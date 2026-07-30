@@ -9,11 +9,15 @@ from multi_pinhole import Camera, Eye, Screen, Voxel, World
 def _single_pixel_world(z_range):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(
-        screen_shape="square", screen_size=100.0,
-        pixel_shape=(1, 1), subpixel_resolution=1,
+        screen_shape="square",
+        screen_size=100.0,
+        pixel_shape=(1, 1),
+        subpixel_resolution=1,
     )
     camera = Camera(
-        eyes=[eye], apertures=[], screen=screen,
+        eyes=[eye],
+        apertures=[],
+        screen=screen,
         camera_position=(0.0, 0.0, 0.0),
     )
     voxel = Voxel.uniform_voxel(
@@ -39,7 +43,8 @@ def test_generated_single_pixel_projection_is_csr_and_adjoint():
     np.testing.assert_allclose(
         np.dot(world.project(emission, "main"), image),
         np.dot(emission, world.backproject(image, "main")),
-        rtol=0.0, atol=0.0,
+        rtol=0.0,
+        atol=0.0,
     )
 
 
@@ -62,7 +67,9 @@ def test_anisotropic_source_quadrature_weights_sum_to_voxel_volume():
     )
     points = voxel.get_sub_voxel_centers(n=np.array([0]), res=(2, 3, 4))
     weights = voxel._build_source_quadrature_matrix(
-        np.array([0]), res=(2, 3, 4), points=points,
+        np.array([0]),
+        res=(2, 3, 4),
+        points=points,
     )
 
     assert sparse.isspmatrix_csr(weights)
@@ -70,5 +77,6 @@ def test_anisotropic_source_quadrature_weights_sum_to_voxel_volume():
     np.testing.assert_allclose(
         np.asarray(weights.sum(axis=0)).ravel(),
         voxel.volume,
-        rtol=0.0, atol=1e-14,
+        rtol=0.0,
+        atol=1e-14,
     )

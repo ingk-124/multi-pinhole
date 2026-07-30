@@ -1,4 +1,9 @@
-# World Module Guide
+# World projection model
+
+> **Level 2 — scientific model.** Use the [overview](overview.md) for routine
+> calculations. This page is for choosing source resolution, interpreting
+> visibility and projection values, or auditing numerical approximations.
+> Sections explicitly marked **Implementation detail** may be skipped.
 
 The `multi_pinhole.world` module brings together voxels, cameras, and
 optional occluders (STL "walls") into a simulated scene, and computes the
@@ -9,26 +14,19 @@ and projection assembly — step by step, grounded in the actual algorithm in
 `multi_pinhole/world.py`, and ends with a worked example of the full
 pipeline.
 
-## Helper Utilities
+## Reading map
 
-Internal helpers smooth over array book-keeping:
+| Need | Read |
+|---|---|
+| Know what is cached or saved | Scene lifecycle |
+| Interpret visibility 0/1/2 | Visibility model |
+| Choose `res`, `partial_res`, or adaptive mode | Projection accuracy |
+| Understand `P`, `P.T`, and array shapes | Projection API |
+| Audit chunking and sparse assembly | Implementation details |
 
-* `multi_pinhole.utils.type_check_and_list` (imported from
-  `multi_pinhole.utils`, not defined in this module) coerces a single object
-  or list into a list while enforcing a required element type, with an
-  optional default for `None`. It
-  backs `walls` and related homogeneous-list inputs. Camera registration has
-  its own stable-key normalization described below.
-* `type_list`, defined locally in this module, offers similar
-  single-object-or-list normalization but is not currently called anywhere
-  in `world.py`; it is effectively dead code left over from before
-  `type_check_and_list` was factored out into
-  `multi_pinhole.utils`.
-* `_blocks_lengths` and `_slice_blocks` operate on collections of point and
-  sparse-matrix blocks, exposing lightweight slicing for later projection
-  work.
+## Scene lifecycle
 
-## Constructing a World
+### Constructing a World
 
 `World.__init__` accepts optional voxel, camera, wall, and `inside_func`
 arguments. Absent inputs fall back to
@@ -55,23 +53,49 @@ Walls are normalized to a list of `stl.mesh.Mesh` objects. When changed
 mesh bounds via `update_min`/`update_max`, and store combined axis-aligned
 limits for later plotting (`wall_ranges`).
 
-## Scene Introspection and Persistence
+### Introspection and persistence
 
 `camera_info` and `voxel_info` summarize the registered sensors and grid.
-`save_world`/`load_world` serialize complete scenes with `dill`
-(`pickle`-compatible but able to serialize the closures used internally,
-e.g. by `coordinate_transform`), making it easy to checkpoint long-running
-simulations. Serialized projection caches carry an explicit schema version;
-loading a legacy or incompatible version keeps reusable visibility results but
-invalidates `_projection` and `_P_matrix` so they are recomputed safely.
- Property setters for
+Scene construction and complete calculation checkpoints have separate
+formats:
+
+- `World.from_config(path_or_mapping)` and `world.to_config(path)` use the
+  cache-free JSON scene schema. See [the config reference](config.md).
+- `world.save(path)`, `World.inspect_archive(path)`, and `World.load(path)`
+  use a versioned archive containing a plain JSON manifest and a dill
+  payload. `save_world` and `load_world` remain compatibility aliases. See
+  [the serialization reference](serialization.md).
+
+The archive manifest separates the library version, World serialization
+schema, and projection cache schema. Schema-3 projection caches are reused.
+Loading an incompatible projection cache schema keeps reusable visibility
+results but invalidates `_projection` and `_P_matrix` so they are recomputed
+safely. Legacy direct-dill Worlds can be loaded and immediately saved as
+archives. Pickle/dill can execute arbitrary code: only load trusted files.
+
+Property setters for
 cameras, voxels, and walls reuse cached visibility/projection data when
 possible but otherwise call `_invalidate_visibility_cache()`, which resets
 `_visible_vertices`, `_visible_voxels`, `_projection`, and `_P_matrix` back
 to `None` placeholders so the next query recomputes from
 scratch.
 
-## Visibility Evaluation
+## Visibility model
+
+For ordinary use, call `find_visible_voxels(camera_idx)`. The returned
+`(N_eye, N_voxel)` array uses `0` for hidden, `1` for partly visible, and `2`
+for fully visible. The classification is based on the eight voxel corners.
+A partly visible voxel is sampled again during projection.
+
+This corner classification is bookkeeping, not an analytic visible-volume
+calculation. Boundaries are ultimately approximated at subvoxel sample
+centers, so a resolution sweep is required when wall, aperture, or `inside`
+boundaries materially affect the result.
+
+> **Implementation detail:** the rest of this section explains how point,
+> vertex, and voxel masks are produced. Skip to
+> [Projection accuracy and API](#projection-accuracy-and-api) if you only need
+> to choose numerical settings.
 
 `World` owns scene state and the per-camera visibility caches, while the
 private `multi_pinhole._visibility` module contains the geometry-to-mask
@@ -148,21 +172,7 @@ both a correctness tool (don't render emission from outside the physical
 device) and a significant performance optimization for grids that are
 mostly empty space.
 
-## Projection Assembly
-
-`World` owns projection settings and cache lifecycle. The private
-`multi_pinhole._projection_matrix` module owns the optical-bin quadrature and
-sparse assembly that can be expressed from explicit `Voxel`, `Camera`, voxel
-index, resolution, and geometry-query inputs. It returns a CSR matrix without
-accessing or mutating a `World` cache. `World` validates and resolves public
-arguments, starts visibility calculation, assigns each returned eye matrix to
-`_projection`, and assigns the sum of those matrices to `_P_matrix`.
-
-The established contiguous-voxel strategy remains in `World` for now because
-its adaptive-resolution scheduling, visibility callbacks, progress policy,
-and parallel task lifecycle are still tightly orchestrated there. The
-optical strategy is a complete independent builder rather than a cache-aware
-helper, providing a boundary for moving that remaining orchestration later.
+## Projection accuracy and API
 
 `set_projection_matrix(res, ...)` is the entry point that turns a `Voxel`
 grid and a set of visible voxels into the sparse matrix that maps voxel
@@ -170,6 +180,19 @@ intensities to detector signal, for every camera and every
 eye. For each `(camera, eye)` pair it
 calls `_calc_voxel_image_for_eye`, then aggregates all eyes on a camera into
 that camera's pixel-space `P_matrix`.
+
+Source volume integration uses composite midpoint quadrature at subvoxel
+centers. Emission is trilinearly interpolated from voxel-center values and
+each sample is weighted by owner-voxel volume divided by its sample count.
+It preserves a constant field and reproduces affine fields in interior cells;
+the outer half-cell is clamped to the nearest center. Partial visibility and
+`inside` boundaries are Boolean tests at sample centers, not analytic cut-cell
+integrals.
+
+Adaptive resolution is a geometry heuristic based on local perspective
+scale. It is not a bound on image error. `point_source_threshold` is not an
+error tolerance, and `partial_res` does not guarantee boundary accuracy.
+Final scientific results should be checked with a resolution sweep.
 
 Before starting an expensive build, use the same source-resolution settings
 with `preflight_projection`:
@@ -201,6 +224,18 @@ transpose. Both accept either a vector or a column-wise batch: shapes
 Backprojection is the discrete adjoint `P.T @ image`, not an inverse
 reconstruction. Neither method starts an implicit projection build; they
 raise `RuntimeError` when the requested matrix is not cached.
+
+> **Ordinary scientific use can stop here.** The remainder explains how this
+> contract is implemented and optimized.
+
+## Implementation details
+
+`World` owns projection settings and cache lifecycle. The private
+`multi_pinhole._projection_matrix` module performs optical-bin quadrature and
+sparse assembly from explicit geometry inputs, returning CSR matrices without
+mutating a `World` cache. The remaining contiguous-voxel path stays in
+`World` because adaptive scheduling, visibility callbacks, progress, and
+parallel task lifecycle are still coordinated there.
 
 ### `_calc_voxel_image_for_eye`: fully-visible vs. partially-visible voxels
 
@@ -325,43 +360,9 @@ through one eye and returns either camera-plane `XY` coordinates or screen
 rasterize onto subpixels — it is a thin wrapper around
 `Eye.calc_rays`, useful for debugging geometry rather than for rendering.
 
-## Visualization
+## Related task guides
 
-`draw_camera_orientation` overlays voxel bounds, camera poses (delegating
-to each `Camera.draw_camera_orientation`), and any registered walls in one
-3D Matplotlib plot. Axis limits default to the union of voxel and wall
-ranges (inflated by 10%) but can be overridden via keyword
-arguments.
-
-## Worked example: visibility → projection → image
-
-Putting the pipeline together end to end (see
-`examples/small_voxel_projection.py` for the runnable version, and
-`docs/overview.md` for the full setup code):
-
-1. `world = World(voxel=voxel, cameras=[camera])` registers a 3×3×3 voxel
-   grid and one camera with one pinhole eye.
-2. `world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))`
-   marks every grid vertex as "inside" — with no `inside_func`, the same
-   default would apply automatically, but this makes it explicit.
-3. `world.set_projection_matrix(res=1, parallel=1)` triggers, per eye:
-   * `_find_visible_vertices` ray-traces the grid's 4×4×4 = 64 vertices
-     against the camera's aperture (no walls here), caching a
-     `(1, 64)` boolean array.
-   * `find_visible_voxels` aggregates those 64 vertex results across each
-     of the 27 voxels' 8 corners, producing a `(1, 27)` array of
-     0/1/2 visibility flags.
-   * `_calc_voxel_image_for_eye` samples 1 sub-voxel center per voxel
-     (`res=1`, so the sub-voxel center is just the voxel's own gravity
-     center), projects fully-visible voxels' centers through the eye with
-     `calc_image_vec`, and (for any partially-visible voxels) re-checks
-     visibility at the sample level before projecting.
-   * Pixel binning is applied while each chunk is assembled. The per-eye
-     pixel matrix lands in `world.projection[0][0]` (shape
-     `(N_pixel, 27)`); `set_projection_matrix` sums the eye matrices into
-     `world.P_matrix[0]`, also with shape `(N_pixel, 27)`.
-4. Given any 27-element `emission` vector, `world.P_matrix[0] @ emission`
-   is the simulated pixel image — no further ray-tracing needed unless the
-   geometry (camera, voxel grid, apertures, walls, or inside-vertex mask)
-   changes, in which case the corresponding caches are invalidated and the
-   next `set_projection_matrix` call recomputes only what changed.
+The executable workflow is kept in one place:
+[Overview and first projection](overview.md). Plotting camera orientation,
+voxel fields, and detector images is kept in
+[Visualization](visualization.md).

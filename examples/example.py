@@ -1,30 +1,40 @@
-import plotly.graph_objects as go
 from matplotlib import pyplot as plt
 
 from multi_pinhole import Aperture, Camera, Voxel, World
+from multi_pinhole.utils.plot import plot_voxel_slice, plot_voxel_volume
 
 if __name__ == "__main__":
     # Create objects
-    voxel = Voxel.uniform_voxel(ranges=[[-10, 10], [-10, 10], [-10, 10]], shape=[10, 10, 10])
-    camera = Camera.single_pinhole(
-        focal_length=25,
-        eye_size=0.5,
-        screen_shape="rectangle",
-        screen_size=[10, 10],
-        pixel_shape=(20, 20),
-        subpixel_resolution=3,
-        apertures=Aperture(shape="circle", size=10, position=[0, 0, 40]).set_model(
-            resolution=30,
-            max_size=50,
-        ),
-    ).set_rotation_euler(
-        "zxz", (0, 0, 0), degrees=True,
-    ).set_camera_position(
-        [0, 0, -150],
+    voxel = Voxel.uniform_voxel(
+        ranges=[[-10, 10], [-10, 10], [-10, 10]], shape=[10, 10, 10]
+    )
+    camera = (
+        Camera.single_pinhole(
+            focal_length=25,
+            eye_size=0.5,
+            screen_shape="rectangle",
+            screen_size=[10, 10],
+            pixel_shape=(20, 20),
+            subpixel_resolution=3,
+            apertures=Aperture(shape="circle", size=10, position=[0, 0, 40]).set_model(
+                resolution=30,
+                max_size=50,
+            ),
+        )
+        .set_rotation_euler(
+            "zxz",
+            (0, 0, 0),
+            degrees=True,
+        )
+        .set_camera_position(
+            [0, 0, -150],
+        )
     )
     world = World(voxel=voxel, cameras={"main": camera})
     x, y, z = voxel.gravity_center.T
-    world.set_inside_vertices(lambda x, y, z: (x ** 2 + y ** 2 + z ** 2) <= 9 ** 2)
+    world.set_inside_vertices(lambda x, y, z: (x**2 + y**2 + z**2) <= 9**2)
+
+    import plotly.graph_objects as go
 
     fig = go.Figure()
     camera.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
@@ -34,7 +44,7 @@ if __name__ == "__main__":
     world.set_projection_matrix(res=3, verbose=1, parallel=5)
 
     # sample_profile
-    f = x ** 2 + y ** 2
+    f = x**2 + y**2
     im_eye = world.projection["main"][0] @ f.flatten()
     im = world.P_matrix["main"] @ f.flatten()
     fig, axes = plt.subplots(1, 2, figsize=(6, 3))
@@ -45,9 +55,22 @@ if __name__ == "__main__":
     fig.subplots_adjust(wspace=0.7)
     fig.show()
 
-    # Visualize results
-    fig = go.Figure()
-    fig.add_trace(go.Volume(x=x, y=y, z=z, value=f,
-                            opacity=0.1,
-                            surface_count=15, colorscale='Viridis', name='Object'))
+    # Visualize the same voxel-centered profile in 3D and as a center slice.
+    fig = plot_voxel_volume(
+        voxel,
+        f,
+        value_label="Emission",
+        opacity=0.1,
+        surface_count=15,
+        colorscale="Viridis",
+        name="Object",
+    )
     fig.show()
+    plot_voxel_slice(
+        voxel,
+        f,
+        axis="z",
+        coordinate=0,
+        colorbar_label="Emission",
+    )
+    plt.show()

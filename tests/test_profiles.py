@@ -13,13 +13,15 @@ def test_spherical_coordinates_angles_do_not_depend_on_reference_radius():
 
 
 def test_spherical_coordinates_axes_and_general_point():
-    points = np.array([
-        [0.0, 0.0, 2.0],
-        [0.0, 0.0, -2.0],
-        [2.0, 0.0, 0.0],
-        [0.0, 2.0, 0.0],
-        [1.0, -2.0, 3.0],
-    ])
+    points = np.array(
+        [
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, -2.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [1.0, -2.0, 3.0],
+        ]
+    )
     result = spherical_coordinates(7.0)(points)
 
     np.testing.assert_allclose(result[:4, 1], [0.0, np.pi, np.pi / 2, np.pi / 2])
@@ -83,10 +85,7 @@ def test_helical_center_angle_matches_phase_residual_identity():
         phi_ref=phi_ref,
     )
 
-    expected = (
-        m * (theta_xy - center_ref)
-        - n * (phi - phi_ref)
-    )
+    expected = m * (theta_xy - center_ref) - n * (phi - phi_ref)
     np.testing.assert_allclose(m * (theta_xy - center), expected)
 
 
@@ -102,7 +101,9 @@ def test_helical_center_angle_rejects_zero_m():
 
 
 def test_shifted_polar_keeps_original_boundary_at_unit_radius():
-    rho, theta = profiles.shifted_polar(np.array([1.0, 0.0]), np.array([0.0, 1.0]), cx=0.2, cy=-0.1)
+    rho, theta = profiles.shifted_polar(
+        np.array([1.0, 0.0]), np.array([0.0, 1.0]), cx=0.2, cy=-0.1
+    )
 
     np.testing.assert_allclose(rho, np.ones(2), rtol=1e-12, atol=1e-12)
     assert theta.shape == rho.shape
@@ -128,7 +129,11 @@ def test_rigid_shifted_polar_uses_explicit_poloidal_center_angle():
     y = xi * np.sin(center_angle)
 
     rho, _ = profiles.rigid_shifted_polar(
-        x, y, delta=0.1, xi=xi, center_angle_xy=center_angle,
+        x,
+        y,
+        delta=0.1,
+        xi=xi,
+        center_angle_xy=center_angle,
     )
 
     np.testing.assert_allclose(rho, 0.0, atol=1e-12)
@@ -167,14 +172,33 @@ def test_profiles_accept_arrays_and_scalars_without_global_constants():
     y = np.zeros_like(x)
     center_angle_xy = np.linspace(0, np.pi, x.size)
 
-    axisymmetric = profiles.axisymmetric_profile(x, y, A=2.0, delta=0.1, alpha=2, beta=3)
+    axisymmetric = profiles.axisymmetric_profile(
+        x, y, A=2.0, delta=0.1, alpha=2, beta=3
+    )
     kinked = profiles.kinked_profile(
-        x, y, A=2.0, delta=0.1, alpha=2, beta=3,
-        xi_0=0.1, rho_s=0.5, d=2, center_angle_xy=center_angle_xy,
+        x,
+        y,
+        A=2.0,
+        delta=0.1,
+        alpha=2,
+        beta=3,
+        xi_0=0.1,
+        rho_s=0.5,
+        d=2,
+        center_angle_xy=center_angle_xy,
     )
     flattened = profiles.flattening_profile(
-        x, y, A=2.0, delta=0.1, alpha=2, beta=3,
-        xi_0=0.1, rho_s=0.5, d=2, w=0.2, gamma=0.1,
+        x,
+        y,
+        A=2.0,
+        delta=0.1,
+        alpha=2,
+        beta=3,
+        xi_0=0.1,
+        rho_s=0.5,
+        d=2,
+        w=0.2,
+        gamma=0.1,
         center_angle_xy=center_angle_xy,
     )
     scalar = profiles.axisymmetric_profile(0.0, 0.0, A=2.0, delta=0.1, alpha=2, beta=3)
@@ -195,15 +219,30 @@ def test_kinked_profile_axisymmetric_limit_and_center_angle_periodicity():
 
     axisymmetric = profiles.axisymmetric_profile(x, y, **parameters)
     kink_limit = profiles.kinked_profile(
-        x, y, **parameters, xi_0=0.0, rho_s=0.4, d=2.0,
+        x,
+        y,
+        **parameters,
+        xi_0=0.0,
+        rho_s=0.4,
+        d=2.0,
         center_angle_xy=0.7,
     )
     kink = profiles.kinked_profile(
-        x, y, **parameters, xi_0=0.15, rho_s=0.4, d=2.0,
+        x,
+        y,
+        **parameters,
+        xi_0=0.15,
+        rho_s=0.4,
+        d=2.0,
         center_angle_xy=0.5,
     )
     periodic = profiles.kinked_profile(
-        x, y, **parameters, xi_0=0.15, rho_s=0.4, d=2.0,
+        x,
+        y,
+        **parameters,
+        xi_0=0.15,
+        rho_s=0.4,
+        d=2.0,
         center_angle_xy=0.5 + 2 * np.pi,
     )
 
@@ -227,10 +266,14 @@ def test_flattening_angles_match_independent_reference_formula():
     )
 
     rho_shifted, _ = profiles.shifted_polar(
-        x, y, parameters["delta"], 0,
+        x,
+        y,
+        parameters["delta"],
+        0,
     )
     rho_kinked, theta_kinked = profiles.kinked_rho(
-        x, y,
+        x,
+        y,
         **{
             key: parameters[key]
             for key in ("delta", "xi_0", "rho_s", "d", "center_angle_xy")
@@ -241,20 +284,20 @@ def test_flattening_angles_match_independent_reference_formula():
         - parameters["center_angle_xy"]
         - parameters["flattening_angle_offset"]
     )
-    distorted_theta = (
-        relative_theta
-        + parameters["gamma"] * np.sin(relative_theta)
-    )
+    distorted_theta = relative_theta + parameters["gamma"] * np.sin(relative_theta)
     angular_weight = 0.5 * (1 + np.cos(distorted_theta))
     blend = (
         profiles.gaussian(
-            rho_kinked, parameters["rho_s"], parameters["w"],
+            rho_kinked,
+            parameters["rho_s"],
+            parameters["w"],
         )
         * angular_weight
         * parameters["lam_0"]
     )
     rho_flat = profiles.smooth_maximum(
-        parameters["rho_s"], rho_shifted,
+        parameters["rho_s"],
+        rho_shifted,
     )
     expected_rho = (1 - blend) * rho_kinked + blend * rho_flat
 
@@ -262,14 +305,23 @@ def test_flattening_angles_match_independent_reference_formula():
 
     np.testing.assert_allclose(rho, expected_rho, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(
-        theta, distorted_theta, rtol=1e-12, atol=1e-12,
+        theta,
+        distorted_theta,
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
 def test_profile_edge_value_preserves_center_boundary_and_vacuum_values():
     x = np.array([0.0, 0.5, 1.0, 1.2])
     actual = profiles.axisymmetric_profile(
-        x, 0.0, A=5.0, delta=0.0, alpha=2.0, beta=1.0, edge_value=2.0,
+        x,
+        0.0,
+        A=5.0,
+        delta=0.0,
+        alpha=2.0,
+        beta=1.0,
+        edge_value=2.0,
     )
     expected = np.array([5.0, 4.25, 2.0, 0.0])
 
@@ -290,21 +342,40 @@ def test_all_generic_profiles_apply_edge_value_to_their_effective_radius():
         (
             profiles.kinked_profile,
             profiles.kinked_rho(
-                x, y, 0.1, 0.12, 0.45, 2.0, center_angle_xy=0.3,
+                x,
+                y,
+                0.1,
+                0.12,
+                0.45,
+                2.0,
+                center_angle_xy=0.3,
             )[0],
             dict(
-                delta=0.1, xi_0=0.12, rho_s=0.45, d=2.0,
+                delta=0.1,
+                xi_0=0.12,
+                rho_s=0.45,
+                d=2.0,
                 center_angle_xy=0.3,
             ),
         ),
         (
             profiles.flattening_profile,
             profiles.flattening_rho(
-                x, y, 0.1, 0.12, 0.45, 2.0, 0.2,
+                x,
+                y,
+                0.1,
+                0.12,
+                0.45,
+                2.0,
+                0.2,
                 center_angle_xy=0.3,
             )[0],
             dict(
-                delta=0.1, xi_0=0.12, rho_s=0.45, d=2.0, w=0.2,
+                delta=0.1,
+                xi_0=0.12,
+                rho_s=0.45,
+                d=2.0,
+                w=0.2,
                 center_angle_xy=0.3,
             ),
         ),
@@ -314,8 +385,9 @@ def test_all_generic_profiles_apply_edge_value_to_their_effective_radius():
         old = profile(x, y, **common, **parameters)
         with_zero_edge = profile(x, y, **common, **parameters, edge_value=0)
         expected = np.where(
-            x ** 2 + y ** 2 <= 1,
-            edge_value + (common["A"] - edge_value)
+            x**2 + y**2 <= 1,
+            edge_value
+            + (common["A"] - edge_value)
             * profiles.two_power(rho, common["alpha"], common["beta"]),
             0,
         )

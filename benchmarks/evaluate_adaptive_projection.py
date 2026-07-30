@@ -13,12 +13,21 @@ from multi_pinhole import Camera, Eye, Screen, Voxel, World
 
 def build_case():
     camera = Camera(
-        eyes=[Eye(position=(0.0, 0.0), focal_length=20.0,
-                  eye_type="pinhole", eye_shape="circle", eye_size=1.0)],
+        eyes=[
+            Eye(
+                position=(0.0, 0.0),
+                focal_length=20.0,
+                eye_type="pinhole",
+                eye_shape="circle",
+                eye_size=1.0,
+            )
+        ],
         apertures=[],
         screen=Screen(
-            screen_shape="rectangle", screen_size=(24.0, 32.0),
-            pixel_shape=(24, 32), subpixel_resolution=2,
+            screen_shape="rectangle",
+            screen_size=(24.0, 32.0),
+            pixel_shape=(24, 32),
+            subpixel_resolution=2,
         ),
         camera_position=(0.0, 0.0, 0.0),
     )
@@ -37,7 +46,7 @@ def profiles(voxel):
         "constant": np.ones(voxel.N),
         "linear": 1.0 + 0.45 * x / 12.0 + 0.3 * (z - 150.0) / 90.0,
         "square": ((np.abs(x) < 5.0) & (z > 100.0) & (z < 180.0)).astype(float),
-        "gaussian": np.exp(-(x / 5.0) ** 2 - ((z - 145.0) / 42.0) ** 2),
+        "gaussian": np.exp(-((x / 5.0) ** 2) - ((z - 145.0) / 42.0) ** 2),
     }
 
 
@@ -47,15 +56,21 @@ def _relative_l2(actual, reference):
 
 
 def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
-    output_dir = (Path(output_dir) if output_dir is not None else
-                  Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_projection")
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_projection"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     world = build_case()
     cases = {
         "fixed 1": dict(res=1, res_mode="fixed"),
         "fixed 2": dict(res=2, res_mode="fixed"),
-        "adaptive": dict(res=reference_res, res_mode="auto",
-                         point_source_threshold=point_source_threshold),
+        "adaptive": dict(
+            res=reference_res,
+            res_mode="auto",
+            point_source_threshold=point_source_threshold,
+        ),
         f"fixed {reference_res}": dict(res=reference_res, res_mode="fixed"),
     }
     matrices, elapsed = {}, {}
@@ -63,14 +78,20 @@ def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     # recording construction times. Each measured case is still recomputed.
     world.find_visible_voxels(verbose=0)
     world.set_projection_matrix(
-        res=1, verbose=0, parallel=1, force=True,
-        max_working_memory=256 * 2 ** 20,
+        res=1,
+        verbose=0,
+        parallel=1,
+        force=True,
+        max_working_memory=256 * 2**20,
     )
     for name, kwargs in cases.items():
         start = time.perf_counter()
         world.set_projection_matrix(
-            verbose=0, parallel=1, force=True,
-            max_working_memory=256 * 2 ** 20, **kwargs,
+            verbose=0,
+            parallel=1,
+            force=True,
+            max_working_memory=256 * 2**20,
+            **kwargs,
         )
         elapsed[name] = time.perf_counter() - start
         matrices[name] = world.P_matrix[0].copy()
@@ -84,39 +105,49 @@ def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     }
     compared_cases = [name for name in cases if name != reference_name]
     image_l2 = {
-        case: [_relative_l2(images[case][name], images[reference_name][name])
-               for name in source_profiles]
+        case: [
+            _relative_l2(images[case][name], images[reference_name][name])
+            for name in source_profiles
+        ]
         for case in compared_cases
     }
     flux_error = {
-        case: [(images[case][name].sum() - images[reference_name][name].sum()) /
-               images[reference_name][name].sum()
-               for name in source_profiles]
+        case: [
+            (images[case][name].sum() - images[reference_name][name].sum())
+            / images[reference_name][name].sum()
+            for name in source_profiles
+        ]
         for case in compared_cases
     }
     matrix_l2 = {
-        case: sparse.linalg.norm(matrices[case] - reference) /
-        sparse.linalg.norm(reference)
+        case: sparse.linalg.norm(matrices[case] - reference)
+        / sparse.linalg.norm(reference)
         for case in compared_cases
     }
 
     full_voxels = np.flatnonzero(world.visible_voxels[0][0] == 2)
     estimate = world.estimate_source_resolution(
-        0, 0, full_voxels, max_resolution=reference_res,
+        0,
+        0,
+        full_voxels,
+        max_resolution=reference_res,
         point_source_threshold=point_source_threshold,
     )
     sample_counts = {
         "fixed 1": world.voxel.N,
-        "fixed 2": world.voxel.N * 2 ** 3,
+        "fixed 2": world.voxel.N * 2**3,
         "adaptive": int(np.prod(estimate.resolution, axis=1).sum()),
-        reference_name: world.voxel.N * reference_res ** 3,
+        reference_name: world.voxel.N * reference_res**3,
     }
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     centers = world.voxel.get_gravity_center(full_voxels)
     scatter = axes[0, 0].scatter(
-        centers[:, 0], centers[:, 2],
-        c=np.prod(estimate.resolution, axis=1), s=18, cmap="viridis",
+        centers[:, 0],
+        centers[:, 2],
+        c=np.prod(estimate.resolution, axis=1),
+        s=18,
+        cmap="viridis",
     )
     axes[0, 0].set_title("Adaptive samples per voxel")
     axes[0, 0].set_xlabel("world x [mm]")
@@ -127,10 +158,15 @@ def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     positions = np.arange(len(profile_names))
     width = 0.24
     for case_index, case in enumerate(compared_cases):
-        axes[0, 1].bar(positions + (case_index - 1) * width,
-                       image_l2[case], width, label=case)
-        axes[0, 2].bar(positions + (case_index - 1) * width,
-                       np.abs(flux_error[case]), width, label=case)
+        axes[0, 1].bar(
+            positions + (case_index - 1) * width, image_l2[case], width, label=case
+        )
+        axes[0, 2].bar(
+            positions + (case_index - 1) * width,
+            np.abs(flux_error[case]),
+            width,
+            label=case,
+        )
     axes[0, 1].set_yscale("log")
     axes[0, 1].set_title(f"Image relative L2 vs {reference_name}")
     axes[0, 2].set_yscale("log")
@@ -145,9 +181,15 @@ def run(output_dir=None, reference_res=4, point_source_threshold=1.0 / 8.0):
     axes[1, 0].set_ylabel("seconds")
     axes[1, 0].tick_params(axis="x", rotation=20)
     for bar, name in zip(bars, case_names):
-        axes[1, 0].text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                        f"{sample_counts[name]:,} samples", ha="center", va="bottom",
-                        rotation=90, fontsize=8)
+        axes[1, 0].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{sample_counts[name]:,} samples",
+            ha="center",
+            va="bottom",
+            rotation=90,
+            fontsize=8,
+        )
 
     axes[1, 1].bar(compared_cases, [matrix_l2[name] for name in compared_cases])
     axes[1, 1].set_yscale("log")
