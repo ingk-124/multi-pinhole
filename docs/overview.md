@@ -10,9 +10,9 @@
 `multi_pinhole` maps a three-dimensional voxel emission field to a pinhole
 camera detector image. Geometry is compiled once into a sparse operator
 
-\[
+$$
 \mathbf{g}=\mathbf{P}\mathbf{f},
-\]
+$$
 
 where `f` is emission per voxel and `g` is detector signal per pixel. Once
 `P` exists, changing the emission requires only `World.project`, not another
@@ -77,7 +77,7 @@ partly visible voxels crossing wall or aperture boundaries.
 import numpy as np
 
 x, y, z = world.voxel.gravity_center.T
-emission = np.exp(-((x / 100)**2 + (y / 100)**2 + (z / 150)**2))
+emission = np.exp(-((x / 100) ** 2 + (y / 100) ** 2 + (z / 150) ** 2))
 
 image = world.project(emission, camera_idx="main")
 world.cameras["main"].screen.show_image(image)
