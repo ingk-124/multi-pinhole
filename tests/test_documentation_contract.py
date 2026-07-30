@@ -135,6 +135,15 @@ def test_markdown_links_and_forbidden_source_references():
             )
 
 
+def test_markdown_math_uses_supported_balanced_delimiters():
+    files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert "\\[" not in text, f"unsupported display-math opener in {path}"
+        assert "\\]" not in text, f"unsupported display-math closer in {path}"
+        assert text.count("$$") % 2 == 0, f"unbalanced display math in {path}"
+
+
 def test_coordinate_profile_interpolation_guides_cover_rz_workflow():
     for path in (
         ROOT / "docs" / "coordinates-profiles.md",

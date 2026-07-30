@@ -24,9 +24,9 @@ from multi_pinhole import profiles
 They are not added as individual names by `from multi_pinhole import *`.
 Reusable profiles take normalized poloidal Cartesian coordinates
 
-\[
+$$
 x=(R-R_0)/a,\qquad y=Z/a,
-\]
+$$
 
 where `+x` points radially outward and `+y` points upward.
 

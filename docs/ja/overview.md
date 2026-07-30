@@ -10,11 +10,11 @@
 `multi_pinhole`は、3次元のvoxel発光分布をpinhole cameraの検出器画像へ写す
 libraryです。geometryから疎な投影行列
 
-\[
+$$
 \mathbf{g}=\mathbf{P}\mathbf{f}
-\]
+$$
 
-を一度作ります。`\mathbf{f}`はvoxelごとの発光、`\mathbf{g}`はpixel信号です。
+を一度作ります。$\mathbf{f}$はvoxelごとの発光、$\mathbf{g}$はpixel信号です。
 同じgeometryなら発光分布を変えてもray tracingをやり直さず、`World.project`
 による行列積だけで画像を作れます。
 
@@ -83,7 +83,7 @@ wallやaperture境界を横切る部分可視voxelでは、特に`partial_res`�
 import numpy as np
 
 x, y, z = world.voxel.gravity_center.T
-emission = np.exp(-((x / 100)**2 + (y / 100)**2 + (z / 150)**2))
+emission = np.exp(-((x / 100) ** 2 + (y / 100) ** 2 + (z / 150) ** 2))
 
 image = world.project(emission, camera_idx="main")
 world.cameras["main"].screen.show_image(image)

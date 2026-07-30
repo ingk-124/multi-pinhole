@@ -23,9 +23,9 @@ from multi_pinhole import profiles
 個々のprofile関数は`from multi_pinhole import *`には追加されません。
 profileの基本入力は正規化poloidal Cartesian座標
 
-\[
+$$
 x=(R-R_0)/a,\qquad y=Z/a
-\]
+$$
 
 です。`+x`はR外向き、`+y`は上向きです。
 
