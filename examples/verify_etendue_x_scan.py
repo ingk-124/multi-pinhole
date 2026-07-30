@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from multi_pinhole import Eye, Screen
-from multi_pinhole.core import _spot_cell_local_etendue, _spot_cell_overlap
+from multi_pinhole.screen import _spot_cell_local_etendue, _spot_cell_overlap
 
 
 def analytic_point_source_etendue(eye, points):

@@ -21,6 +21,8 @@ def test_release_and_top_level_public_import_contract():
         "EyeProjectionWorkEstimate", "ProjectionWorkEstimate",
     }
     assert expected <= set(vars(multi_pinhole))
+    assert multi_pinhole.__version__ == __version__
+    assert set(multi_pinhole.__all__) == expected | {"__version__", "cli"}
 
 
 def _module_public_functions(module):

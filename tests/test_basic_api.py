@@ -854,7 +854,7 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     ],
 )
 def test_unit_circle_rectangle_overlap_matches_analytic_areas(bounds, expected):
-    from multi_pinhole.core import _unit_circle_rectangle_overlap
+    from multi_pinhole.screen import _unit_circle_rectangle_overlap
 
     actual = _unit_circle_rectangle_overlap(*bounds)
 
@@ -1012,7 +1012,7 @@ def test_multiple_apertures_block_if_any_aperture_intersects(monkeypatch):
     def fake_check_visible(*args, **kwargs):
         return visibility_by_aperture.pop(0)
 
-    monkeypatch.setattr("multi_pinhole.core.stl_utils.check_visible", fake_check_visible)
+    monkeypatch.setattr("multi_pinhole.camera.stl_utils.check_visible", fake_check_visible)
 
     mat = camera.calc_image_vec(0, points, check_visibility=True).tocsc()
 

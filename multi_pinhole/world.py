@@ -29,7 +29,7 @@ from ._visibility import (
     calculate_visible_vertex_mask,
     classify_visible_voxels,
 )
-from .core import Camera
+from .camera import Camera
 from .projection import (
     EyeProjectionWorkEstimate,
     PointSourceResolutionEstimate,

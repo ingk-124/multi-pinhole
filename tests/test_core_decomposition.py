@@ -32,6 +32,20 @@ def test_top_level_core_and_new_modules_share_class_objects():
         assert getattr(core, class_.__name__) is class_
 
 
+def test_core_is_limited_to_legacy_class_globals():
+    assert core.__all__ == ["Aperture", "Camera", "Eye", "Rays", "Screen"]
+    for removed in (
+        "VectorLike",
+        "Vector2DLike",
+        "Vector3DLike",
+        "MatrixLike",
+        "_rasterize_spots",
+        "_spot_cell_overlap",
+        "stl_utils",
+    ):
+        assert not hasattr(core, removed)
+
+
 def test_decomposed_class_module_paths():
     assert Eye.__module__ == "multi_pinhole.eye"
     assert Aperture.__module__ == "multi_pinhole.aperture"
