@@ -1,4 +1,4 @@
-"""Lightweight regressions for the 0.9.0 public documentation contract."""
+"""Lightweight regressions for the 1.0.0 public documentation contract."""
 
 import ast
 import inspect
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_release_and_top_level_public_import_contract():
-    assert __version__ == "0.9.0"
+    assert __version__ == "1.0.0"
     expected = {
         "Rays",
         "Eye",
@@ -183,5 +183,5 @@ def test_world_io_public_signatures():
 
 
 def test_release_schema_contract():
-    assert __version__ == "0.9.0"
+    assert __version__ == "1.0.0"
     assert PROJECTION_CACHE_SCHEMA_VERSION == 3
