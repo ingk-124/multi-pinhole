@@ -21,11 +21,16 @@ from multi_pinhole.serialization import (
 from multi_pinhole.world import PROJECTION_CACHE_SCHEMA_VERSION
 
 
-def _world_with_caches():
+def _world_with_caches(subpixel_resolution=1):
     camera = Camera(
         eyes=[Eye(position=(0.0, 0.0), focal_length=10.0)],
         apertures=[],
-        screen=Screen("square", 10.0, pixel_shape=(2, 2)),
+        screen=Screen(
+            "square",
+            10.0,
+            pixel_shape=(2, 2),
+            subpixel_resolution=subpixel_resolution,
+        ),
         camera_position=(0.0, 0.0, -20.0),
     )
     voxel = Voxel.uniform_voxel(
@@ -161,6 +166,9 @@ def test_unsupported_world_schema_fails_before_unpickling(tmp_path, monkeypatch)
 
 def test_legacy_direct_dill_load_and_archive_migration(tmp_path):
     world = _world_with_caches()
+    world.voxel._rotation_matrix = np.eye(3)
+    del world._projection_cache_schema_version
+    del world._projection_settings
     legacy = tmp_path / "legacy.pkl"
     migrated = tmp_path / "migrated.mpw"
     emission = np.array([0.25, 2.0])
@@ -178,24 +186,28 @@ def test_legacy_direct_dill_load_and_archive_migration(tmp_path):
         "scipy_version": None,
     }
     loaded_legacy = World.load(legacy)
+    assert "_rotation_matrix" not in loaded_legacy.voxel.__dict__
+    np.testing.assert_allclose(
+        loaded_legacy.projection["main"][0].toarray(),
+        world.projection["main"][0].toarray(),
+    )
+    assert loaded_legacy._projection_settings["main"] == [None]
     np.testing.assert_allclose(loaded_legacy.project(emission, "main"), expected)
 
     loaded_legacy.save(migrated)
     restored = World.load(migrated)
 
+    assert "_rotation_matrix" not in restored.voxel.__dict__
     np.testing.assert_allclose(restored.project(emission, "main"), expected)
     np.testing.assert_array_equal(
         restored.visible_voxels["main"], world.visible_voxels["main"]
     )
 
 
-@pytest.mark.parametrize("legacy_version", [None, 0, 10_000])
+@pytest.mark.parametrize("legacy_version", [0, 10_000])
 def test_legacy_incompatible_cache_keeps_visibility(tmp_path, legacy_version):
     world = _world_with_caches()
-    if legacy_version is None:
-        del world._projection_cache_schema_version
-    else:
-        world._projection_cache_schema_version = legacy_version
+    world._projection_cache_schema_version = legacy_version
     legacy = tmp_path / f"legacy-{legacy_version}.pkl"
     with legacy.open("wb") as file:
         dill.dump(world, file)
@@ -207,6 +219,36 @@ def test_legacy_incompatible_cache_keeps_visibility(tmp_path, legacy_version):
     )
     assert restored.projection["main"] == [None]
     assert restored.P_matrix["main"] is None
+
+
+def test_unversioned_subpixel_eye_cache_is_binned_to_physical_pixels(tmp_path):
+    world = _world_with_caches(subpixel_resolution=2)
+    screen = world.cameras["main"].screen
+    legacy_eye = sparse.csr_matrix(
+        ([1.0, 2.0, 3.0], ([0, 5, 15], [0, 1, 0])),
+        shape=(screen.N_subpixel, world.voxel.N),
+    )
+    converted_eye = (screen.transform_matrix @ legacy_eye).tocsr()
+    world._projection["main"][0] = legacy_eye
+    world._P_matrix["main"] = converted_eye.copy()
+    del world._projection_cache_schema_version
+    del world._projection_settings
+    legacy = tmp_path / "legacy-subpixel.pkl"
+    with legacy.open("wb") as file:
+        dill.dump(world, file)
+
+    restored = World.load(legacy)
+
+    np.testing.assert_allclose(
+        restored.projection["main"][0].toarray(),
+        converted_eye.toarray(),
+    )
+    np.testing.assert_allclose(
+        restored.P_matrix["main"].toarray(),
+        converted_eye.toarray(),
+    )
+    assert restored._projection_settings["main"] == [None]
+    assert restored.projection_cache_schema_version == PROJECTION_CACHE_SCHEMA_VERSION
 
 
 def test_save_does_not_mutate_world_or_incompatible_cache_state(tmp_path):

@@ -232,7 +232,6 @@ class Voxel:
         y_axis: np.ndarray | None = None,
         z_axis: np.ndarray | None = None,
         coordinate_type: str | None = None,
-        rotation: Rotation | np.ndarray | None = None,
         coordinate_parameters: dict[str, float] | None = None,
         sub_voxel_resolution: int | tuple[int, int, int] | None = None,
     ):
@@ -298,7 +297,6 @@ class Voxel:
         self._sub_voxel_matrix = interpolate_matrix_from_vertices(self._res)
 
         # coordinate
-        self._rotation_matrix = None
         self._normalized_coordinates = None
         self._world = None
         self._coordinate_type = None
@@ -307,13 +305,16 @@ class Voxel:
             {} if coordinate_parameters is None else coordinate_parameters
         )
         # set attributes
-        self.set_coordinate(
-            coordinate_type=coordinate_type, rotation=rotation, **coordinate_parameters
-        )
+        self.set_coordinate(coordinate_type=coordinate_type, **coordinate_parameters)
         self.axes = axes
         self.res = sub_voxel_resolution
         self._voxel2vertices = None
         self.update()
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state while dropping the retired persistent frame rotation."""
+        self.__dict__.update(state)
+        self.__dict__.pop("_rotation_matrix", None)
 
     def __repr__(self):
         """str: Compact summary of ranges, voxel count/shape, and coordinate settings."""
@@ -716,7 +717,6 @@ class Voxel:
     def set_coordinate(
         self,
         coordinate_type: str | None = None,
-        rotation: Rotation | np.ndarray | None = None,
         show: bool = False,
         **coordinate_parameters: float,
     ) -> "Voxel":
@@ -727,8 +727,6 @@ class Voxel:
         coordinate_type : str
             The type of coordinates.
             One of :attr:`available_coordinate_types`.
-        rotation : Rotation | np.ndarray
-            The Rotation object or rotation matrix (3, 3).
         show : bool
             show info or not
         coordinate_parameters : dict
@@ -758,13 +756,6 @@ class Voxel:
                 self._coordinate_parameters = {}
         else:
             raise ValueError("The coordinate type is not supported.")
-
-        if rotation is None:
-            self._rotation_matrix = np.eye(3)
-        elif isinstance(rotation, Rotation):
-            self._rotation_matrix = rotation.as_matrix()
-        elif isinstance(rotation, np.ndarray) and rotation.shape == (3, 3):
-            self._rotation_matrix = rotation
 
         coordinate_keys = COORDINATE_PARAMETER_KEYS[self._coordinate_type]
 
@@ -825,14 +816,12 @@ class Voxel:
         """
         if points is None:
             points = self.gravity_center
-        return self._normalized_coordinates(
-            np.asarray(points).dot(self._rotation_matrix.T),
-        )
+        return self._normalized_coordinates(np.asarray(points))
 
     def _coordinate_rotation_matrix(self, rotation=None):
-        """Resolve an optional coordinate-frame rotation matrix."""
+        """Resolve a per-call coordinate-frame rotation matrix."""
         if rotation is None:
-            return self._rotation_matrix
+            return np.eye(3)
         if isinstance(rotation, Rotation):
             return rotation.as_matrix()
         matrix = np.asarray(rotation, dtype=float)
@@ -869,7 +858,7 @@ class Voxel:
         normalized : bool, default=False
             Whether to return dimensionless radial/axial components.
         rotation : scipy.spatial.transform.Rotation or array-like, optional
-            Coordinate-frame rotation overriding the configured legacy frame.
+            Rotation applied for this conversion only.
         **coordinate_parameters
             Geometry and normalization scales for the selected convention.
 
@@ -1006,7 +995,7 @@ class Voxel:
         normalized : bool, default=False
             Whether supplied radial/axial components are dimensionless.
         rotation : scipy.spatial.transform.Rotation or array-like, optional
-            Coordinate-frame rotation overriding the configured legacy frame.
+            Rotation applied for this conversion only.
         **components
             Keyword-only coordinate components and required geometry/scales:
 

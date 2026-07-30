@@ -135,6 +135,39 @@ def test_markdown_links_and_forbidden_source_references():
             )
 
 
+def test_coordinate_profile_interpolation_guides_cover_rz_workflow():
+    for path in (
+        ROOT / "docs" / "coordinates-profiles.md",
+        ROOT / "docs" / "ja" / "coordinates-profiles.md",
+    ):
+        text = path.read_text(encoding="utf-8")
+        for required in (
+            "Voxel.to_coordinates",
+            "voxel.center_interpolator",
+            'coordinate_type="cylindrical"',
+            "np.meshgrid",
+            "pcolormesh",
+            "profiles.helical_center_angle",
+        ):
+            assert required in text, f"{path} does not document {required}"
+
+
+def test_visualization_guides_cover_scene_geometry():
+    for path in (
+        ROOT / "docs" / "visualization.md",
+        ROOT / "docs" / "ja" / "visualization.md",
+    ):
+        text = path.read_text(encoding="utf-8")
+        for required in (
+            "world.draw_camera_orientation",
+            "camera.draw_optical_system",
+            "camera.draw_camera_orientation_plotly",
+            "stl_utils.plotly_show_stl",
+            "world.find_visible_voxels",
+        ):
+            assert required in text, f"{path} does not document {required}"
+
+
 def test_readme_projection_workflow_executes():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     for symbol in (

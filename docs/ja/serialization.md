@@ -1,5 +1,9 @@
 # World archiveとserialization契約
 
+> **Level 3 — reference。** 通常利用で必要な原則は、編集・共有するscene入力は
+> JSON、高価な計算済みcacheは信頼できる`.mpw`へ保存することです。以下は互換性、
+> 復旧、securityを確認する場合に読みます。
+
 完全なcheckpointには`world.save("scene.mpw")`、復元には
 `World.load("scene.mpw")`を使います。`World.inspect_archive(path)`はWorldを
 unpickleせずmetadataを読みます。

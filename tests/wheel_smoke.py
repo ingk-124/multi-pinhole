@@ -28,21 +28,12 @@ def main() -> None:
         "schema_version": 1,
         "units": {"length": "mm", "angle": "rad"},
         "voxel": {
-            "axes": {
-                "x": [-0.5, 0.5],
-                "y": [-0.5, 0.5],
-                "z": [20.0, 21.0],
-            },
+            "type": "uniform",
             "ranges": [[-0.5, 0.5], [-0.5, 0.5], [20.0, 21.0]],
             "shape": [1, 1, 1],
             "coordinate": {
                 "type": "cartesian",
                 "parameters": {"width": 1.0, "depth": 1.0, "height": 1.0},
-                "rotation_matrix": [
-                    [1.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0],
-                    [0.0, 0.0, 1.0],
-                ],
             },
             "sub_voxel_resolution": [1, 1, 1],
         },

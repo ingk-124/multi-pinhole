@@ -1,5 +1,10 @@
 # Utilities Overview
 
+> **Level 3 — implementation reference.** User-facing plotting examples live
+> in [Visualization](visualization.md). This page documents reusable low-level
+> helpers and the STL intersection implementation; normal projections do not
+> require reading it.
+
 The `multi_pinhole.utils` package (imported as `from multi_pinhole.utils
 import ...` or `from multi_pinhole.utils import stl_utils`, etc. — it was
 moved under `multi_pinhole` to avoid colliding with unrelated top-level
@@ -10,14 +15,30 @@ implements the actual ray/mesh occlusion test used throughout
 `multi_pinhole.core` and `multi_pinhole.world`; this document explains that
 algorithm in detail, plus the simpler collection and logging helpers.
 
-## Collection Helpers
+## Public plotting entry points
+
+`multi_pinhole.utils.plot` provides validated, voxel-aware visualization:
+
+- `plot_voxel_volume(voxel, emission)` creates an interactive Plotly volume;
+- `plot_voxel_slice(voxel, emission)` creates a physical Matplotlib slice;
+- `volume_rendering(values, points)` remains the lower-level coordinate API.
+
+The canonical examples and array-shape rules are kept in the
+[visualization guide](visualization.md), rather than duplicated here.
+
+> **Ordinary users can stop here.** The following sections explain helpers
+> used by the package and geometry developers.
+
+## Implementation helpers
+
+### Collection Helpers
 `multi_pinhole.utils.type_check_and_list` normalizes optional constructor
 arguments into lists while validating element types. It also accepts a
 default fallback when `None` is provided, allowing world and camera
 constructors to treat single objects and lists
 uniformly.
 
-## Console Wrappers
+### Console Wrappers
 `multi_pinhole.utils.my_stdio` wraps common iteration primitives with
 optional progress displays. `my_print` gates log messages on a `show` flag,
 `my_range` and `my_tqdm` defer to `tqdm` versions when verbosity is enabled,
@@ -25,12 +46,12 @@ and `my_zip` pairs iterables with progress bars via `tzip`. These adapters
 let long-running geometry routines expose progress feedback without
 hard-coding dependencies on `tqdm` in calling code.
 
-## STL Geometry Toolkit
+### STL Geometry Toolkit
 
 `multi_pinhole.utils.stl_utils` builds and analyzes the triangle meshes used
 by apertures and world walls.
 
-### Constructing an aperture mesh
+#### Constructing an aperture mesh
 
 `shape_check(shape, size)` normalizes a shape keyword (`circle`, `ellipse`,
 `rectangle`, `square`) and its size specification into a canonical
@@ -56,7 +77,7 @@ actual flat mesh in the `z = 0` plane:
 Euler-angle rotations without mutating the
 originals.
 
-### Visibility / occlusion testing
+#### Visibility / occlusion testing
 
 Determining whether a mesh blocks the line from an eye to a candidate point
 is the single most performance-sensitive computation in the package (it
@@ -107,13 +128,7 @@ is what `Camera.calc_image_vec` (per-aperture occlusion, `docs/core.md`)
 and `World.find_visible_points` (per-aperture and per-wall occlusion,
 `docs/world.md`) both call.
 
-An older, simpler implementation (`check_visible_old`) is retained in the
-module but not used by the current pipeline; it performs the same
-Möller–Trumbore test without the cone prefilter, and is presumably kept for
-reference/testing rather than production use — the module does not document
-why it was superseded beyond the evident performance motivation.
-
-### Visualization and parametric surfaces
+#### Visualization and parametric surfaces
 
 `show_stl`/`plotly_show_stl` render meshes in Matplotlib/Plotly for
 debugging, and `torus`/`sphere`/`meshed_surface` are simple parametric

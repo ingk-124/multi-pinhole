@@ -16,9 +16,19 @@ from typing import TypeVar
 
 # utils package
 from . import my_stdio
+from . import plot
 from . import stl_utils
+from .plot import plot_voxel_slice
+from .plot import plot_voxel_volume
 
-__all__ = ["my_stdio", "stl_utils", "type_check_and_list"]
+__all__ = [
+    "my_stdio",
+    "plot",
+    "plot_voxel_slice",
+    "plot_voxel_volume",
+    "stl_utils",
+    "type_check_and_list",
+]
 
 T = TypeVar("T")
 

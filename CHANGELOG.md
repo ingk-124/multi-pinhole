@@ -5,20 +5,32 @@
 - Add the strict `multi-pinhole/world-config` JSON schema and
   `World.from_config`/`World.to_config`. Configs describe scene construction
   only, resolve relative STL paths from the config directory, reject unknown
-  data, and never contain calculation caches.
+  data, and never contain calculation caches. Camera orientation accepts
+  either a matrix or world-space look/right/down points; Apertures accept
+  analytic mesh settings or a path-backed STL; built-in inside masks include
+  toroidal plasma volumes. Uniform voxel grids use a compact
+  `ranges`/`shape` representation, while nonuniform grids retain explicit
+  boundary axes. Retire the persistent Voxel coordinate-frame rotation from
+  the public constructor and JSON schema while per-call coordinate
+  conversions still accept a rotation.
 - Add atomic versioned World archives with a plain `manifest.json`, a
   `world.pkl` payload, and separate library, World schema, and projection
   cache schema versions. Add `World.save`, `World.load`, and
   `World.inspect_archive`.
-- Preserve trusted legacy direct-dill loading and
-  `multi_pinhole.core.{Rays,Eye,Aperture,Screen,Camera}` pickle globals.
-  Compatible schema-3 visibility and projection caches are reused; an
-  incompatible projection schema keeps visibility and clears projection only.
 - Publish `multi_pinhole.__version__`, fix the top-level `__all__` contract,
   and reduce `multi_pinhole.core` to a legacy-loading class facade. Remove
   its private rasterizer, `stl_utils`, and unused type-alias re-exports.
+- Add voxel-aware Plotly volume and Matplotlib slice helpers with shape
+  validation and finite-value handling. Add English and Japanese tutorials
+  for constructing JSON Worlds and visualizing voxel and detector data.
+  Reorganize documentation into task-oriented, scientific-model, and
+  implementation/reference levels with explicit skippable boundaries.
+  Add a consolidated coordinate/profile/interpolation guide, including a
+  fixed-toroidal-angle R–Z section workflow.
 - Keep projection cache schema 3 and all projection formulae, ordering,
   dtypes, and tolerances unchanged.
+- Remove the unused legacy `stl_utils.check_visible_old` implementation; the
+  optimized `check_visible` path remains the sole visibility algorithm.
 
 ## 0.9.0
 

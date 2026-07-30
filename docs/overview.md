@@ -1,281 +1,130 @@
-# Project Overview
+# Overview and first projection
 
-## Purpose
+> **Audience:** first-time users through researchers applying an established
+> camera geometry. This page deliberately omits ray–triangle and sparse-matrix
+> implementation details. Read [Level 2](README.md#level-2--understand-the-scientific-model)
+> only when you need to validate the numerical model.
 
-`multi_pinhole` simulates X-ray pinhole-camera imaging of a plasma (built for
-the MST reversed-field-pinch experiment, but not specific to it): given a 3D
-emission profile defined on a voxel grid and one or more cameras (each with
-several pinhole or concave-lens "eyes"), it computes the sparse linear
-operator that maps voxel intensities to detector-pixel intensities. That
-operator is the thing you actually want out of the simulation — once you
-have it, "rendering an image" of any emission profile is a single sparse
-matrix-vector product, and, conversely, image inversion (tomography) is a
-linear inverse problem against the same matrix.
+## What the library computes
 
-The package is organized around four coordinate systems — world, camera,
-pinhole/eye, and screen/image — that are formalized in
-`multi_pinhole.core`. Every geometric
-calculation in the package is a composition of transforms between these
-frames; `docs/core.md` walks through that chain in detail.
+`multi_pinhole` maps a three-dimensional voxel emission field to a pinhole
+camera detector image. Geometry is compiled once into a sparse operator
 
-## Key Components
+\[
+\mathbf{g}=\mathbf{P}\mathbf{f},
+\]
 
-- **Core optics** (`multi_pinhole.eye`, `multi_pinhole.aperture`,
-  `multi_pinhole.screen`, and `multi_pinhole.camera`) — `Eye` (a single pinhole/lens
-  channel), `Aperture` (an occluding shape, analytic or STL), `Screen` (the
-  pixelated detector plane and its rasterizer), and `Camera` (which groups
-  eyes/apertures/screen and places them in world space). See
-  `docs/core.md`. `multi_pinhole.core` remains a legacy-loading facade for
-  historical class imports and pickle globals, not a new-code entry point.
-- **Voxel modeling** (`multi_pinhole.voxel`) — a Cartesian voxel grid
-  (`Voxel`) plus synthetic-profile helpers for toroidal plasma emission. See
-  the "Voxel grid geometry" section below.
-- **Coordinate transforms** (`multi_pinhole.coordinates`) — pure functions
-  that reinterpret Cartesian voxel-grid points in cylindrical, toroidal, or
-  spherical terms, purely for *evaluating a profile*; the grid itself is
-  always Cartesian.
+where `f` is emission per voxel and `g` is detector signal per pixel. Once
+`P` exists, changing the emission requires only `World.project`, not another
+ray trace.
 
-For spherical coordinates, ``r = ||(x,y,z)|| / a`` is dimensionless,
-``theta = arccos(z / ||(x,y,z)||)`` is the polar angle from ``+z`` in
-``[0, pi]``, and ``phi = atan2(y, x)`` is the counter-clockwise azimuth from
-``+x`` in ``[-pi, pi]``. The reference radius ``a`` scales only ``r``. At the
-origin ``theta`` is ``nan``; azimuth on the ``z`` axis follows NumPy's
-``atan2`` signed-zero behavior although it is mathematically undefined.
-- **World orchestration** (`multi_pinhole.world`) — `World` binds a `Voxel`,
-  one or more `Camera` instances, and optional STL `walls` into a scene; it
-  computes per-eye visibility and assembles the voxel-to-screen projection
-  matrix. Geometry-to-mask calculations live in private
-  `multi_pinhole._visibility`, while independent optical-bin quadrature and
-  sparse assembly live in private `multi_pinhole._projection_matrix`; public
-  methods and cache ownership remain on `World`. See `docs/world.md`.
-- **Configuration and persistence** (`multi_pinhole.config`,
-  `multi_pinhole.serialization`) — strict JSON config constructs a scene
-  without caches. Versioned `.mpw` archives checkpoint the complete World and
-  expose metadata without unpickling. See [the config schema](config.md) and
-  [serialization reference](serialization.md).
+Five objects are enough for normal use:
 
-## Typical Workflow
+| Object | Meaning |
+|---|---|
+| `Voxel` | Cartesian cells carrying the emission |
+| `Eye` | One pinhole or finite-eye channel |
+| `Aperture` | The opening and surrounding opaque geometry |
+| `Screen` | The pixelated detector plane |
+| `Camera` / `World` | One optical assembly / the complete cached scene |
 
-1. **Describe the scene.** Build a `Voxel` grid — either directly from axis
-   arrays, or with `Voxel.uniform_voxel(ranges, shape)` for an evenly-spaced
-   Cartesian box. Optionally evaluate toroidal or poloidal profiles through
-   `multi_pinhole.profiles`, and load STL `walls` that should occlude rays.
-2. **Configure optics.** Create one or more `Eye` objects (pinhole position,
-   focal length, aperture size/shape), pair them with `Aperture` geometry,
-   and attach them to a `Screen` (physical size, pixel grid, subpixel
-   refinement).
-3. **Assemble a `Camera`** from the eyes/apertures/screen, and place it in
-   world space with `camera_position` and a rotation.
-4. **Build a `World`** from the voxel grid and camera(s), and mark which
-   voxel vertices are physically "inside" the volume of interest with
-   `World.set_inside_vertices(...)` (vertices outside are skipped by the
-   visibility/projection steps below — this is how, e.g., a torus-shaped
-   plasma volume within a rectangular voxel box is expressed).
-5. **Compute visibility and the projection matrix.**
-   `World.set_projection_matrix()` determines, for every camera eye, which
-   voxels are visible (unobstructed by apertures or walls) and builds the
-   sparse `(N_pixel, N_voxel)` matrix `world.P_matrix[camera_idx]`. See the
-   worked example below and `docs/world.md` for the full pipeline.
-6. **Render or invert.** Given voxel intensities `emission` with shape
-   `(N_voxel,)` or a column-wise batch with shape `(N_voxel, N_rhs)`,
-   `world.project(emission, camera_idx)` returns shape `(N_pixel,)` or
-   `(N_pixel, N_rhs)`. Selecting an `eye_idx` returns one eye's contribution
-   in the same pixel coordinates. Detector subpixels are transient quadrature
-   samples and are not cached.
+## Recommended workflow
 
-### Worked example: from an empty `World` to a rendered image
-
-This follows `examples/small_voxel_projection.py`, trimmed to the essential
-calls:
+### 1. Define the scene in JSON
 
 ```python
-from multi_pinhole import Aperture, Camera, Eye, Screen, Voxel, World
-import numpy as np
+from multi_pinhole import World
 
-# 1. A 3x3x3 voxel grid spanning [-3, 3] mm on each axis.
-voxel = Voxel.uniform_voxel(ranges=[[-3, 3], [-3, 3], [-3, 3]], shape=[3, 3, 3])
-
-# 2-3. One pinhole eye, one circular aperture, a small screen, assembled into a Camera.
-camera = Camera(
-    eyes=[
-        Eye(
-            eye_type="pinhole",
-            eye_shape="circle",
-            eye_size=1.0,
-            focal_length=12.0,
-            position=[0.0, 0.0],
-        )
-    ],
-    apertures=Aperture(
-        shape="circle",
-        size=6.0,
-        position=[0.0, 0.0, 25.0],
-        resolution=24,
-        max_size=24.0,
-    ),
-    screen=Screen(
-        screen_shape="rectangle",
-        screen_size=[12.0, 12.0],
-        pixel_shape=(8, 8),
-        subpixel_resolution=2,
-    ),
-    camera_position=[0.0, 0.0, -60.0],
-)
-
-# 4. Bind the voxel grid and camera into a World, and mark all vertices "inside".
-world = World(voxel=voxel, cameras=[camera], verbose=0)
-world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
-
-# 5. Compute visibility + the sparse voxel-to-screen projection matrix.
-world.set_projection_matrix(res=1, verbose=0, parallel=1)
-
-# 6. Render: pick an emission value per voxel, then one sparse matvec per image.
-emission = np.exp(
-    -(
-        (voxel.gravity_center[:, 0] / 2.2) ** 2
-        + (voxel.gravity_center[:, 1] / 1.8) ** 2
-        + (voxel.gravity_center[:, 2] / 2.6) ** 2
-    )
-)
-pixel_image = world.P_matrix[0] @ emission  # all eyes, shape (N_pixel,)
-eye_image = world.projection[0][0] @ emission  # eye 0, shape (N_pixel,)
+world = World.from_config("scene.json")
 ```
 
-Internally, step 5 (`set_projection_matrix`) is the expensive part: for each
-camera eye it (a) classifies every voxel as invisible/partially/fully
-visible by ray-tracing its 8 corner vertices against every aperture and
-wall, (b) for visible voxels, samples sub-voxel points, projects them
-through the eye with `Camera.calc_image_vec` (the pinhole-projection +
-rasterization pipeline from `docs/core.md`), and (c) integrates those
-sub-voxel samples back into one weight per voxel. `docs/world.md` documents
-each of these sub-steps.
+The JSON contains voxel ranges, camera pose, eyes, screen, apertures, and an
+optional wall. Follow [Building a World JSON configuration](world-config-guide.md);
+use the [schema reference](config.md) only for exhaustive key and type rules.
 
-## Voxel grid geometry
+### 2. Inspect geometry before expensive work
 
-A `Voxel` is a rectilinear (not necessarily uniformly-spaced) 3D grid,
-defined by three 1D axis arrays `x_axis`, `y_axis`, `z_axis` of grid-line
-positions. From those axes,
-`Voxel.update()` derives everything else in a vectorized way (no Python
-loops over voxels):
+Check camera direction, wall ports, consistent length units, and the emitting
+`inside` region. `inside` selects source volume; it is not an opaque wall.
 
-* **Grid points** are the `(N_x+1) × (N_y+1) × (N_z+1)` Cartesian product of
-  the three axes, flattened in `z`-fastest, then `y`, then `x` order (i.e.
-  linear index `n = k + N_z'·(j + N_y'·i)` for grid shape
-  `(N_x', N_y', N_z')`).
-* **Voxels** are the `N_x × N_y × N_z` cells between consecutive grid lines.
-  Voxel `(i, j, k)`'s 8 corner vertices are obtained by adding a fixed
-  offset pattern (`{0,1} × {0,1} × {0,1}` combinations, expressed as linear
-  index offsets `{0, 1, N_z', N_z'+1, N_z'·N_y', ...}`) to that voxel's base
-  linear grid index — this is a pure index-arithmetic trick that avoids
-  building an explicit `(N_voxel, 8, 3)` array of vertex coordinates unless
-  a caller actually asks for `Voxel.vertices`.
-* **Volume** of each voxel is the product of its three edge lengths
-  (`dx · dy · dz`), and its **gravity center** is the midpoint of its 8
-  corners — both computed per-axis and broadcast, not per-voxel.
-* **Sub-voxel sampling.** For interpolation/integration (used heavily by
-  `World`'s projection pipeline — see `docs/world.md`), a voxel can be
-  subdivided into an `res = (x_res, y_res, z_res)` grid of sub-voxel sample
-  points. `interpolate_matrix_from_vertices(res)` builds a matrix of
-  trilinear interpolation weights: each sub-voxel sample point at fractional
-  position `(a, b, c)` within the parent voxel (`a, b, c ∈ [0, 1]`) is
-  assigned to a weighted combination of the voxel's 8 corner vertex values,
-  with weights `(1−a)(1−b)(1−c)`, `(1−a)(1−b)c`, ..., `abc` — the standard
-  trilinear interpolation basis.
+```python
+world.find_visible_voxels("main", verbose=1)
+work = world.preflight_projection(res=3, partial_res=3)
+print(work.summary())
+```
 
-### Coordinate transforms for profile evaluation
+Visibility states are `0=hidden`, `1=partly visible`, and `2=fully visible`.
+Preflight estimates work without building the projection matrix.
 
-The grid itself is always Cartesian; `Voxel.normalized_coordinates()`
-optionally *reinterprets* Cartesian points (by default, the voxel gravity
-centers) in a different coordinate system, purely so that profile functions
-can be written in terms that are natural for the device's symmetry.
+### 3. Build the projection
 
-`multi_pinhole.coordinates` implements seven such transforms (all taking
-Cartesian `(x, y, z)` and returning normalized coordinates):
+```python
+world.set_projection_matrix(
+    res=3,
+    partial_res=3,
+    parallel=4,
+    verbose=1,
+)
+```
 
-* **Cartesian** — just rescales each axis by half its configured extent.
-* **Cylindrical** `(r, theta, z)` — `r = sqrt(x²+y²)/a`,
-  `theta = atan2(y, x)`, `z` rescaled by `h/2`.
-* **Torus** `(r, theta, phi)` — for a torus of major radius `R_0` and minor
-  radius `a`: `R = sqrt(x²+y²)`, `r = sqrt((R−R_0)² + z²)/a`,
-  `theta = atan2(z, R−R_0)` (poloidal angle, `0` on the outboard midplane),
-  `phi = atan2(−y, x)` (toroidal angle, increasing clockwise viewed from
-  `+z`). `torus_inverse` is the same construction with both angles flipped
-  in sign/reference (`theta` referenced to the inboard midplane, `phi`
-  counter-clockwise) — both conventions are right-handed
-  `(r, theta, phi)`.
-* **Poloidal Cartesian** `(x, y, phi)` — `x = R−R_0` points outwards and
-  `y = z` points upwards. With normalization, both are divided by `a`.
-  `poloidal_cartesian` uses the clockwise toroidal angle of `torus`, while
-  `poloidal_cartesian_inverse` uses counter-clockwise `phi`; the direction of
-  poloidal `x` is unchanged. Both conversions accept keyword components for
-  the inverse mapping back to Cartesian coordinates.
-* **Spherical** `(r, theta, phi)` — let
-  `distance = sqrt(x² + y² + z²)`. Then `r = distance / a`,
-  `theta = arccos(z / distance)`, and `phi = atan2(y, x)`. The reference
-  radius `a` scales only `r` and does not affect either angle. At the origin,
-  `theta = nan`.
+Larger resolutions refine source integration and cost more. They are not an
+error guarantee; final analyses should check convergence, especially for
+partly visible voxels crossing wall or aperture boundaries.
 
-For ad-hoc analysis, `Voxel.to_coordinates()` can query any of these
-conventions without changing the voxel's configured profile coordinate type.
-It accepts `points="centers"`, `points="vertices"`, or an explicit Cartesian
-array, and returns physical coordinates unless `normalized=True` is requested.
-`Voxel.from_coordinates()` performs the inverse conversion from keyword-only
-components, for example `from_coordinates("cylindrical", R=..., Z=...,
-phi=...)`. Component arrays are NumPy-broadcast before a final Cartesian axis
-is appended. Normalized conversions require all relevant scale parameters
-explicitly; no implicit unit scale is used by the new API. The immutable
-registry is available as `voxel.available_coordinate_types`. Adding a new
-convention therefore does not require another Voxel method. The older
-`normalized_coordinates()` method remains the configured-profile compatibility
-API.
+### 4. Project emission
 
-Values sampled at Cartesian voxel gravity centers can be reused through
-`Voxel.center_interpolator(values, **interpolator_kwargs)`. The returned
-callable accepts either Cartesian `points` or keyword components with an
-explicit `coordinate_type`; named components are converted back to Cartesian
-and NumPy-broadcast before interpolation. Scalar and trailing vector/tensor
-value shapes are supported. This ordinary interpolation API is distinct from
-the private, volume-weighted source-quadrature matrices used by projection
-assembly.
+```python
+import numpy as np
 
-`multi_pinhole.profiles` provides composable, physical-quantity-independent
-helpers on normalized poloidal Cartesian `(x, y)` coordinates.
-Non-axisymmetric models accept an explicit `center_angle_xy`, measured
-counter-clockwise from the positive poloidal `x` axis. Applications derive
-that angle from time, toroidal position, and mode numbers before calling the
-profile. `profiles.helical_center_angle(phi, center_angle_xy_ref, m=..., n=...,
-phi_ref=...)` performs the broadcast helical propagation but deliberately
-does not infer the `phi` convention; callers provide a signed `n` consistent
-with their coordinates. The profile module does not impose a Hilbert-phase
-or rotation-direction convention.
-This keeps coordinate and mode conventions out of the profile equations.
-Plotting, fitting, and experiment-specific diagnostics should live outside
-the core profile API.
+x, y, z = world.voxel.gravity_center.T
+emission = np.exp(-((x / 100)**2 + (y / 100)**2 + (z / 150)**2))
 
-## Notable Capabilities
+image = world.project(emission, camera_idx="main")
+world.cameras["main"].screen.show_image(image)
+```
 
-- Cameras support multiple simultaneous eyes (multi-pinhole imaging), each
-  with independent position, focal length, aperture shape/size, and
-  wavelength range.
-- Apertures accept analytic shapes (circle/ellipse/rectangle) or arbitrary
-  STL meshes, and are used as hard occluders: `check_visible` performs a
-  two-stage (cone prefilter + Möller–Trumbore ray-triangle intersection)
-  visibility test between an eye and each candidate point — see
-  `docs/utilities.md`.
-- Screen rasterization (`Screen.ray2image_grid`) uses sparse CSR/CSC
-  matrices scaled by etendue weights, so millions of rays can be
-  accumulated into a subpixel image without ever materializing a dense
-  array — see `docs/core.md`.
-- `World.set_projection_matrix` parallelizes the expensive sub-voxel
-  sampling/projection work across a `ThreadPoolExecutor`, chunked
-  adaptively by estimated sparsity to bound memory use — see
-  `docs/world.md`.
+Emission may have shape `(N_voxel,)`, or `(N_voxel, N_time)` for a batch.
+Use zero, not NaN, outside the modeled source: non-finite values propagate
+through matrix multiplication. See [Visualization](visualization.md) for 3D
+and slice plots.
 
-## Extensibility
+### 5. Save expensive results when needed
 
-The project layers utility functions (STL processing in
-`multi_pinhole.utils.stl_utils`, progress-aware logging in
-`multi_pinhole.utils.my_stdio`) beneath the main classes, so new optical
-elements or custom workflows can reuse the existing coordinate transforms,
-visibility checks, and visualization routines without re-implementing the
-underlying geometry. See `docs/utilities.md` for those building blocks.
+```python
+world.save("checkpoint.mpw")
+```
+
+JSON stores scene inputs. A `.mpw` archive stores visibility and projection
+caches. See [Serialization](serialization.md) for compatibility and security.
+
+## Coordinates: the minimum needed
+
+- World and voxel grids are Cartesian `(x, y, z)`.
+- Camera, eye, and screen frames are normally handled by the library.
+- Profile evaluation may reinterpret the same Cartesian points as cylindrical,
+  toroidal, or poloidal Cartesian coordinates; the grid itself stays Cartesian.
+- Angle signs and origins matter. Confirm the selected convention in
+  `Voxel.to_coordinates()` and [the coordinate section](core.md#coordinate-frames-users-need).
+
+## Common mistakes
+
+- Mixing millimetres and metres; the library does not attach units.
+- Confusing `inside` (source selection) with `wall` (occlusion).
+- Filling inactive emission with NaN instead of zero.
+- Assuming screen arrays have generic image-row orientation; prefer
+  `Screen.show_image`.
+- Trusting one source resolution without a convergence check.
+- Expecting JSON to contain calculated caches.
+
+> **Ordinary usage can stop here.** Choose a deeper page only for the task at
+> hand.
+
+## Where to go next
+
+- Build camera JSON → [World configuration guide](world-config-guide.md)
+- Evaluate plasma profiles or interpolate an R–Z section →
+  [Coordinates, profiles, and interpolation](coordinates-profiles.md)
+- Plot results → [Visualization](visualization.md)
+- Understand pinhole equations and detector integration → [Core optics](core.md)
+- Audit visibility and source integration → [World projection](world.md)
+- Look up exact JSON keys → [Config reference](config.md)

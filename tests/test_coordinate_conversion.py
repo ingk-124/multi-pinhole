@@ -7,11 +7,10 @@ from multi_pinhole import Voxel
 from multi_pinhole.coordinates import COORDINATE_TYPES
 
 
-def _voxel(rotation=None):
+def _voxel():
     return Voxel.uniform_voxel(
         ranges=((-2.0, 2.0), (-3.0, 3.0), (-4.0, 4.0)),
         shape=(2, 2, 2),
-        rotation=rotation,
     )
 
 
@@ -321,15 +320,16 @@ def test_spherical_roundtrip(normalized):
     np.testing.assert_allclose(reconstructed, points, rtol=1e-14, atol=1e-14)
 
 
-def test_coordinate_roundtrip_respects_voxel_rotation():
+def test_coordinate_roundtrip_respects_per_call_rotation():
     rotation = Rotation.from_euler("xyz", [20.0, -15.0, 35.0], degrees=True)
-    voxel = _voxel(rotation=rotation)
+    voxel = _voxel()
     points = np.array([[2.0, 1.0, 0.5], [-1.5, 2.2, -0.3]])
 
     coordinates = voxel.to_coordinates(
         "cylindrical",
         points=points,
         normalized=True,
+        rotation=rotation,
         radius=3.0,
         height=4.0,
     )
@@ -339,6 +339,7 @@ def test_coordinate_roundtrip_respects_voxel_rotation():
         phi=coordinates[:, 1],
         Z=coordinates[:, 2],
         normalized=True,
+        rotation=rotation,
         radius=3.0,
         height=4.0,
     )

@@ -33,10 +33,7 @@ assert metadata["world_schema_version"] == 1
 assert metadata["projection_cache_schema_version"] == 3
 ```
 
-loaderは旧`multi_pinhole.core.*` class globalを解決します。互換なschema 3の
-visibilityとprojection cacheを維持します。projection cache schemaがない、または
-非互換な場合は可能な限りvisibilityを残し、projectionだけを消去します。代表的な
-`world.project(emission, key)`結果を移行前後で比較してください。
+代表的な`world.project(emission, key)`結果を移行前後で比較してください。
 
 direct dillとarchive payloadは任意codeを実行できるため、信頼できる旧fileだけを
 読み込んでください。
@@ -44,9 +41,10 @@ direct dillとarchive payloadは任意codeを実行できるため、信頼で�
 ## Configとarchiveの選択
 
 review可能なscene構築にはJSON config、完全なPython stateとcacheには`.mpw`を
-使います。configは解析的Aperture、source pathのあるSTL wall、built-inの`all`、
-`box`、`sphere` inside maskを扱います。任意callable、単独inside array、
-STL Aperture、source provenanceのないwall meshは、黙って欠落させず拒否します。
+使います。configは解析的またはsource path付きSTL Aperture、source path付き
+STL wall、matrixまたはpointによるcamera orientation、built-inの`all`、`box`、
+`sphere`、`torus` inside maskを扱います。任意callable、単独inside array、
+source provenanceのないmesh objectは、黙って欠落させず拒否します。
 
 1.0ではoptics moduleを移動していません。projection数式、処理順、dtype、許容誤差、
 projection cache schema 3は変更していません。

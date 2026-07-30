@@ -70,10 +70,23 @@ def _inside_sphere(
     ) ** 2 <= radius**2
 
 
+def _inside_torus(
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    *,
+    major_radius: float,
+    minor_radius: float,
+) -> np.ndarray:
+    radial_offset = np.hypot(x, y) - major_radius
+    return radial_offset**2 + z**2 <= minor_radius**2
+
+
 _INSIDE_REGISTRY = {
     "all": (_inside_all, set()),
     "box": (_inside_box, {"ranges"}),
     "sphere": (_inside_sphere, {"center", "radius"}),
+    "torus": (_inside_torus, {"major_radius", "minor_radius"}),
 }
 _INSIDE_NAMES = {function: name for name, (function, _) in _INSIDE_REGISTRY.items()}
 
@@ -195,49 +208,59 @@ def _json_value(value: Any, location: str) -> Any:
 
 
 def _load_voxel(value: Any) -> Voxel:
-    data = _fields(
-        value,
-        "voxel",
-        required={"axes", "ranges", "shape", "coordinate"},
-        optional={"sub_voxel_resolution"},
-    )
-    axes_data = _fields(data["axes"], "voxel.axes", required={"x", "y", "z"})
-    axes = []
-    for name in ("x", "y", "z"):
-        axis = _array(axes_data[name], f"voxel.axes.{name}")
-        if len(axis) < 2:
+    common = {"type", "coordinate"}
+    raw = _object(value, "voxel")
+    voxel_type = raw.get("type")
+    if voxel_type == "uniform":
+        data = _fields(
+            value,
+            "voxel",
+            required=common | {"ranges", "shape"},
+            optional={"sub_voxel_resolution"},
+        )
+        shape = _integer_array(data["shape"], "voxel.shape", length=3, positive=True)
+        if not isinstance(data["ranges"], list) or len(data["ranges"]) != 3:
             raise WorldConfigError(
-                f"voxel.axes.{name} must contain at least two values"
+                "voxel.ranges must contain three [minimum, maximum] arrays"
             )
-        if np.any(np.diff(axis) <= 0):
-            raise WorldConfigError(f"voxel.axes.{name} must be strictly increasing")
-        axes.append(axis)
-
-    shape = _integer_array(data["shape"], "voxel.shape", length=3, positive=True)
-    expected_shape = [len(axis) - 1 for axis in axes]
-    if shape != expected_shape:
-        raise WorldConfigError(
-            f"voxel.shape must equal axis lengths minus one: expected {expected_shape}, "
-            f"got {shape}"
+        ranges = [
+            _array(bounds, f"voxel.ranges[{index}]", length=2)
+            for index, bounds in enumerate(data["ranges"])
+        ]
+        for index, bounds in enumerate(ranges):
+            if bounds[0] >= bounds[1]:
+                raise WorldConfigError(
+                    f"voxel.ranges[{index}] minimum must be less than maximum"
+                )
+        axes = [
+            np.linspace(bounds[0], bounds[1], count + 1)
+            for bounds, count in zip(ranges, shape)
+        ]
+    elif voxel_type == "axes":
+        data = _fields(
+            value,
+            "voxel",
+            required=common | {"axes"},
+            optional={"sub_voxel_resolution"},
         )
-    if not isinstance(data["ranges"], list) or len(data["ranges"]) != 3:
-        raise WorldConfigError(
-            "voxel.ranges must contain three [minimum, maximum] arrays"
-        )
-    ranges = [
-        _array(bounds, f"voxel.ranges[{index}]", length=2)
-        for index, bounds in enumerate(data["ranges"])
-    ]
-    expected_ranges = [[axis[0], axis[-1]] for axis in axes]
-    if not np.allclose(ranges, expected_ranges, rtol=0.0, atol=0.0):
-        raise WorldConfigError(
-            f"voxel.ranges must match axis endpoints: expected {expected_ranges}"
-        )
+        axes_data = _fields(data["axes"], "voxel.axes", required={"x", "y", "z"})
+        axes = []
+        for name in ("x", "y", "z"):
+            axis = _array(axes_data[name], f"voxel.axes.{name}")
+            if len(axis) < 2:
+                raise WorldConfigError(
+                    f"voxel.axes.{name} must contain at least two values"
+                )
+            if np.any(np.diff(axis) <= 0):
+                raise WorldConfigError(f"voxel.axes.{name} must be strictly increasing")
+            axes.append(np.asarray(axis))
+    else:
+        raise WorldConfigError("voxel.type must be either 'uniform' or 'axes'")
 
     coordinate = _fields(
         data["coordinate"],
         "voxel.coordinate",
-        required={"type", "parameters", "rotation_matrix"},
+        required={"type", "parameters"},
     )
     if not isinstance(coordinate["type"], str):
         raise WorldConfigError("voxel.coordinate.type must be a string")
@@ -249,9 +272,6 @@ def _load_voxel(value: Any) -> Voxel:
     }
     if len(parameters) != len(coordinate["parameters"]):
         raise WorldConfigError("voxel.coordinate.parameters keys must be strings")
-    rotation = _matrix3(
-        coordinate["rotation_matrix"], "voxel.coordinate.rotation_matrix"
-    )
     resolution = data.get("sub_voxel_resolution", [1, 1, 1])
     resolution = _integer_array(
         resolution, "voxel.sub_voxel_resolution", length=3, positive=True
@@ -262,7 +282,6 @@ def _load_voxel(value: Any) -> Voxel:
             y_axis=np.asarray(axes[1]),
             z_axis=np.asarray(axes[2]),
             coordinate_type=coordinate["type"],
-            rotation=np.asarray(rotation),
             coordinate_parameters=parameters,
             sub_voxel_resolution=tuple(resolution),
         )
@@ -341,32 +360,80 @@ def _load_screen(value: Any, location: str) -> Screen:
         raise WorldConfigError(f"invalid {location}: {error}") from error
 
 
-def _load_aperture(value: Any, location: str) -> Aperture:
+def _load_aperture(
+    value: Any,
+    location: str,
+    base_directory: Path,
+) -> Aperture:
+    raw = _object(value, location)
+    aperture_type = raw.get("type")
+    if aperture_type == "stl":
+        data = _fields(
+            raw,
+            location,
+            required={"type", "path", "position"},
+        )
+        if not isinstance(data["path"], str) or not data["path"]:
+            raise WorldConfigError(f"{location}.path must be a non-empty string")
+        resolved = Path(data["path"])
+        if not resolved.is_absolute():
+            resolved = base_directory / resolved
+        resolved = resolved.resolve()
+        try:
+            model = mesh.Mesh.from_file(resolved)
+            aperture = Aperture(
+                stl_model=model,
+                position=_array(data["position"], f"{location}.position", length=3),
+            )
+        except (OSError, TypeError, ValueError) as error:
+            raise WorldConfigError(
+                f"cannot load {location}.path {data['path']!r}: {error}"
+            ) from error
+        aperture._config_source_path = resolved
+        return aperture
+    if aperture_type != "analytic":
+        raise WorldConfigError(
+            f"{location}.type is unknown or unsupported: {aperture_type!r}"
+        )
     data = _fields(
-        value,
+        raw,
         location,
         required={"type", "shape", "size", "position", "direction"},
+        optional={"resolution", "max_size"},
     )
-    if data["type"] != "analytic":
-        raise WorldConfigError(
-            f"{location}.type is unknown or unsupported: {data['type']!r}"
-        )
     if data["shape"] not in {"circle", "ellipse", "rectangle"}:
         raise WorldConfigError(f"{location}.shape is unknown: {data['shape']!r}")
     size = _array(data["size"], f"{location}.size", length=2, positive=True)
     aperture_size: float | list[float] = size[0] if data["shape"] == "circle" else size
+    resolution = _integer(
+        data.get("resolution", 20),
+        f"{location}.resolution",
+        positive=True,
+    )
+    raw_max_size = data.get("max_size")
+    max_size = (
+        None
+        if raw_max_size is None
+        else _array(raw_max_size, f"{location}.max_size", length=2, positive=True)
+    )
     try:
         return Aperture(
             shape=data["shape"],
             size=aperture_size,
             position=_array(data["position"], f"{location}.position", length=3),
             direction=_array(data["direction"], f"{location}.direction", length=3),
+            resolution=resolution,
+            max_size=max_size,
         )
     except (TypeError, ValueError) as error:
         raise WorldConfigError(f"invalid {location}: {error}") from error
 
 
-def _load_camera(value: Any, index: int) -> tuple[str, Camera]:
+def _load_camera(
+    value: Any,
+    index: int,
+    base_directory: Path,
+) -> tuple[str, Camera]:
     location = f"cameras[{index}]"
     data = _fields(
         value,
@@ -375,11 +442,11 @@ def _load_camera(value: Any, index: int) -> tuple[str, Camera]:
             "key",
             "name",
             "position",
-            "rotation_matrix",
             "eyes",
             "screen",
             "apertures",
         },
+        optional={"rotation_matrix", "orientation"},
     )
     if not isinstance(data["key"], str):
         raise WorldConfigError(f"{location}.key must be a string")
@@ -394,21 +461,66 @@ def _load_camera(value: Any, index: int) -> tuple[str, Camera]:
         for eye_index, item in enumerate(data["eyes"])
     ]
     apertures = [
-        _load_aperture(item, f"{location}.apertures[{aperture_index}]")
+        _load_aperture(
+            item,
+            f"{location}.apertures[{aperture_index}]",
+            base_directory,
+        )
         for aperture_index, item in enumerate(data["apertures"])
     ]
+    has_matrix = "rotation_matrix" in data
+    has_orientation = "orientation" in data
+    if has_matrix == has_orientation:
+        raise WorldConfigError(
+            f"{location} must contain exactly one of rotation_matrix and orientation"
+        )
+    position = _array(data["position"], f"{location}.position", length=3)
+    rotation_matrix = (
+        np.asarray(_matrix3(data["rotation_matrix"], f"{location}.rotation_matrix"))
+        if has_matrix
+        else np.eye(3)
+    )
     try:
         camera = Camera(
             eyes=eyes,
             apertures=apertures,
             screen=_load_screen(data["screen"], f"{location}.screen"),
-            camera_position=_array(data["position"], f"{location}.position", length=3),
-            rotation_matrix=np.asarray(
-                _matrix3(data["rotation_matrix"], f"{location}.rotation_matrix")
-            ),
+            camera_position=position,
+            rotation_matrix=rotation_matrix,
             camera_name=data["name"],
         )
+        if has_orientation:
+            orientation = _fields(
+                data["orientation"],
+                f"{location}.orientation",
+                required={"look_point"},
+                optional={"right_point", "down_point"},
+            )
+            has_right = "right_point" in orientation
+            has_down = "down_point" in orientation
+            if has_right == has_down:
+                raise WorldConfigError(
+                    f"{location}.orientation must contain exactly one of "
+                    "right_point and down_point"
+                )
+            resolved_orientation = {
+                "look_point": _array(
+                    orientation["look_point"],
+                    f"{location}.orientation.look_point",
+                    length=3,
+                )
+            }
+            lateral_name = "right_point" if has_right else "down_point"
+            resolved_orientation[lateral_name] = _array(
+                orientation[lateral_name],
+                f"{location}.orientation.{lateral_name}",
+                length=3,
+            )
+            camera.set_orientation_from_points(**resolved_orientation)
+            camera._config_orientation = resolved_orientation
     except (TypeError, ValueError) as error:
+        if isinstance(error, WorldConfigError):
+            raise
         raise WorldConfigError(f"invalid {location}: {error}") from error
     return data["key"], camera
 
@@ -435,6 +547,17 @@ def _load_inside(value: Any) -> tuple[Any, dict[str, Any]] | None:
         )
         parameters["radius"] = _number(
             parameters["radius"], "inside.parameters.radius", positive=True
+        )
+    elif data["type"] == "torus":
+        parameters["major_radius"] = _number(
+            parameters["major_radius"],
+            "inside.parameters.major_radius",
+            positive=True,
+        )
+        parameters["minor_radius"] = _number(
+            parameters["minor_radius"],
+            "inside.parameters.minor_radius",
+            positive=True,
         )
     return function, parameters
 
@@ -490,7 +613,7 @@ def load_world_config(
         raise WorldConfigError("cameras must be an array")
     cameras: dict[str, Camera] = {}
     for index, item in enumerate(data["cameras"]):
-        key, camera = _load_camera(item, index)
+        key, camera = _load_camera(item, index, base_directory)
         if key in cameras:
             raise WorldConfigError(f"duplicate camera key: {key!r}")
         cameras[key] = camera
@@ -536,55 +659,143 @@ def _world_config_mapping(world: "World", target_path: Path | None) -> dict[str,
         raise WorldConfigError("to_config requires every camera key to be a string")
 
     voxel = world.voxel
+    axes = [
+        np.asarray(voxel.x_axis, dtype=float),
+        np.asarray(voxel.y_axis, dtype=float),
+        np.asarray(voxel.z_axis, dtype=float),
+    ]
+    if any(axis.size < 2 for axis in axes):
+        raise WorldConfigError(
+            "to_config requires voxel axes with at least two boundary values"
+        )
+    coordinate = {
+        "type": voxel.coordinate_type,
+        "parameters": _json_value(
+            voxel.coordinate_parameters, "voxel.coordinate.parameters"
+        ),
+    }
+    resolution = [int(item) for item in voxel.res]
+    uniform = True
+    for axis in axes:
+        expected = np.linspace(axis[0], axis[-1], axis.size)
+        scale = max(1.0, float(np.max(np.abs(axis))))
+        if not np.allclose(
+            axis,
+            expected,
+            rtol=1e-12,
+            atol=np.finfo(float).eps * scale * 16,
+        ):
+            uniform = False
+            break
+    if uniform:
+        voxel_config = {
+            "type": "uniform",
+            "ranges": [[float(axis[0]), float(axis[-1])] for axis in axes],
+            "shape": [int(item) for item in voxel.shape],
+            "coordinate": coordinate,
+            "sub_voxel_resolution": resolution,
+        }
+    else:
+        voxel_config = {
+            "type": "axes",
+            "axes": {name: axis.tolist() for name, axis in zip(("x", "y", "z"), axes)},
+            "coordinate": coordinate,
+            "sub_voxel_resolution": resolution,
+        }
     cameras = []
     for key, camera in world.cameras.items():
         apertures = []
         for index, aperture in enumerate(camera.apertures):
-            if aperture.shape not in {"circle", "ellipse", "rectangle"}:
+            if aperture.shape in {"circle", "ellipse", "rectangle"}:
+                apertures.append(
+                    {
+                        "type": "analytic",
+                        "shape": aperture.shape,
+                        "size": np.asarray(aperture.size, dtype=float).tolist(),
+                        "position": np.asarray(
+                            aperture.position,
+                            dtype=float,
+                        ).tolist(),
+                        "direction": np.asarray(
+                            aperture.direction,
+                            dtype=float,
+                        ).tolist(),
+                        "resolution": int(aperture.model_resolution or 20),
+                        "max_size": (
+                            None
+                            if aperture.model_max_size is None
+                            else np.asarray(
+                                aperture.model_max_size,
+                                dtype=float,
+                            ).tolist()
+                        ),
+                    }
+                )
+                continue
+            if aperture.shape != "stl":
                 raise WorldConfigError(
-                    f"camera {key!r} aperture {index} is not an analytic aperture"
+                    f"camera {key!r} aperture {index} has unsupported shape "
+                    f"{aperture.shape!r}"
+                )
+            source = getattr(aperture, "_config_source_path", None)
+            if source is None:
+                raise WorldConfigError(
+                    f"camera {key!r} STL aperture {index} has no source-path provenance"
+                )
+            source_path = Path(source).resolve()
+            output_path: Path | str = source_path
+            if target_path is not None:
+                output_path = Path(
+                    os.path.relpath(
+                        source_path,
+                        start=target_path.resolve().parent,
+                    )
                 )
             apertures.append(
                 {
-                    "type": "analytic",
-                    "shape": aperture.shape,
-                    "size": np.asarray(aperture.size, dtype=float).tolist(),
+                    "type": "stl",
+                    "path": str(output_path),
                     "position": np.asarray(aperture.position, dtype=float).tolist(),
-                    "direction": np.asarray(aperture.direction, dtype=float).tolist(),
                 }
             )
-        cameras.append(
-            {
-                "key": key,
-                "name": str(camera._camera_name),
-                "position": np.asarray(camera.camera_position, dtype=float).tolist(),
-                "rotation_matrix": np.asarray(
-                    camera.rotation_matrix, dtype=float
+        camera_config = {
+            "key": key,
+            "name": str(camera._camera_name),
+            "position": np.asarray(camera.camera_position, dtype=float).tolist(),
+            "eyes": [
+                {
+                    "type": eye.eye_type,
+                    "position": np.asarray(eye.position[:2], dtype=float).tolist(),
+                    "focal_length": float(eye.focal_length),
+                    "shape": eye.eye_shape,
+                    "size": np.asarray(eye.eye_size, dtype=float).tolist(),
+                    "wavelength_range": [float(item) for item in eye.wavelength_range],
+                }
+                for eye in camera.eyes
+            ],
+            "screen": {
+                "shape": camera.screen.screen_shape,
+                "size": np.asarray(camera.screen.screen_size, dtype=float).tolist(),
+                "pixel_shape": np.asarray(
+                    camera.screen.pixel_shape,
+                    dtype=int,
                 ).tolist(),
-                "eyes": [
-                    {
-                        "type": eye.eye_type,
-                        "position": np.asarray(eye.position[:2], dtype=float).tolist(),
-                        "focal_length": float(eye.focal_length),
-                        "shape": eye.eye_shape,
-                        "size": np.asarray(eye.eye_size, dtype=float).tolist(),
-                        "wavelength_range": [
-                            float(item) for item in eye.wavelength_range
-                        ],
-                    }
-                    for eye in camera.eyes
-                ],
-                "screen": {
-                    "shape": camera.screen.screen_shape,
-                    "size": np.asarray(camera.screen.screen_size, dtype=float).tolist(),
-                    "pixel_shape": np.asarray(
-                        camera.screen.pixel_shape, dtype=int
-                    ).tolist(),
-                    "subpixel_resolution": int(camera.screen.subpixel_resolution),
-                },
-                "apertures": apertures,
-            }
-        )
+                "subpixel_resolution": int(camera.screen.subpixel_resolution),
+            },
+            "apertures": apertures,
+        }
+        orientation = getattr(camera, "_config_orientation", None)
+        if orientation is None:
+            camera_config["rotation_matrix"] = np.asarray(
+                camera.rotation_matrix,
+                dtype=float,
+            ).tolist()
+        else:
+            camera_config["orientation"] = _json_value(
+                orientation,
+                f"camera {key!r}.orientation",
+            )
+        cameras.append(camera_config)
 
     wall_paths = getattr(world, "_config_wall_paths", ())
     if len(wall_paths) != len(world.walls):
@@ -625,25 +836,7 @@ def _world_config_mapping(world: "World", target_path: Path | None) -> dict[str,
         "schema": WORLD_CONFIG_SCHEMA,
         "schema_version": WORLD_CONFIG_SCHEMA_VERSION,
         "units": dict(WORLD_CONFIG_UNITS),
-        "voxel": {
-            "axes": {
-                "x": np.asarray(voxel.x_axis, dtype=float).tolist(),
-                "y": np.asarray(voxel.y_axis, dtype=float).tolist(),
-                "z": np.asarray(voxel.z_axis, dtype=float).tolist(),
-            },
-            "ranges": [[float(lower), float(upper)] for lower, upper in voxel.ranges],
-            "shape": [int(item) for item in voxel.shape],
-            "coordinate": {
-                "type": voxel.coordinate_type,
-                "parameters": _json_value(
-                    voxel.coordinate_parameters, "voxel.coordinate.parameters"
-                ),
-                "rotation_matrix": np.asarray(
-                    voxel._rotation_matrix, dtype=float
-                ).tolist(),
-            },
-            "sub_voxel_resolution": [int(item) for item in voxel.res],
-        },
+        "voxel": voxel_config,
         "cameras": cameras,
         "walls": walls,
         "inside": inside,

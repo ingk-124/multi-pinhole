@@ -43,8 +43,8 @@ from .utils.my_stdio import my_print, my_tqdm
 from .voxel import Voxel
 
 # Increment when a serialized projection representation or its numerical
-# meaning becomes incompatible with an older cached matrix. Legacy pickles do
-# not have this attribute and are invalidated when loaded.
+# meaning becomes incompatible with an older cached matrix. Unversioned legacy
+# pickles are migrated only when their sparse-matrix shapes prove compatible.
 PROJECTION_CACHE_SCHEMA_VERSION = 3
 
 
@@ -649,6 +649,50 @@ class World:
         if cached_version != PROJECTION_CACHE_SCHEMA_VERSION:
             self._invalidate_projection_cache()
             self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
+
+    def _migrate_unversioned_projection_cache(self) -> None:
+        """Retain only structurally compatible matrices from legacy Worlds.
+
+        Old Worlds predate cache-version metadata. Their aggregated camera
+        matrices already use physical-pixel rows and can be retained when
+        their shape matches the current contract. Old per-Eye matrices with
+        detector-subpixel rows are binned into the current physical-pixel
+        representation using the Screen transform matrix.
+        """
+
+        legacy_projection = getattr(self, "_projection", {})
+        legacy_combined = getattr(self, "_P_matrix", {})
+        projection = {}
+        combined = {}
+        settings = {}
+        for key, camera in self._cameras.items():
+            expected_shape = (camera.screen.N_pixel, self.voxel.N)
+            eye_values = legacy_projection.get(key, [])
+            if not isinstance(eye_values, (list, tuple)):
+                eye_values = []
+            migrated_eyes = []
+            for index in range(len(camera.eyes)):
+                value = eye_values[index] if index < len(eye_values) else None
+                if sparse.issparse(value) and value.shape == (
+                    camera.screen.N_subpixel,
+                    self.voxel.N,
+                ):
+                    value = (camera.screen.transform_matrix @ value).tocsr()
+                elif not sparse.issparse(value) or value.shape != expected_shape:
+                    value = None
+                migrated_eyes.append(value)
+            projection[key] = migrated_eyes
+            candidate = legacy_combined.get(key)
+            combined[key] = (
+                candidate
+                if sparse.issparse(candidate) and candidate.shape == expected_shape
+                else None
+            )
+            settings[key] = [None] * len(camera.eyes)
+        self._projection = projection
+        self._P_matrix = combined
+        self._projection_settings = settings
+        self._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
 
     @inside_vertices.setter
     def inside_vertices(self, inside_vertices: np.ndarray) -> None:

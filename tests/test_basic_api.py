@@ -413,7 +413,7 @@ def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
 
 
 @pytest.mark.parametrize("legacy_version", [None, 0, 10_000])
-def test_loading_incompatible_projection_cache_invalidates_only_projection(
+def test_loading_legacy_projection_cache_migrates_by_version_and_shape(
     tmp_path, legacy_version
 ):
     world = World(cameras={"main": make_camera()}, verbose=0)
@@ -442,8 +442,18 @@ def test_loading_incompatible_projection_cache_invalidates_only_projection(
     loaded = World.load_world(path)
 
     np.testing.assert_array_equal(loaded.visible_voxels["main"], visible)
-    assert loaded.projection["main"] == [None]
-    assert loaded.P_matrix["main"] is None
+    if legacy_version is None:
+        assert loaded.projection["main"][0].shape == (
+            world.cameras["main"].screen.N_pixel,
+            world.voxel.N,
+        )
+        assert loaded.P_matrix["main"].shape == (
+            world.cameras["main"].screen.N_pixel,
+            world.voxel.N,
+        )
+    else:
+        assert loaded.projection["main"] == [None]
+        assert loaded.P_matrix["main"] is None
     assert loaded.projection_cache_schema_version == 3
 
 

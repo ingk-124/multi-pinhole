@@ -246,7 +246,9 @@ def load_world_archive(source: str | os.PathLike[str]) -> "World":
     if not isinstance(loaded, World):
         raise TypeError(f"{path}: serialized object is not a World")
 
-    if manifest_cache_version != PROJECTION_CACHE_SCHEMA_VERSION:
+    if manifest_cache_version is None:
+        loaded._migrate_unversioned_projection_cache()
+    elif manifest_cache_version != PROJECTION_CACHE_SCHEMA_VERSION:
         loaded._invalidate_projection_cache()
         loaded._projection_cache_schema_version = PROJECTION_CACHE_SCHEMA_VERSION
     else:

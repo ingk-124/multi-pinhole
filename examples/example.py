@@ -1,7 +1,7 @@
-import plotly.graph_objects as go
 from matplotlib import pyplot as plt
 
 from multi_pinhole import Aperture, Camera, Voxel, World
+from multi_pinhole.utils.plot import plot_voxel_slice, plot_voxel_volume
 
 if __name__ == "__main__":
     # Create objects
@@ -34,6 +34,8 @@ if __name__ == "__main__":
     x, y, z = voxel.gravity_center.T
     world.set_inside_vertices(lambda x, y, z: (x**2 + y**2 + z**2) <= 9**2)
 
+    import plotly.graph_objects as go
+
     fig = go.Figure()
     camera.draw_camera_orientation_plotly(fig, axis_length=50, show_fig=False)
     fig.show()
@@ -53,18 +55,22 @@ if __name__ == "__main__":
     fig.subplots_adjust(wspace=0.7)
     fig.show()
 
-    # Visualize results
-    fig = go.Figure()
-    fig.add_trace(
-        go.Volume(
-            x=x,
-            y=y,
-            z=z,
-            value=f,
-            opacity=0.1,
-            surface_count=15,
-            colorscale="Viridis",
-            name="Object",
-        )
+    # Visualize the same voxel-centered profile in 3D and as a center slice.
+    fig = plot_voxel_volume(
+        voxel,
+        f,
+        value_label="Emission",
+        opacity=0.1,
+        surface_count=15,
+        colorscale="Viridis",
+        name="Object",
     )
     fig.show()
+    plot_voxel_slice(
+        voxel,
+        f,
+        axis="z",
+        coordinate=0,
+        colorbar_label="Emission",
+    )
+    plt.show()

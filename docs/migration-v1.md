@@ -34,11 +34,8 @@ assert metadata["world_schema_version"] == 1
 assert metadata["projection_cache_schema_version"] == 3
 ```
 
-The loader resolves historical `multi_pinhole.core.*` class globals.
-Compatible schema-3 visibility and projection caches are preserved. A
-missing or incompatible projection cache schema preserves visibility where
-possible and clears projection only. Compare a representative
-`world.project(emission, key)` result before and after migration.
+Compare a representative `world.project(emission, key)` result before and
+after migration.
 
 Only load trusted legacy files: direct dill and the archive payload can
 execute arbitrary code.
@@ -46,10 +43,11 @@ execute arbitrary code.
 ## Choosing config or archive
 
 Use JSON config for reviewable scene construction and `.mpw` for complete
-Python state plus caches. Config supports analytic Apertures, path-backed STL
-walls, and the built-in `all`, `box`, and `sphere` inside masks. It rejects
-arbitrary callables, standalone inside arrays, STL Apertures, and wall meshes
-without source provenance rather than silently losing them.
+Python state plus caches. Config supports analytic and path-backed STL
+Apertures, path-backed STL walls, matrix or point-based camera orientation,
+and the built-in `all`, `box`, `sphere`, and `torus` inside masks. It rejects
+arbitrary callables, standalone inside arrays, and mesh objects without source
+provenance rather than silently losing them.
 
 No optics modules moved for 1.0. Projection formulae, processing order,
 dtypes, tolerances, and projection cache schema 3 are unchanged.

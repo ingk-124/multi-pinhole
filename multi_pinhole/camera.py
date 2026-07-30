@@ -104,6 +104,7 @@ class Camera:
             if rotation_matrix is None
             else np.array(rotation_matrix, dtype=float, copy=True)
         )
+        self._config_orientation = None
 
     @classmethod
     def single_pinhole(
@@ -405,6 +406,7 @@ class Camera:
         if camera_position.shape != (3,):
             raise ValueError("camera_position must be a 3D vector")
         self._camera_position = camera_position
+        self._config_orientation = None
         return self
 
     def translate_world(self, offset: Vector3DLike) -> "Camera":
@@ -432,6 +434,7 @@ class Camera:
         if offset.shape != (3,):
             raise ValueError("offset must be a 3D vector")
         self._camera_position = self._camera_position + offset
+        self._config_orientation = None
         return self
 
     def translate_camera(self, offset: Vector3DLike) -> "Camera":
@@ -462,6 +465,7 @@ class Camera:
         if offset.shape != (3,):
             raise ValueError("offset must be a 3D vector")
         self._camera_position = self._camera_position + self.rotation_matrix.T @ offset
+        self._config_orientation = None
         return self
 
     def set_rotation_euler(
@@ -487,6 +491,7 @@ class Camera:
         self._rotation_matrix = Rotation.from_euler(
             order, angle, degrees=degrees
         ).as_matrix()
+        self._config_orientation = None
         return self
 
     def set_rotation_matrix(self, rotation_matrix: MatrixLike) -> "Camera":
@@ -519,6 +524,7 @@ class Camera:
         if not np.isclose(np.linalg.det(matrix), 1.0, rtol=0.0, atol=1e-10):
             raise ValueError("rotation_matrix must have determinant +1")
         self._rotation_matrix = matrix
+        self._config_orientation = None
         return self
 
     def set_orientation(

@@ -1,5 +1,10 @@
 # World archive and serialization contract
 
+> **Level 3 — reference.** Ordinary users only need this rule: keep editable,
+> portable scene inputs in JSON and save expensive calculated caches in a
+> trusted `.mpw` archive. The details below are for compatibility, recovery,
+> and security review.
+
 Use `world.save("scene.mpw")` for a complete checkpoint and
 `World.load("scene.mpw")` to restore it. `World.inspect_archive(path)` reads
 metadata without unpickling the World.

@@ -1,9 +1,15 @@
-# Core Module Reference
+# Pinhole optics and detector model
 
-This document explains the optics classes exported by top-level `multi_pinhole` and, more
-importantly, *how* they compute what they compute: the coordinate-frame
-conventions, the pinhole projection formula, the rasterization algorithm that
-turns a ray into subpixel weights, and the aperture-occlusion check. For the
+> **Level 2 — scientific model.** Normal simulations do not require this
+> page; follow the [overview](overview.md) instead. Read the coordinate and
+> optics sections to interpret results. The final implementation section is
+> for numerical review and library development and may be skipped.
+
+This page explains the optics classes exported by top-level `multi_pinhole`
+and *why* they compute what they compute: coordinate conventions, pinhole
+projection, finite-eye footprints, detector integration, and aperture
+occlusion.
+
 Implementations are organized by responsibility: `multi_pinhole.eye` owns
 `Eye` and ray generation, `multi_pinhole.aperture` owns aperture/STL geometry,
 `multi_pinhole.screen` owns detector overlap, etendue quadrature, and
@@ -14,7 +20,16 @@ facade; both the old imports and the direct module imports return the same
 class objects. For the full API surface, read the class docstrings —
 this document focuses on the underlying process.
 
-## The four coordinate systems
+## Reading map
+
+| Need | Read |
+|---|---|
+| Interpret `XY`, `UV`, or image orientation | Coordinate frames |
+| Check the pinhole equation or physical weighting | Eye and Screen |
+| Understand aperture geometry | Aperture |
+| Audit sparse rasterization or extend the code | Implementation guide |
+
+## Coordinate frames users need
 
 The core optics modules move points between four coordinate systems,
 laid out in a comment block at the top of the module.
@@ -68,7 +83,9 @@ Two eye types change how the pinhole frame sits relative to the screen:
 This is enforced in `Eye.__init__`, which also normalizes `eye_size` into a
 `(height, width)` pair and validates `eye_shape`.
 
-## Rays
+## Scientific optics model
+
+### Rays
 
 `Rays` is an immutable dataclass, defined in `multi_pinhole.rays` and
 re-exported through `multi_pinhole.core`/`multi_pinhole`, that carries the
@@ -97,7 +114,7 @@ A `Rays` instance sits between `Eye.calc_rays` (which produces it) and the
 `Screen` rasterizers (which consume it) — it is pure data, with no reference
 back to the `Eye` or `Camera` that created it.
 
-## Eye: the pinhole projection
+### Eye: the pinhole projection
 
 An `Eye` converts a 3D point already expressed in camera coordinates into a
 2D landing spot on the screen. `Eye.calc_rays` does this in four steps
@@ -137,7 +154,7 @@ An `Eye` converts a 3D point already expressed in camera coordinates into a
 `Eye.camera2eye` is the vectorized building block for step 1; everything
 past that is inline in `calc_rays`.
 
-## Aperture: an occluding shape
+### Aperture: an occluding shape
 
 `Aperture` describes the physical opening that limits light reaching an eye.
 It accepts either an analytic shape (circle, ellipse, rectangle) or an
@@ -158,7 +175,7 @@ see `docs/utilities.md`) between the eye and each candidate point. A point
 survives only if the segment from the eye to that point does *not* cross
 the mesh.
 
-## Screen: pixel/subpixel geometry and rasterization
+### Screen: pixel/subpixel geometry and detector integration
 
 The `Screen` represents the detector plane. `Screen.__init__` validates the
 physical `screen_shape`/`screen_size`, lays out a `pixel_shape = (U_p, V_p)`
@@ -175,7 +192,7 @@ Python loop.
 (no masking for a rectangular screen) so they can be zeroed in displayed
 images.
 
-### Cosine falloff and etendue weighting
+#### Cosine falloff and etendue weighting
 
 `Screen.cosine(eye)` computes, for every *subpixel*, the cosine of the angle
 between the eye's optical axis and the line from the eye to that subpixel:
@@ -185,6 +202,25 @@ identity). `etendue_per_subpixel` retains
 the corresponding small-aperture `A_subpixel · cos⁴(θ) / (4π)` diagnostic,
 but the production rasterizer no longer reuses that detector-only value: a
 finite Eye requires source- and Eye-position-dependent local ray geometry.
+
+#### Detector quadrature and its accuracy boundary
+
+Ellipse–cell overlap **area** is analytic, so a small spot does not vanish
+merely because it misses a cell center. The local density is nevertheless
+integrated numerically: 2×2 Gauss for rectangles, radial 2 × angular 8 for an
+ellipse contained in one cell, and 4×4 masked midpoint samples for clipped
+ellipse boundary cells. These local averages have no strict error bound.
+Finite-eye calculations include the detector-to-eye Jacobian and a local
+solid-angle normalization density. A spot clipped by the screen loses signal.
+
+This is the scientific accuracy contract. The algorithmic details below are
+only needed for audit or development.
+
+## Implementation guide
+
+> **Safe to skip:** the remaining sections explain sparse buffers, class
+> hand-offs, and a ray-by-ray execution trace. They do not add steps required
+> to run a simulation.
 
 ### `ray2image_grid`: turning a ray bundle into a sparse image
 
@@ -242,7 +278,7 @@ out-of-range hits), `subpixel_to_pixel` (sparse downsampling, described
 above), and `show_image` (Matplotlib display of a pixel or subpixel
 image).
 
-## Camera: tying eyes, apertures, and the screen together
+### Camera: tying eyes, apertures, and the screen together
 
 `Camera` groups one or more `Eye` instances (all sharing the same
 `eye_type`), a list of `Aperture` objects, and a single `Screen`, and
@@ -303,7 +339,7 @@ cannot be edited externally. To change a registered setup, construct a new
 camera and pass it to `World.change_camera`. A frozen camera may safely be
 shared by multiple worlds, and removing it from a world does not thaw it.
 
-### `calc_image_vec`: world points → sparse screen image, step by step
+#### `calc_image_vec`: world points → sparse screen image, step by step
 
 `Camera.calc_image_vec(eye_num, points, ...)` is the top-level entry point
 that a `World` calls (once per camera eye) to project a batch of world
@@ -328,7 +364,7 @@ integration, per-voxel) intensity vector is what produces an actual image;
 `multi_pinhole.world.World` handles that integration step (see
 `docs/world.md`).
 
-### Worked example: tracing one ray end to end
+#### Worked example: tracing one ray end to end
 
 Using a pinhole eye built with `position=(5, 0)`, `focal_length=20` (so
 `eye.position = (5, 0, 20)`), mounted on a camera with
@@ -352,7 +388,7 @@ Using a pinhole eye built with `position=(5, 0)`, `focal_length=20` (so
    for a circular eye, scaled by the magnification from step 3), weighting
    each hit subpixel by the etendue factors described above.
 
-### Visualization helpers
+#### Visualization helpers
 
 `draw_optical_system`, `draw_camera_orientation_plotly`, and
 `draw_camera_orientation` render the eyes, apertures, and screen in

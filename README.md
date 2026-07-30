@@ -5,24 +5,22 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 ## Contents
 - `multi_pinhole/`: Python package to simulate multi-pinhole imaging.
 - `multi_pinhole/utils/`: Package-internal utility functions for data processing and visualization.
-- `docs/`: Documentation files and user guides.
+- [`docs/`](docs/README.md): English documentation organized by user level.
+- [`docs/ja/`](docs/ja/README.md): 日本語ドキュメント入口。
 - `docs/ja/development-roadmap.md`: Project-wide API, compatibility, and release roadmap.
 - `docs/ja/projection-roadmap.md`: Projection-matrix validation and improvement backlog.
 - `docs/ja/projection-compression-future.md`: Deferred QA/PSF compression design notes.
 - `examples/`: Example and analysis scripts demonstrating how to use the package.
 - `benchmarks/`: Reproducible performance and numerical-accuracy experiments.
 
-## Architecture and compatibility
+## Documentation
 
-The public classes remain available from `multi_pinhole`. Optics
-implementations live in `eye`, `aperture`, `screen`, `camera`, and `rays`;
-`multi_pinhole.core` remains a compatibility facade exposing the same class
-objects for legacy imports and serialized globals; it is not a public
-namespace for new code. `World` remains in
-`multi_pinhole.world` and owns public orchestration, scene state,
-serialization, and caches. Private `_visibility` and `_projection_matrix`
-modules contain calculations that can return masks or sparse matrices without
-owning those caches. Projection cache schema 3 remains compatible with 0.7.3.
+Start with the [English documentation map](docs/README.md) or
+[日本語ドキュメント](docs/ja/README.md). The guides are divided into ordinary
+use, scientific-model interpretation, and implementation/reference material.
+Coordinate conventions, reusable profiles, center interpolation, and R–Z
+sections are covered together in
+[Coordinates, profiles, and interpolation](docs/coordinates-profiles.md).
 
 ## Installation
 To install the package, clone the repository and run:
@@ -93,21 +91,12 @@ config = {
     "schema_version": 1,
     "units": {"length": "mm", "angle": "rad"},
     "voxel": {
-        "axes": {
-            "x": [-1.0, 0.0, 1.0],
-            "y": [-1.0, 1.0],
-            "z": [10.0, 11.0],
-        },
+        "type": "uniform",
         "ranges": [[-1.0, 1.0], [-1.0, 1.0], [10.0, 11.0]],
         "shape": [2, 1, 1],
         "coordinate": {
             "type": "cartesian",
             "parameters": {"width": 1.0, "depth": 1.0, "height": 1.0},
-            "rotation_matrix": [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
         },
         "sub_voxel_resolution": [1, 1, 1],
     },
@@ -125,6 +114,10 @@ Use `World.from_config("scene.json")` and `world.to_config("scene.json")`
 for files. Relative STL paths are resolved from the config file directory.
 Config files never contain visibility or projection caches. See the
 [config schema reference](docs/config.md).
+For a step-by-step explanation, see
+[Building a World JSON configuration](docs/world-config-guide.md). Voxel
+volume rendering, physical slices, and detector-image display are covered in
+the [visualization guide](docs/visualization.md).
 
 For complete checkpoints, use `world.save("checkpoint.mpw")`,
 `World.inspect_archive(...)`, and `World.load(...)`. Archives contain a
@@ -198,3 +191,17 @@ shape = profiles.kinked_profile(
     center_angle_xy=center_angle_xy,
 )
 ```
+
+## Architecture and compatibility
+
+> This section is for maintainers and users loading older serialized Worlds.
+
+The public classes remain available from `multi_pinhole`. Optics
+implementations live in `eye`, `aperture`, `screen`, `camera`, and `rays`;
+`multi_pinhole.core` remains a compatibility facade exposing the same class
+objects for legacy imports and serialized globals; it is not a public
+namespace for new code. `World` remains in `multi_pinhole.world` and owns
+public orchestration, scene state, serialization, and caches. Private
+`_visibility` and `_projection_matrix` modules contain calculations that can
+return masks or sparse matrices without owning those caches. Projection cache
+schema 3 remains compatible with 0.7.3.

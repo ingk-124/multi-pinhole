@@ -27,7 +27,6 @@ from scipy import sparse
 from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation
 from stl import mesh
-from tqdm.auto import trange
 
 from .my_stdio import my_print, my_range
 
@@ -1096,91 +1095,6 @@ def check_visible_test() -> go.Figure:
     )
     fig.show()
     return fig
-
-
-def check_visible_old(
-    mesh_obj: mesh.Mesh,
-    start: np.ndarray,
-    grid_points: np.ndarray,
-    verbose: int = 0,
-    behind_start_included: bool = False,
-) -> np.ndarray:
-    """Legacy visibility algorithm retained for regression testing.
-
-    Parameters
-    ----------
-    mesh_obj : mesh.Mesh
-        STL mesh containing ``M`` triangles.
-    start : np.ndarray, shape (3,)
-        Viewpoint or ray origin.
-    grid_points : np.ndarray, shape (N, 3)
-        Locations to test for visibility.
-    verbose : int, optional
-        Verbosity level forwarded to progress utilities.
-    behind_start_included : bool, optional
-        When ``True`` any points located behind ``start`` are treated as occluded.
-
-    Returns
-    -------
-    np.ndarray, shape (N,), dtype=bool
-        Boolean visibility mask comparable to :func:`check_visible`.
-    """
-    if verbose > 0:
-        _trange = trange
-    else:
-        _trange = range
-    N = grid_points.shape[0]
-    M = mesh_obj.vectors.shape[0]
-    p = grid_points - start  # (N, 3)
-    # calculate bounding sphere
-    r_grid = np.linalg.norm(p, axis=-1)  # (N, )
-    r_mesh_max = np.linalg.norm(mesh_obj.vectors - start, axis=-1).max(
-        axis=-1, initial=0
-    )  # (M, 3, 3) -> (M, 3)
-
-    my_print(f"{N=}, {M=}", show=verbose > 0)
-
-    # inside_cone = delta_cone(mesh_obj, start, grid_points)  # list of sparse.csr_matrix of shape (N, 1) (len = M)
-    n_oab, n_obc, n_oca, zero_volume = delta_cone(mesh_obj, start)
-    my_print("delta_cone done", show=verbose > 0)
-
-    # check if the grid is farther than the bounding sphere for each mesh
-    shadow = np.zeros(N, dtype=bool)  # (N, )
-    for m in _trange(M):
-        shadow += (
-            (p @ n_oab[m] >= 0)
-            & (p @ n_obc[m] >= 0)
-            & (p @ n_oca[m] >= 0)
-            & zero_volume[m]
-            & (r_grid > r_mesh_max[m])
-        )
-    my_print("shadow_check done", show=verbose > 0)
-
-    time.sleep(0.05)
-    intersection = shadow.copy()  # (N, )
-    # grid points which we can see from the start point
-    for m in _trange(M):
-        # check if the grid is not in the shadow of any mesh and inside the bounding sphere of m-th mesh
-        # not in shadow of any mesh & inside the bounding sphere of m-th mesh -> True
-        check_list = (
-            (p @ n_oab[m] >= 0)
-            & (p @ n_obc[m] >= 0)
-            & (p @ n_oca[m] >= 0)
-            & zero_volume[m]
-            & ~shadow
-        )
-        # If any grid is inside the bounding sphere of m-th mesh, check intersection
-        # if np.any(check_list):
-        intersection[check_list] += check_intersection(
-            mesh_obj.vectors[m], start, grid_points[check_list], behind_start_included
-        )
-    time.sleep(0.05)
-    my_print("intersection check done", show=verbose > 0)
-
-    # (True if the grid points are not visible from the start point)
-    visible = np.logical_not(intersection)  # (N, )
-
-    return visible
 
 
 # MARK: STL visualization utilities

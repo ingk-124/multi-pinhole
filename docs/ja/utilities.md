@@ -1,20 +1,39 @@
 # ユーティリティ概要
 
+> **Level 3 — 内部実装reference。** 利用者向けplot例は
+> [可視化](visualization.md)に集約しています。このページは低水準helperと
+> STL交差判定の実装を説明するもので、通常の投影計算には不要です。
+
 `multi_pinhole.utils` パッケージ（`from multi_pinhole.utils import ...` や `from multi_pinhole.utils import stl_utils` のようにインポートします——無関係なトップレベルの `utils` パッケージとの衝突を避けるために `multi_pinhole` の下に配置されています）は、コアのカメラロジックを煩雑にすることなくシミュレーションを支えるヘルパー関数を集めたものです。中でも計算的にもっとも興味深いのは STL ジオメトリのツールキットで、`multi_pinhole.core` と `multi_pinhole.world` の両方で使われる実際のレイ・メッシュ遮蔽判定アルゴリズムを実装しています。本ドキュメントではまずこのアルゴリズムを詳しく説明し、その後により単純な、コレクション操作・ロギングのヘルパーを説明します。
 
-## コレクションヘルパー
+## 公開plot entry point
+
+`multi_pinhole.utils.plot`はVoxelを認識する可視化helperを提供します。
+
+- `plot_voxel_volume(voxel, emission)`：対話的なPlotly volume
+- `plot_voxel_slice(voxel, emission)`：物理座標に沿うMatplotlib断面
+- `volume_rendering(values, points)`：低水準の座標配列API
+
+使用例とarray shapeの規則は重複させず、
+[可視化ガイド](visualization.md)を正本とします。
+
+> **通常利用はここまでで十分です。** 以下はpackage内部とgeometry開発者向けです。
+
+## 内部helper
+
+### collection helper
 
 `multi_pinhole.utils.type_check_and_list` は、オプションのコンストラクタ引数を、要素の型を検証しながらリストへ正規化します。`None` が渡された場合のデフォルト値も指定でき、world や camera のコンストラクタが単一オブジェクトとリストを同じように扱えるようにしています。
 
-## コンソールラッパー
+### console wrapper
 
 `multi_pinhole.utils.my_stdio` は、共通のイテレーションプリミティブに、任意で進捗表示を付加するラッパーです。`my_print` は `show` フラグでログメッセージの出力を制御し、`my_range` と `my_tqdm` は詳細出力が有効なときに `tqdm` 版へ委譲し、`my_zip` は `tzip` によって進捗バー付きでイテラブルをペアリングします。これらのアダプタにより、時間のかかるジオメトリ処理ルーチンは、呼び出し側のコードに `tqdm` への直接的な依存を持ち込まずに進捗表示を提供できます。
 
-## STL ジオメトリツールキット
+### STL geometry toolkit
 
 `multi_pinhole.utils.stl_utils` は、aperture やワールドの壁で使われる三角形メッシュの構築・解析を担います。
 
-### aperture メッシュの構築
+#### aperture meshの構築
 
 `shape_check(shape, size)` は、形状キーワード（`circle`、`ellipse`、`rectangle`、`square`）とそのサイズ指定を、正規化された `(shape, (height, width))` のペアに変換し、スカラー1つが渡された場合は両軸に展開します。続いて `generate_aperture_stl(shape, size, resolution, max_size)` が `z = 0` 平面上に実際のメッシュを構築します。
 
@@ -24,7 +43,7 @@
 
 `rotate_model` と `copy_model` は、元のメッシュを変更せずに複製し、平行移動やオイラー角回転を適用します。
 
-### 可視性／遮蔽判定
+#### visibility／occlusion判定
 
 あるメッシュが、eye から候補点までの視線を遮っているかどうかを判定するのは、このパッケージ内でもっとも性能に敏感な計算です（すべてのボクセル頂点に対して実行され、さらに部分的に可視なボクセルのすべてのサブボクセルサンプルに対しても実行されます。`docs/world.md` を参照）。これは、すべての三角形に対してすべての点に対する厳密なレイ・三角形交差判定を実行することを避けるため、2段階のテストとして実装されています。
 
@@ -35,9 +54,7 @@
 
 **`check_visible(mesh_obj, start, grid_points, ...)`** はこの2段階を組み合わせます。まずメッシュ全体に対してコーンによる事前フィルタを一度に実行し、候補点を1つでもコーン内に持つ三角形についてのみ、その候補点だけを対象に `check_intersection` を実行して、**いずれか**の三角形と交差する点を遮蔽（`visible=False`）としてマークします。どの三角形のコーンにも一度も入らなかった点は、厳密な交差判定を一度も実行することなく可視のままです。これは `Camera.calc_image_vec`（aperture ごとの遮蔽判定。`docs/core.md`）と `World.find_visible_points`（aperture・壁ごとの遮蔽判定。`docs/world.md`）の両方が呼び出しているものです。
 
-より古く単純な実装（`check_visible_old`）もモジュール内に残っていますが、現在のパイプラインでは使われていません。コーンによる事前フィルタなしで同じ Möller–Trumbore テストを実行するものであり、性能上の理由で置き換えられたと考えられますが、その経緯についてモジュール自体には明記されていません。
-
-### 可視化とパラメトリックサーフェス
+#### mesh可視化とparametric surface
 
 `show_stl`／`plotly_show_stl` はデバッグ用にメッシュを Matplotlib／Plotly で描画し、`torus`／`sphere`／`meshed_surface` は壁のジオメトリとして使える単純なパラメトリックサーフェス生成関数です。
 
