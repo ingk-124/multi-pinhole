@@ -15,14 +15,26 @@ from multi_pinhole.utils import stl_utils
 
 def make_camera():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     aperture = Aperture(shape="circle", size=1.0, position=(0.0, 0.0, 5.0))
-    return Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -10.0))
+    return Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -10.0)
+    )
 
 
 def test_eye_screen_voxel_world_initialization():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     voxel = Voxel(
         x_axis=np.linspace(-1.0, 1.0, 3),
         y_axis=np.linspace(-1.0, 1.0, 3),
@@ -42,8 +54,10 @@ def test_world_project_and_backproject_wrap_cached_sparse_matrices():
     world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
     eye_projection = sparse.csr_matrix(
         np.arange(camera.screen.N_pixel * voxel.N, dtype=float).reshape(
-            camera.screen.N_pixel, voxel.N,
-        ) / 100.0,
+            camera.screen.N_pixel,
+            voxel.N,
+        )
+        / 100.0,
     )
     world._projection["main"][0] = eye_projection
     world._P_matrix["main"] = eye_projection.copy()
@@ -52,23 +66,26 @@ def test_world_project_and_backproject_wrap_cached_sparse_matrices():
     image = np.linspace(-1.0, 1.0, camera.screen.N_pixel)
 
     np.testing.assert_allclose(
-        world.project(emission, camera_idx="main"), eye_projection @ emission,
+        world.project(emission, camera_idx="main"),
+        eye_projection @ emission,
     )
     np.testing.assert_allclose(
         world.project(emission, camera_idx="main", eye_idx=0),
         eye_projection @ emission,
     )
     np.testing.assert_allclose(
-        world.backproject(image, camera_idx="main"), eye_projection.T @ image,
+        world.backproject(image, camera_idx="main"),
+        eye_projection.T @ image,
     )
     np.testing.assert_allclose(
         np.dot(world.project(emission, "main"), image),
         np.dot(emission, world.backproject(image, "main")),
-        rtol=1e-14, atol=1e-14,
+        rtol=1e-14,
+        atol=1e-14,
     )
 
     emissions = np.column_stack((emission, 2 * emission, -emission))
-    images = np.column_stack((image, image ** 2, -image))
+    images = np.column_stack((image, image**2, -image))
     projected = world.project(emissions, camera_idx="main")
     backprojected = world.backproject(images, camera_idx="main")
 
@@ -79,7 +96,8 @@ def test_world_project_and_backproject_wrap_cached_sparse_matrices():
     np.testing.assert_allclose(
         np.sum(projected * images),
         np.sum(emissions * backprojected),
-        rtol=1e-14, atol=1e-14,
+        rtol=1e-14,
+        atol=1e-14,
     )
 
 
@@ -102,13 +120,15 @@ def test_world_project_and_backproject_validate_cache_selection_and_shapes():
         world.project(np.ones(voxel.N), camera_idx="main", eye_idx=1)
 
     world._P_matrix["main"] = sparse.csr_matrix(
-        (camera.screen.N_pixel, voxel.N), dtype=float,
+        (camera.screen.N_pixel, voxel.N),
+        dtype=float,
     )
     with pytest.raises(ValueError, match="image must have shape"):
         world.backproject(np.ones(camera.screen.N_pixel + 1), camera_idx="main")
     with pytest.raises(ValueError, match="image must have shape"):
         world.backproject(
-            np.ones((camera.screen.N_pixel, 1, 1)), camera_idx="main",
+            np.ones((camera.screen.N_pixel, 1, 1)),
+            camera_idx="main",
         )
 
 
@@ -193,11 +213,17 @@ def test_set_orientation_from_look_and_right_builds_world_to_camera_matrix():
 def test_set_orientation_from_look_and_down_builds_same_frame():
     camera = make_camera().set_orientation(look=[0.0, 1.0, 0.0], down=[0.0, 0.0, -1.0])
 
-    np.testing.assert_allclose(camera.rotation_matrix, np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-    ]), atol=1e-12)
+    np.testing.assert_allclose(
+        camera.rotation_matrix,
+        np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0],
+            ]
+        ),
+        atol=1e-12,
+    )
 
 
 def test_set_orientation_rejects_parallel_axes():
@@ -349,16 +375,25 @@ def test_world_camera_rekey_preserves_array_caches():
 
 def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
     voxel = Voxel(
-        x_axis=np.array([0.0, 1.0]), y_axis=np.array([0.0, 1.0]),
+        x_axis=np.array([0.0, 1.0]),
+        y_axis=np.array([0.0, 1.0]),
         z_axis=np.array([0.0, 1.0]),
     )
     world = World(voxel=voxel, cameras={"main": make_camera()}, verbose=0)
-    eye_projection = sparse.csr_matrix(([2.0], ([0], [0])), shape=(
-        world.cameras["main"].screen.N_pixel, world.voxel.N,
-    ))
-    pixel_projection = sparse.csr_matrix(([3.0], ([0], [0])), shape=(
-        world.cameras["main"].screen.N_pixel, world.voxel.N,
-    ))
+    eye_projection = sparse.csr_matrix(
+        ([2.0], ([0], [0])),
+        shape=(
+            world.cameras["main"].screen.N_pixel,
+            world.voxel.N,
+        ),
+    )
+    pixel_projection = sparse.csr_matrix(
+        ([3.0], ([0], [0])),
+        shape=(
+            world.cameras["main"].screen.N_pixel,
+            world.voxel.N,
+        ),
+    )
     world._projection["main"][0] = eye_projection
     world._P_matrix["main"] = pixel_projection
     path = tmp_path / "current-world.pkl"
@@ -366,23 +401,36 @@ def test_world_roundtrip_preserves_current_projection_cache_schema(tmp_path):
     world.save_world(path)
     loaded = World.load_world(path)
 
-    assert loaded.projection_cache_schema_version == world.projection_cache_schema_version
-    np.testing.assert_allclose(loaded.projection["main"][0].toarray(), eye_projection.toarray())
-    np.testing.assert_allclose(loaded.P_matrix["main"].toarray(), pixel_projection.toarray())
+    assert (
+        loaded.projection_cache_schema_version == world.projection_cache_schema_version
+    )
+    np.testing.assert_allclose(
+        loaded.projection["main"][0].toarray(), eye_projection.toarray()
+    )
+    np.testing.assert_allclose(
+        loaded.P_matrix["main"].toarray(), pixel_projection.toarray()
+    )
 
 
 @pytest.mark.parametrize("legacy_version", [None, 0, 10_000])
 def test_loading_incompatible_projection_cache_invalidates_only_projection(
-        tmp_path, legacy_version):
+    tmp_path, legacy_version
+):
     world = World(cameras={"main": make_camera()}, verbose=0)
     visible = np.ones((1, world.voxel.N), dtype=np.int8)
     world._visible_voxels["main"] = visible
-    world._projection["main"][0] = sparse.csr_matrix((
-        world.cameras["main"].screen.N_subpixel, world.voxel.N,
-    ))
-    world._P_matrix["main"] = sparse.csr_matrix((
-        world.cameras["main"].screen.N_pixel, world.voxel.N,
-    ))
+    world._projection["main"][0] = sparse.csr_matrix(
+        (
+            world.cameras["main"].screen.N_subpixel,
+            world.voxel.N,
+        )
+    )
+    world._P_matrix["main"] = sparse.csr_matrix(
+        (
+            world.cameras["main"].screen.N_pixel,
+            world.voxel.N,
+        )
+    )
     if legacy_version is None:
         del world._projection_cache_schema_version
     else:
@@ -450,18 +498,26 @@ def test_world_estimate_source_resolution_is_batched_and_nonmutating():
     selected = np.array([0, 3, 8, 17, 31])
 
     batched = world.estimate_source_resolution(
-        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=2,
+        "main",
+        0,
+        selected,
+        max_resolution=(2, 3, 4),
+        batch_size=2,
     )
     single_batch = world.estimate_source_resolution(
-        "main", 0, selected, max_resolution=(2, 3, 4), batch_size=100,
+        "main",
+        0,
+        selected,
+        max_resolution=(2, 3, 4),
+        batch_size=100,
     )
 
     np.testing.assert_array_equal(batched.resolution, single_batch.resolution)
     np.testing.assert_allclose(batched.ratio, single_batch.ratio)
-    np.testing.assert_allclose(batched.projected_diameter,
-                               single_batch.projected_diameter)
-    np.testing.assert_array_equal(batched.point_source,
-                                  single_batch.point_source)
+    np.testing.assert_allclose(
+        batched.projected_diameter, single_batch.projected_diameter
+    )
+    np.testing.assert_array_equal(batched.point_source, single_batch.point_source)
     np.testing.assert_array_equal(batched.capped, single_batch.capped)
     assert batched.resolution.shape == (selected.size, 3)
     assert world.projection["main"] == [None]
@@ -477,12 +533,13 @@ def test_world_estimate_source_resolution_can_use_pixel_pitch():
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
 
-    pixel = world.estimate_source_resolution(0, 0, detector_grid="pixel",
-                                             max_resolution=8)
-    subpixel = world.estimate_source_resolution(0, 0, detector_grid="subpixel",
-                                                max_resolution=8)
-    psf = world.estimate_source_resolution(0, 0, detector_grid="psf",
-                                           max_resolution=8)
+    pixel = world.estimate_source_resolution(
+        0, 0, detector_grid="pixel", max_resolution=8
+    )
+    subpixel = world.estimate_source_resolution(
+        0, 0, detector_grid="subpixel", max_resolution=8
+    )
+    psf = world.estimate_source_resolution(0, 0, detector_grid="psf", max_resolution=8)
 
     assert np.all(subpixel.resolution >= pixel.resolution)
     assert np.all(subpixel.resolution >= psf.resolution)
@@ -492,10 +549,15 @@ def test_world_estimate_source_resolution_can_use_pixel_pitch():
 
 def test_projection_preflight_counts_fixed_work_without_building_projection():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=2)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=2,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-1.0, 1.0), (-0.5, 0.5), (30.0, 31.0)),
         shape=(2, 1, 1),
@@ -522,10 +584,15 @@ def test_projection_preflight_counts_fixed_work_without_building_projection():
 
 def test_projection_build_reuses_preflight_vertex_visibility(monkeypatch):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(4, 4), subpixel_resolution=1)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
         shape=(1, 1, 1),
@@ -545,10 +612,15 @@ def test_projection_build_reuses_preflight_vertex_visibility(monkeypatch):
 
 def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=2)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=2,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
         shape=(1, 1, 1),
@@ -556,11 +628,15 @@ def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
     world = World(voxel=voxel, cameras=[camera], verbose=0)
     world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
     expected = world.estimate_source_resolution(
-        0, 0, max_resolution=None,
+        0,
+        0,
+        max_resolution=None,
     ).resolution[0]
 
     ideal_report = world.preflight_projection(
-        res=None, res_mode="ideal", partial_res=1,
+        res=None,
+        res_mode="ideal",
+        partial_res=1,
     )
     ideal_row = ideal_report.eyes[0]
     expected_tuple = tuple(int(item) for item in expected)
@@ -570,7 +646,8 @@ def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
     assert ideal_row.capped_axes == 0
 
     capped_report = world.preflight_projection(
-        res=2, res_mode="auto",
+        res=2,
+        res_mode="auto",
         point_source_threshold=1e-12,
     )
     capped_row = capped_report.eyes[0]
@@ -579,7 +656,8 @@ def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
     assert capped_row.capped_axes == 3
 
     axis_capped = world.preflight_projection(
-        res=(1, 2, 3), res_mode="auto",
+        res=(1, 2, 3),
+        res_mode="auto",
         point_source_threshold=1e-12,
     ).eyes[0]
     assert axis_capped.full_resolution_buckets == (((1, 2, 3), 1),)
@@ -588,10 +666,15 @@ def test_projection_preflight_reports_adaptive_ideal_and_ceiling():
 
 def test_projection_preflight_bounds_partial_voxel_work_before_masking():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=1)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel(
         x_axis=np.array([-0.1, 0.1]),
         y_axis=np.array([-0.1, 0.1]),
@@ -601,7 +684,8 @@ def test_projection_preflight_bounds_partial_voxel_work_before_masking():
     world.set_inside_vertices(lambda x, y, z: x >= 0.0)
 
     report = world.preflight_projection(
-        res=None, partial_res=(2, 3, 4),
+        res=None,
+        partial_res=(2, 3, 4),
         res_mode="ideal",
     )
     row = report.eyes[0]
@@ -615,12 +699,16 @@ def test_projection_preflight_bounds_partial_voxel_work_before_masking():
 
 def test_auto_resolution_matches_fixed_endpoint_resolutions():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=2)
-    aperture = Aperture(shape="circle", size=50.0,
-                        position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
-                    camera_position=(0.0, 0.0, -20.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=2,
+    )
+    aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-1.0, 1.0), (-1.0, 1.0), (20.0, 24.0)),
         shape=(2, 2, 2),
@@ -631,30 +719,45 @@ def test_auto_resolution_matches_fixed_endpoint_resolutions():
     world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True)
     fixed_one = world.P_matrix[0].copy()
     world.set_projection_matrix(
-        res=2, verbose=0, parallel=1, force=True,
-        res_mode="auto", point_source_threshold=1e6,
+        res=2,
+        verbose=0,
+        parallel=1,
+        force=True,
+        res_mode="auto",
+        point_source_threshold=1e6,
     )
     adaptive_one = world.P_matrix[0].copy()
-    np.testing.assert_allclose(adaptive_one.toarray(), fixed_one.toarray(),
-                               rtol=1e-13, atol=1e-15)
+    np.testing.assert_allclose(
+        adaptive_one.toarray(), fixed_one.toarray(), rtol=1e-13, atol=1e-15
+    )
 
     world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
     fixed_two = world.P_matrix[0].copy()
     world.set_projection_matrix(
-        res=2, verbose=0, parallel=1, force=True,
-        res_mode="auto", point_source_threshold=1e-12,
+        res=2,
+        verbose=0,
+        parallel=1,
+        force=True,
+        res_mode="auto",
+        point_source_threshold=1e-12,
     )
     adaptive_two = world.P_matrix[0].copy()
-    np.testing.assert_allclose(adaptive_two.toarray(), fixed_two.toarray(),
-                               rtol=1e-13, atol=1e-15)
+    np.testing.assert_allclose(
+        adaptive_two.toarray(), fixed_two.toarray(), rtol=1e-13, atol=1e-15
+    )
 
 
 def test_projection_cache_tracks_resolution_policy_settings():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=1)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-1.0, 1.0), (-1.0, 1.0), (20.0, 24.0)),
         shape=(2, 2, 2),
@@ -671,41 +774,61 @@ def test_projection_cache_tracks_resolution_policy_settings():
     fixed_two = world.projection[0][0]
     assert fixed_two is not fixed_one
     world.set_projection_matrix(
-        res=2, res_mode="auto", point_source_threshold=1e6,
-        verbose=0, parallel=1,
+        res=2,
+        res_mode="auto",
+        point_source_threshold=1e6,
+        verbose=0,
+        parallel=1,
     )
     assert world.projection[0][0] is not fixed_two
 
 
 def test_explicit_ideal_mode_uses_uncapped_resolution():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(12, 12), subpixel_resolution=2)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=2,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-0.5, 0.5), (-0.5, 0.5), (30.0, 31.0)),
         shape=(1, 1, 1),
     )
     world = World(voxel=voxel, cameras=[camera], verbose=0)
     world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
-    ideal = tuple(world.estimate_source_resolution(
-        0, 0, max_resolution=None,
-    ).resolution[0])
+    ideal = tuple(
+        world.estimate_source_resolution(
+            0,
+            0,
+            max_resolution=None,
+        ).resolution[0]
+    )
 
     world.set_projection_matrix(
-        res=None, res_mode="ideal", partial_res=1,
-        verbose=0, parallel=1, force=True,
+        res=None,
+        res_mode="ideal",
+        partial_res=1,
+        verbose=0,
+        parallel=1,
+        force=True,
     )
     adaptive = world.P_matrix[0].copy()
     world.set_projection_matrix(
-        res=ideal, res_mode="fixed",
-        verbose=0, parallel=1, force=True,
+        res=ideal,
+        res_mode="fixed",
+        verbose=0,
+        parallel=1,
+        force=True,
     )
 
     assert ideal != (1, 1, 1)
-    np.testing.assert_allclose(adaptive.toarray(), world.P_matrix[0].toarray(),
-                               rtol=1e-13, atol=1e-15)
+    np.testing.assert_allclose(
+        adaptive.toarray(), world.P_matrix[0].toarray(), rtol=1e-13, atol=1e-15
+    )
 
 
 def test_auto_resolution_rejects_optical_work_ordering():
@@ -713,8 +836,11 @@ def test_auto_resolution_rejects_optical_work_ordering():
 
     with pytest.raises(ValueError, match="require chunk_strategy='voxel'"):
         world.set_projection_matrix(
-            res=2, verbose=0, parallel=1,
-            chunk_strategy="optical", res_mode="auto",
+            res=2,
+            verbose=0,
+            parallel=1,
+            chunk_strategy="optical",
+            res_mode="auto",
         )
 
 
@@ -737,18 +863,24 @@ def test_projection_resolution_mode_requires_explicit_safe_settings(method):
 
 def test_eye_calc_rays_projects_front_points_and_masks_back_points():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    points = np.array([
-        [0.0, 0.0, 20.0],
-        [1.0, 0.0, 20.0],
-        [0.0, 0.0, -1.0],
-    ])
+    points = np.array(
+        [
+            [0.0, 0.0, 20.0],
+            [1.0, 0.0, 20.0],
+            [0.0, 0.0, -1.0],
+        ]
+    )
 
     rays = eye.calc_rays(points)
 
     # Pinhole coordinates place the eye at z=focal_length, so the second point
     # projects with denominator (20 - 10), not the original camera-coordinate z.
-    np.testing.assert_allclose(rays.XY[:2], np.array([[0.0, 0.0], [-1.0, 0.0]]), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(rays.zoom_rate[:2], np.array([2.0, 2.0]), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        rays.XY[:2], np.array([[0.0, 0.0], [-1.0, 0.0]]), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        rays.zoom_rate[:2], np.array([2.0, 2.0]), rtol=1e-12, atol=1e-12
+    )
     assert rays.front_and_visible.tolist() == [True, True, False]
     assert np.isnan(rays.XY[2]).all()
 
@@ -790,17 +922,28 @@ def test_voxel_vertex_coordinate_properties_initialize_vertices_lazily():
 
 
 def test_screen_print_settings_does_not_require_color_image_attribute():
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
 
     with contextlib.redirect_stdout(io.StringIO()):
         screen.print_settings()
 
 
 @pytest.mark.parametrize("eye_shape", ["circle", "rectangle"])
-def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle(eye_shape):
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5,
-              eye_shape=eye_shape)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middle(
+    eye_shape,
+):
+    eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5, eye_shape=eye_shape)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     rays = Rays(
         Z=np.array([10.0, -1.0, 10.0]),
         XY=np.array([[0.0, 0.0], [np.nan, np.nan], [1.0, 0.0]]),
@@ -819,11 +962,18 @@ def test_ray2image_grid_keeps_csc_columns_monotonic_when_invalid_ray_is_in_middl
 
 def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(600, 600), subpixel_resolution=1)
-    points = np.array([
-        [0.0, 0.0, 30.0],
-        [5.0, 0.0, 30.0],
-    ])
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(600, 600),
+        subpixel_resolution=1,
+    )
+    points = np.array(
+        [
+            [0.0, 0.0, 30.0],
+            [5.0, 0.0, 30.0],
+        ]
+    )
     rays = eye.calc_rays(points)
 
     mat = screen.ray2image_grid(eye, rays).tocsc()
@@ -836,9 +986,9 @@ def test_ray2image_grid_matches_point_source_pinhole_solid_angle():
 
     z = points[:, 2] - eye.position[2]
     rho = np.linalg.norm(points[:, :2] - eye.position[:2], axis=1)
-    cos_theta = z / np.sqrt(z ** 2 + rho ** 2)
+    cos_theta = z / np.sqrt(z**2 + rho**2)
     pinhole_area = np.pi * (eye.eye_size[0] / 2) ** 2
-    expected = pinhole_area * cos_theta ** 3 / (4 * np.pi * z ** 2)
+    expected = pinhole_area * cos_theta**3 / (4 * np.pi * z**2)
 
     np.testing.assert_allclose(total_etendue, expected, rtol=3e-2, atol=0.0)
 
@@ -873,12 +1023,14 @@ def _finite_eye_etendue_reference(eye, point, order=64):
         eye_y = half_u * nodes[:, None]
         eye_x = half_v * nodes[None, :]
         area_weights = half_u * half_v * weights[:, None] * weights[None, :]
-        distance2 = (axial_distance ** 2
-                     + (source_offset_x - eye_x) ** 2
-                     + (source_offset_y - eye_y) ** 2)
-        return float(np.sum(
-            area_weights * axial_distance / (4.0 * np.pi * distance2 ** 1.5)
-        ))
+        distance2 = (
+            axial_distance**2
+            + (source_offset_x - eye_x) ** 2
+            + (source_offset_y - eye_y) ** 2
+        )
+        return float(
+            np.sum(area_weights * axial_distance / (4.0 * np.pi * distance2**1.5))
+        )
 
     # Uniform ellipse area is uniform in t=r**2 and theta.
     t = 0.5 * (nodes + 1.0)
@@ -887,10 +1039,12 @@ def _finite_eye_etendue_reference(eye, point, order=64):
     theta = 2.0 * np.pi * np.arange(theta_count) / theta_count
     eye_y = half_u * np.sqrt(t)[:, None] * np.cos(theta)[None, :]
     eye_x = half_v * np.sqrt(t)[:, None] * np.sin(theta)[None, :]
-    distance2 = (axial_distance ** 2
-                 + (source_offset_x - eye_x) ** 2
-                 + (source_offset_y - eye_y) ** 2)
-    density = axial_distance / (4.0 * np.pi * distance2 ** 1.5)
+    distance2 = (
+        axial_distance**2
+        + (source_offset_x - eye_x) ** 2
+        + (source_offset_y - eye_y) ** 2
+    )
+    density = axial_distance / (4.0 * np.pi * distance2**1.5)
     eye_area = np.pi * half_u * half_v
     return float(eye_area * np.sum(t_weights[:, None] * density) / theta_count)
 
@@ -903,14 +1057,19 @@ def _finite_eye_etendue_reference(eye, point, order=64):
         ("rectangle", (0.2, 0.4)),
     ],
 )
-def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
-        eye_shape, eye_size):
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
-              eye_size=eye_size, eye_shape=eye_shape)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(1, 1), subpixel_resolution=1)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(eye_shape, eye_size):
+    eye = Eye(
+        position=(0.0, 0.0), focal_length=10.0, eye_size=eye_size, eye_shape=eye_shape
+    )
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(1, 1),
+        subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     point = np.array([[0.0, 0.0, 30.0]])
 
     value = float(camera.calc_image_vec(0, point, check_visibility=False).sum())
@@ -928,11 +1087,17 @@ def test_spot_area_is_preserved_when_eye_is_smaller_than_one_pixel(
     ],
 )
 def test_large_finite_eye_uses_local_ray_etendue(
-        eye_shape, eye_size, relative_tolerance):
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
-              eye_size=eye_size, eye_shape=eye_shape)
-    screen = Screen(screen_shape="square", screen_size=30.0,
-                    pixel_shape=(1, 1), subpixel_resolution=1)
+    eye_shape, eye_size, relative_tolerance
+):
+    eye = Eye(
+        position=(0.0, 0.0), focal_length=10.0, eye_size=eye_size, eye_shape=eye_shape
+    )
+    screen = Screen(
+        screen_shape="square",
+        screen_size=30.0,
+        pixel_shape=(1, 1),
+        subpixel_resolution=1,
+    )
     point = np.array([8.0, -3.0, 30.0])
     rays = eye.calc_rays(point[None, :])
 
@@ -945,45 +1110,71 @@ def test_large_finite_eye_uses_local_ray_etendue(
 @pytest.mark.parametrize(
     ("eye_shape", "eye_size", "eye_area"),
     [
-        ("circle", 0.2, np.pi * 0.1 ** 2),
+        ("circle", 0.2, np.pi * 0.1**2),
         ("ellipse", (0.2, 0.4), np.pi * 0.1 * 0.2),
         ("rectangle", (0.2, 0.4), 0.2 * 0.4),
     ],
 )
 def test_area_integrated_spot_flux_is_stable_across_subpixel_resolutions(
-        eye_shape, eye_size, eye_area):
-    eye = Eye(position=(0.0, 0.0), focal_length=10.0,
-              eye_size=eye_size, eye_shape=eye_shape)
+    eye_shape, eye_size, eye_area
+):
+    eye = Eye(
+        position=(0.0, 0.0), focal_length=10.0, eye_size=eye_size, eye_shape=eye_shape
+    )
     point = np.array([[0.0, 0.0, 30.0]])
     totals = []
     for resolution in (1, 2, 4, 8):
-        screen = Screen(screen_shape="square", screen_size=1.5,
-                        pixel_shape=(3, 3), subpixel_resolution=resolution)
-        totals.append(float(screen.ray2image_grid(
-            eye, eye.calc_rays(point),
-        ).sum()))
+        screen = Screen(
+            screen_shape="square",
+            screen_size=1.5,
+            pixel_shape=(3, 3),
+            subpixel_resolution=resolution,
+        )
+        totals.append(
+            float(
+                screen.ray2image_grid(
+                    eye,
+                    eye.calc_rays(point),
+                ).sum()
+            )
+        )
 
     axial_distance = point[0, 2] - eye.position[2]
-    expected = eye_area / (4.0 * np.pi * axial_distance ** 2)
+    expected = eye_area / (4.0 * np.pi * axial_distance**2)
     np.testing.assert_allclose(totals, np.full(4, expected), rtol=2e-3, atol=0.0)
     assert np.ptp(totals) / totals[-1] < 1e-3
 
 
 def test_etendue_x_scan_example_matches_analytic_curve(tmp_path):
-    example_path = Path(__file__).resolve().parents[1] / "examples" / "verify_etendue_x_scan.py"
+    example_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "verify_etendue_x_scan.py"
+    )
     spec = importlib.util.spec_from_file_location("verify_etendue_x_scan", example_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    result = module.run(output_dir=tmp_path, n_points=21, pixel_shape=(120, 120), subpixel_resolution=4,
-                        axial_distance=100.0, x_extent=30.0)
+    result = module.run(
+        output_dir=tmp_path,
+        n_points=21,
+        pixel_shape=(120, 120),
+        subpixel_resolution=4,
+        axial_distance=100.0,
+        x_extent=30.0,
+    )
 
-    np.testing.assert_allclose(result["numerical"], result["analytic"], rtol=4e-2, atol=0.0)
-    np.testing.assert_allclose(result["numerical_screen"], result["analytic_screen"], rtol=1e-6, atol=1e-18)
+    np.testing.assert_allclose(
+        result["numerical"], result["analytic"], rtol=4e-2, atol=0.0
+    )
+    np.testing.assert_allclose(
+        result["numerical_screen"], result["analytic_screen"], rtol=1e-6, atol=1e-18
+    )
     assert np.max(np.abs(result["relative_error"])) < 0.04
     assert abs(result["spot_relative_error"]) < 0.04
     assert abs(result["screen_relative_error"]) < 0.04
-    assert result["P_sources"].shape == (result["numerical_screen"].size, result["source_strength"].size)
+    assert result["P_sources"].shape == (
+        result["numerical_screen"].size,
+        result["source_strength"].size,
+    )
     assert result["output_path"].is_file()
     assert result["spot_output_path"].is_file()
     assert result["screen_output_path"].is_file()
@@ -992,17 +1183,26 @@ def test_etendue_x_scan_example_matches_analytic_curve(tmp_path):
 
 def test_multiple_apertures_block_if_any_aperture_intersects(monkeypatch):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     apertures = [
         Aperture(shape="circle", size=1.0, position=(0.0, 0.0, 5.0)),
         Aperture(shape="circle", size=1.0, position=(1.0, 0.0, 5.0)),
     ]
-    camera = Camera(eyes=[eye], apertures=apertures, screen=screen, camera_position=(0.0, 0.0, 0.0))
-    points = np.array([
-        [0.0, 0.0, 20.0],
-        [1.0, 0.0, 20.0],
-        [2.0, 0.0, 20.0],
-    ])
+    camera = Camera(
+        eyes=[eye], apertures=apertures, screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
+    points = np.array(
+        [
+            [0.0, 0.0, 20.0],
+            [1.0, 0.0, 20.0],
+            [2.0, 0.0, 20.0],
+        ]
+    )
 
     visibility_by_aperture = [
         np.array([True, False, True]),
@@ -1012,7 +1212,9 @@ def test_multiple_apertures_block_if_any_aperture_intersects(monkeypatch):
     def fake_check_visible(*args, **kwargs):
         return visibility_by_aperture.pop(0)
 
-    monkeypatch.setattr("multi_pinhole.camera.stl_utils.check_visible", fake_check_visible)
+    monkeypatch.setattr(
+        "multi_pinhole.camera.stl_utils.check_visible", fake_check_visible
+    )
 
     mat = camera.calc_image_vec(0, points, check_visibility=True).tocsc()
 
@@ -1023,12 +1225,19 @@ def test_multiple_apertures_block_if_any_aperture_intersects(monkeypatch):
 
 def test_world_multiple_apertures_match_camera_blocking_rule(monkeypatch):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     apertures = [
         Aperture(shape="circle", size=1.0, position=(0.0, 0.0, 5.0)),
         Aperture(shape="circle", size=1.0, position=(1.0, 0.0, 5.0)),
     ]
-    camera = Camera(eyes=[eye], apertures=apertures, screen=screen, camera_position=(0.0, 0.0, 0.0))
+    camera = Camera(
+        eyes=[eye], apertures=apertures, screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel(
         x_axis=np.linspace(-1.0, 1.0, 2),
         y_axis=np.linspace(-1.0, 1.0, 2),
@@ -1040,12 +1249,14 @@ def test_world_multiple_apertures_match_camera_blocking_rule(monkeypatch):
         np.array([[0, 1, 2]]),
     )
     world.walls = [wall]
-    points = np.array([
-        [0.0, 0.0, 20.0],
-        [1.0, 0.0, 20.0],
-        [2.0, 0.0, 20.0],
-        [0.0, 0.0, 5.0],
-    ])
+    points = np.array(
+        [
+            [0.0, 0.0, 20.0],
+            [1.0, 0.0, 20.0],
+            [2.0, 0.0, 20.0],
+            [0.0, 0.0, 5.0],
+        ]
+    )
     calls = []
 
     def fake_check_visible(*args, **kwargs):
@@ -1057,7 +1268,9 @@ def test_world_multiple_apertures_match_camera_blocking_rule(monkeypatch):
             return np.array([True, False])
         return np.array([True])
 
-    monkeypatch.setattr("multi_pinhole.world.stl_utils.check_visible", fake_check_visible)
+    monkeypatch.setattr(
+        "multi_pinhole.world.stl_utils.check_visible", fake_check_visible
+    )
 
     visible = world.find_visible_points(points, camera_idx=0, eye_idx=0, verbose=0)
 
@@ -1084,9 +1297,16 @@ def test_readme_minimal_sample_runs():
 
 def test_small_projection_matrix_case_completes_and_preserves_sparse_columns():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(4, 4), subpixel_resolution=20)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(4, 4),
+        subpixel_resolution=20,
+    )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0)
+    )
     voxel = Voxel(
         x_axis=np.linspace(-1.0, 1.0, 2),
         y_axis=np.linspace(-1.0, 1.0, 2),
@@ -1103,9 +1323,16 @@ def test_small_projection_matrix_case_completes_and_preserves_sparse_columns():
 
 def test_projection_matrix_is_stable_when_subvoxel_resolution_changes():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(80, 80),
+        subpixel_resolution=1,
+    )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0)
+    )
     voxel = Voxel(
         x_axis=np.array([-0.1, 0.1]),
         y_axis=np.array([-0.1, 0.1]),
@@ -1129,31 +1356,36 @@ def test_sub_voxel_centers_match_sub_voxel_objects():
         z_axis=np.array([10.0, 11.0, 13.0]),
     )
     indices = np.array([0, 3, 5])
-    expected = np.concatenate([sv.gravity_center for sv in voxel.get_sub_voxel(n=indices, res=(2, 3, 4))], axis=0)
+    expected = np.concatenate(
+        [sv.gravity_center for sv in voxel.get_sub_voxel(n=indices, res=(2, 3, 4))],
+        axis=0,
+    )
     actual = voxel.get_sub_voxel_centers(n=indices, res=(2, 3, 4))
 
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-12)
 
 
 def test_get_sub_voxel_centers_does_not_mutate_voxel_resolution():
-    voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2),
-                                sub_voxel_resolution=3)
+    voxel = Voxel.uniform_voxel(
+        ranges=((-1.0, 1.0),) * 3, shape=(2, 2, 2), sub_voxel_resolution=3
+    )
 
     centers = voxel.get_sub_voxel_centers(n=np.array([0, 1]), res=2)
 
     assert voxel.res == (3, 3, 3)
-    assert centers.shape == (2 * 2 ** 3, 3)
+    assert centers.shape == (2 * 2**3, 3)
 
 
 def test_center_sub_voxel_interpolator_preserves_constants_and_is_sparse():
     voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
     voxel_indices = np.array([0, 13, 26])
     matrix = voxel._build_source_quadrature_matrix(n=voxel_indices, res=2)
-    expected_scale = np.repeat(voxel.volume[voxel_indices] / 2 ** 3, 2 ** 3)
+    expected_scale = np.repeat(voxel.volume[voxel_indices] / 2**3, 2**3)
 
-    np.testing.assert_allclose(matrix @ np.ones(voxel.N), expected_scale,
-                               rtol=0.0, atol=1e-15)
-    assert matrix.shape == (voxel_indices.size * 2 ** 3, voxel.N)
+    np.testing.assert_allclose(
+        matrix @ np.ones(voxel.N), expected_scale, rtol=0.0, atol=1e-15
+    )
+    assert matrix.shape == (voxel_indices.size * 2**3, voxel.N)
     assert matrix.getnnz(axis=1).max() <= 8
     assert np.all(matrix.data >= 0.0)
 
@@ -1163,14 +1395,22 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_interior():
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
     points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
     matrix = voxel._build_source_quadrature_matrix(
-        n=np.array([center_voxel]), res=3, points=points,
+        n=np.array([center_voxel]),
+        res=3,
+        points=points,
     )
-    center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
-        - 0.25 * voxel.gravity_center[:, 1] + 0.75 * voxel.gravity_center[:, 2]
+    center_profile = (
+        2.0
+        + 0.5 * voxel.gravity_center[:, 0]
+        - 0.25 * voxel.gravity_center[:, 1]
+        + 0.75 * voxel.gravity_center[:, 2]
+    )
     expected = 2.0 + 0.5 * points[:, 0] - 0.25 * points[:, 1] + 0.75 * points[:, 2]
-    expected *= voxel.volume[center_voxel] / 3 ** 3
+    expected *= voxel.volume[center_voxel] / 3**3
 
-    np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(
+        matrix @ center_profile, expected, rtol=1e-14, atol=1e-14
+    )
 
 
 def test_center_sub_voxel_interpolator_reproduces_affine_profile_on_nonuniform_grid():
@@ -1182,14 +1422,22 @@ def test_center_sub_voxel_interpolator_reproduces_affine_profile_on_nonuniform_g
     center_voxel = np.ravel_multi_index((1, 1, 1), voxel.shape)
     points = voxel.get_sub_voxel_centers(n=np.array([center_voxel]), res=3)
     matrix = voxel._build_source_quadrature_matrix(
-        n=np.array([center_voxel]), res=3, points=points,
+        n=np.array([center_voxel]),
+        res=3,
+        points=points,
     )
-    center_profile = 2.0 + 0.5 * voxel.gravity_center[:, 0] \
-        - 0.25 * voxel.gravity_center[:, 1] + 0.75 * voxel.gravity_center[:, 2]
+    center_profile = (
+        2.0
+        + 0.5 * voxel.gravity_center[:, 0]
+        - 0.25 * voxel.gravity_center[:, 1]
+        + 0.75 * voxel.gravity_center[:, 2]
+    )
     expected = 2.0 + 0.5 * points[:, 0] - 0.25 * points[:, 1] + 0.75 * points[:, 2]
-    expected *= voxel.volume[center_voxel] / 3 ** 3
+    expected *= voxel.volume[center_voxel] / 3**3
 
-    np.testing.assert_allclose(matrix @ center_profile, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(
+        matrix @ center_profile, expected, rtol=1e-14, atol=1e-14
+    )
 
 
 def test_one_dimensional_refinement_matches_aligned_fine_projection():
@@ -1198,11 +1446,19 @@ def test_one_dimensional_refinement_matches_aligned_fine_projection():
 
     def make_world(shape):
         eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-        screen = Screen(screen_shape="square", screen_size=20.0,
-                        pixel_shape=(40, 40), subpixel_resolution=1)
+        screen = Screen(
+            screen_shape="square",
+            screen_size=20.0,
+            pixel_shape=(40, 40),
+            subpixel_resolution=1,
+        )
         aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-        camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
-                        camera_position=(0.0, 0.0, 0.0))
+        camera = Camera(
+            eyes=[eye],
+            apertures=aperture,
+            screen=screen,
+            camera_position=(0.0, 0.0, 0.0),
+        )
         voxel = Voxel.uniform_voxel(ranges=ranges, shape=shape)
         world = World(voxel=voxel, cameras=[camera], verbose=0)
         world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
@@ -1231,22 +1487,29 @@ def test_one_dimensional_refinement_matches_aligned_fine_projection():
 
 def test_parallel_projection_matches_serial_projection():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=2.0)
-    screen = Screen(screen_shape="square", screen_size=20.0,
-                    pixel_shape=(8, 8), subpixel_resolution=2)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(8, 8),
+        subpixel_resolution=2,
+    )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen,
-                    camera_position=(0.0, 0.0, -20.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, -20.0)
+    )
     voxel = Voxel.uniform_voxel(ranges=((-1.0, 1.0),) * 3, shape=(3, 3, 3))
     world = World(voxel=voxel, cameras=[camera], verbose=0)
     world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
 
     world.set_projection_matrix(res=2, verbose=0, parallel=1, force=True)
     expected = world.projection[0][0].copy()
-    world.set_projection_matrix(res=2, verbose=0, parallel=4, force=True,
-                                max_working_memory=10_000)
+    world.set_projection_matrix(
+        res=2, verbose=0, parallel=4, force=True, max_working_memory=10_000
+    )
 
-    np.testing.assert_allclose(world.projection[0][0].toarray(), expected.toarray(),
-                               rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(
+        world.projection[0][0].toarray(), expected.toarray(), rtol=1e-12, atol=1e-14
+    )
 
 
 def test_projection_rejects_nonpositive_working_memory():
@@ -1254,18 +1517,22 @@ def test_projection_rejects_nonpositive_working_memory():
     world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
 
     with pytest.raises(ValueError, match="max_working_memory"):
-        world.set_projection_matrix(res=1, verbose=0, parallel=1,
-                                    max_working_memory=0)
+        world.set_projection_matrix(res=1, verbose=0, parallel=1, max_working_memory=0)
 
 
 @pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize("bin_width", [0.5, 1.0, 2.0])
 def test_optical_chunk_strategy_matches_existing_sparse_projection(partial, bin_width):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=12.0,
-                    pixel_shape=(12, 12), subpixel_resolution=1)
-    camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                    camera_position=(0.0, 0.0, 0.0))
+    screen = Screen(
+        screen_shape="square",
+        screen_size=12.0,
+        pixel_shape=(12, 12),
+        subpixel_resolution=1,
+    )
+    camera = Camera(
+        eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel.uniform_voxel(
         ranges=((-2.0, 2.0), (-2.0, 2.0), (30.0, 34.0)),
         shape=(4, 4, 3),
@@ -1277,22 +1544,34 @@ def test_optical_chunk_strategy_matches_existing_sparse_projection(partial, bin_
         world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
 
     world.set_projection_matrix(
-        res=2, partial_res=2, verbose=0, parallel=1, force=True,
-        max_working_memory=2_000_000, chunk_strategy="voxel",
+        res=2,
+        partial_res=2,
+        verbose=0,
+        parallel=1,
+        force=True,
+        max_working_memory=2_000_000,
+        chunk_strategy="voxel",
     )
     expected = world.projection[0][0].copy()
     world.set_projection_matrix(
-        res=2, partial_res=2, verbose=0, parallel=1,
-        max_working_memory=2_000_000, chunk_strategy="optical",
+        res=2,
+        partial_res=2,
+        verbose=0,
+        parallel=1,
+        max_working_memory=2_000_000,
+        chunk_strategy="optical",
         optical_bin_width_pixels=bin_width,
     )
     actual = world.projection[0][0]
 
     difference = actual - expected
     np.testing.assert_allclose(difference.data, 0.0, rtol=0.0, atol=1e-13)
-    np.testing.assert_allclose(np.asarray(actual.sum(axis=0)),
-                               np.asarray(expected.sum(axis=0)),
-                               rtol=1e-13, atol=1e-14)
+    np.testing.assert_allclose(
+        np.asarray(actual.sum(axis=0)),
+        np.asarray(expected.sum(axis=0)),
+        rtol=1e-13,
+        atol=1e-14,
+    )
 
 
 def test_projection_rejects_unknown_chunk_strategy():
@@ -1300,15 +1579,23 @@ def test_projection_rejects_unknown_chunk_strategy():
     world = World(voxel=voxel, cameras=[make_camera()], verbose=0)
 
     with pytest.raises(ValueError, match="chunk_strategy"):
-        world.set_projection_matrix(res=1, verbose=0, parallel=1, force=True,
-                                    chunk_strategy="unknown")
+        world.set_projection_matrix(
+            res=1, verbose=0, parallel=1, force=True, chunk_strategy="unknown"
+        )
 
 
 def test_partial_voxel_inside_mask_scales_integrated_light():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(80, 80),
+        subpixel_resolution=1,
+    )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
 
     def make_world():
         voxel = Voxel(
@@ -1335,9 +1622,16 @@ def test_partial_voxel_inside_mask_scales_integrated_light():
 
 def test_partial_res_refines_only_partial_voxel_quadrature():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=20.0, pixel_shape=(80, 80), subpixel_resolution=1)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=20.0,
+        pixel_shape=(80, 80),
+        subpixel_resolution=1,
+    )
     aperture = Aperture(shape="circle", size=50.0, position=(0.0, 0.0, 5.0))
-    camera = Camera(eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0))
+    camera = Camera(
+        eyes=[eye], apertures=aperture, screen=screen, camera_position=(0.0, 0.0, 0.0)
+    )
     voxel = Voxel(
         x_axis=np.array([-0.1, 0.1]),
         y_axis=np.array([-0.1, 0.1]),
@@ -1348,7 +1642,9 @@ def test_partial_res_refines_only_partial_voxel_quadrature():
 
     totals = []
     for partial_res in [2, 4]:
-        world.set_projection_matrix(res=1, partial_res=partial_res, verbose=0, parallel=1, force=True)
+        world.set_projection_matrix(
+            res=1, partial_res=partial_res, verbose=0, parallel=1, force=True
+        )
         totals.append(float(world.P_matrix[0][:, 0].sum()))
 
     assert world.projection[0][0].shape == (screen.N_pixel, voxel.N_voxel)
@@ -1357,8 +1653,12 @@ def test_partial_res_refines_only_partial_voxel_quadrature():
 
 
 def test_small_voxel_projection_example_draws_outputs(tmp_path):
-    example_path = Path(__file__).resolve().parents[1] / "examples" / "small_voxel_projection.py"
-    spec = importlib.util.spec_from_file_location("small_voxel_projection", example_path)
+    example_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "small_voxel_projection.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "small_voxel_projection", example_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -1382,19 +1682,25 @@ def test_small_voxel_projection_example_draws_outputs(tmp_path):
     assert result["projection_path"].is_file()
 
 
-def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(
-        tmp_path):
-    example_path = (Path(__file__).resolve().parents[1] / "benchmarks"
-                    / "evaluate_partial_resolution.py")
+def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(tmp_path):
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "evaluate_partial_resolution.py"
+    )
     spec = importlib.util.spec_from_file_location(
-        "evaluate_partial_resolution", example_path,
+        "evaluate_partial_resolution",
+        example_path,
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
     result = module.run(
-        output_dir=tmp_path, spacing=25.0, reference_res=8,
-        resolutions=(2, 5), parallel=1,
+        output_dir=tmp_path,
+        spacing=25.0,
+        reference_res=8,
+        resolutions=(2, 5),
+        parallel=1,
     )
     records = result["result"]["records"]
 
@@ -1406,9 +1712,14 @@ def test_partial_resolution_example_isolates_plane_and_spherical_boundaries(
 
 
 def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
-    example_path = (Path(__file__).resolve().parents[1]
-                    / "examples" / "verify_1d_analytic_projection.py")
-    spec = importlib.util.spec_from_file_location("verify_1d_analytic_projection", example_path)
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "verify_1d_analytic_projection.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "verify_1d_analytic_projection", example_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -1429,9 +1740,14 @@ def test_wall_free_1d_projection_matches_point_pinhole_reference(tmp_path):
 
 
 def test_optical_chunks_and_local_column_compression(tmp_path):
-    example_path = (Path(__file__).resolve().parents[1]
-                    / "benchmarks" / "evaluate_projection_column_compression.py")
-    spec = importlib.util.spec_from_file_location("evaluate_projection_column_compression", example_path)
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "evaluate_projection_column_compression.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_projection_column_compression", example_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -1460,16 +1776,24 @@ def test_optical_chunks_and_local_column_compression(tmp_path):
 
 
 def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path):
-    example_path = (Path(__file__).resolve().parents[1]
-                    / "benchmarks" / "evaluate_subvoxel_resolution.py")
-    spec = importlib.util.spec_from_file_location("evaluate_subvoxel_resolution", example_path)
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "evaluate_subvoxel_resolution.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_subvoxel_resolution", example_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
     result = module.run_sweep(
         tmp_path,
-        voxel_counts=(21,), pixel_counts=(41,), axial_distances=(80.0,),
-        resolutions=(1, 2), reference_resolution=8,
+        voxel_counts=(21,),
+        pixel_counts=(41,),
+        axial_distances=(80.0,),
+        resolutions=(1, 2),
+        reference_resolution=8,
     )
 
     assert result["csv_path"].is_file()
@@ -1482,17 +1806,24 @@ def test_subvoxel_resolution_sweep_outputs_dimensionless_sampling_ratio(tmp_path
 
 
 def test_small_voxel_depth_sweep_is_fully_visible_and_draws_outputs(tmp_path):
-    example_path = (Path(__file__).resolve().parents[1]
-                    / "benchmarks" / "evaluate_small_voxel_depth_sweep.py")
+    example_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "evaluate_small_voxel_depth_sweep.py"
+    )
     spec = importlib.util.spec_from_file_location(
-        "evaluate_small_voxel_depth_sweep", example_path,
+        "evaluate_small_voxel_depth_sweep",
+        example_path,
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
     result = module.run(
-        tmp_path, voxel_sizes=(2.0,), depth_ratios=(20.0,),
-        adaptive_max_res=2, reference_res=3,
+        tmp_path,
+        voxel_sizes=(2.0,),
+        depth_ratios=(20.0,),
+        adaptive_max_res=2,
+        reference_res=3,
     )
 
     assert result["heatmap_path"].is_file()

@@ -4,8 +4,12 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
-os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl")
+)
+os.environ.setdefault(
+    "XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache")
+)
 
 import matplotlib
 
@@ -26,9 +30,9 @@ def analytic_point_source_etendue(eye, points):
     """
     axial_distance = points[:, 2] - eye.position[2]
     radial_offset = np.linalg.norm(points[:, :2] - eye.position[:2], axis=1)
-    cos_theta = axial_distance / np.sqrt(axial_distance ** 2 + radial_offset ** 2)
+    cos_theta = axial_distance / np.sqrt(axial_distance**2 + radial_offset**2)
     pinhole_area = np.pi * (eye.eye_size[0] / 2) ** 2
-    return pinhole_area * cos_theta ** 3 / (4 * np.pi * axial_distance ** 2)
+    return pinhole_area * cos_theta**3 / (4 * np.pi * axial_distance**2)
 
 
 def analytic_spot_image(screen, eye, point):
@@ -56,14 +60,31 @@ def analytic_spot_image(screen, eye, point):
             u0, u1 = u_axis[i] - 0.5 * du, u_axis[i] + 0.5 * du
             v0, v1 = v_axis[j] - 0.5 * dv, v_axis[j] + 0.5 * dv
             overlap[flat_index] = _spot_cell_overlap(
-                u0, u1, v0, v1,
-                uv_center[0], uv_center[1], half[0], half[1], use_ellipse,
+                u0,
+                u1,
+                v0,
+                v1,
+                uv_center[0],
+                uv_center[1],
+                half[0],
+                half[1],
+                use_ellipse,
             )
             etendue[flat_index] = _spot_cell_local_etendue(
-                u0, u1, v0, v1, uv_center[0], uv_center[1],
-                half[0], half[1], use_ellipse, overlap[flat_index],
-                rays.zoom_rate[0], axial_distance,
-                source_offset_x, source_offset_y,
+                u0,
+                u1,
+                v0,
+                v1,
+                uv_center[0],
+                uv_center[1],
+                half[0],
+                half[1],
+                use_ellipse,
+                overlap[flat_index],
+                rays.zoom_rate[0],
+                axial_distance,
+                source_offset_x,
+                source_offset_y,
             )
     return etendue
 
@@ -76,24 +97,42 @@ def analytic_screen_image(screen, eye, points, source_strength):
     return image
 
 
-def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolution=8,
-        axial_distance=100.0, x_extent=30.0):
+def run(
+    output_dir=None,
+    n_points=81,
+    pixel_shape=(220, 220),
+    subpixel_resolution=8,
+    axial_distance=100.0,
+    x_extent=30.0,
+):
     """Run the X-axis etendue scan and save a comparison plot."""
-    output_dir = Path(output_dir) if output_dir is not None else Path(tempfile.gettempdir()) / "multi_pinhole_etendue"
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_etendue"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
-    screen = Screen(screen_shape="square", screen_size=24.0, pixel_shape=pixel_shape,
-                    subpixel_resolution=subpixel_resolution)
+    screen = Screen(
+        screen_shape="square",
+        screen_size=24.0,
+        pixel_shape=pixel_shape,
+        subpixel_resolution=subpixel_resolution,
+    )
 
     x = np.linspace(-x_extent, x_extent, n_points)
-    points = np.column_stack([x, np.zeros_like(x), np.full_like(x, eye.position[2] + axial_distance)])
+    points = np.column_stack(
+        [x, np.zeros_like(x), np.full_like(x, eye.position[2] + axial_distance)]
+    )
     rays = eye.calc_rays(points)
     P_sources = screen.ray2image_grid(eye, rays)
     source_strength = np.ones(n_points)
     numerical_screen = P_sources @ source_strength
     analytic_screen = analytic_screen_image(screen, eye, points, source_strength)
-    screen_relative_error = ((numerical_screen.sum() - analytic_screen.sum()) / analytic_screen.sum())
+    screen_relative_error = (
+        numerical_screen.sum() - analytic_screen.sum()
+    ) / analytic_screen.sum()
 
     numerical = np.asarray(P_sources.sum(axis=0)).ravel()
     analytic = analytic_point_source_etendue(eye, points)
@@ -102,7 +141,9 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
     spot_index = n_points // 2
     numerical_spot = P_sources[:, spot_index].toarray().ravel()
     analytic_spot = analytic_spot_image(screen, eye, points[spot_index])
-    spot_relative_error = ((numerical_spot.sum() - analytic_spot.sum()) / analytic_spot.sum())
+    spot_relative_error = (
+        numerical_spot.sum() - analytic_spot.sum()
+    ) / analytic_spot.sum()
 
     fig, axes = plt.subplots(1, 2, figsize=(8, 3.2))
     axes[0].plot(x, analytic, label="analytic", color="black", linewidth=1.5)
@@ -112,7 +153,9 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
     axes[0].legend()
 
     axes[1].axhline(0.0, color="black", linewidth=1.0)
-    axes[1].plot(x, relative_error, marker="o", color="tab:orange", linewidth=1.0, markersize=3)
+    axes[1].plot(
+        x, relative_error, marker="o", color="tab:orange", linewidth=1.0, markersize=3
+    )
     axes[1].set_xlabel("source x")
     axes[1].set_ylabel("relative error")
 
@@ -130,21 +173,27 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
     fig, axes = plt.subplots(1, 3, figsize=(10, 3.2))
     extent = [0.0, screen.screen_size[1], screen.screen_size[0], 0.0]
     vmax = max(numerical_spot.max(), analytic_spot.max())
-    im0 = axes[0].imshow(numerical_spot.reshape(image_shape), origin="upper", extent=extent, vmax=vmax)
+    im0 = axes[0].imshow(
+        numerical_spot.reshape(image_shape), origin="upper", extent=extent, vmax=vmax
+    )
     axes[0].set_title("numerical")
     axes[0].set_xlabel("v")
     axes[0].set_ylabel("u")
     axes[0].set_xlim(spot_uv_center[1] - margin, spot_uv_center[1] + margin)
     axes[0].set_ylim(spot_uv_center[0] + margin, spot_uv_center[0] - margin)
     fig.colorbar(im0, ax=axes[0], fraction=0.046)
-    im1 = axes[1].imshow(analytic_spot.reshape(image_shape), origin="upper", extent=extent, vmax=vmax)
+    im1 = axes[1].imshow(
+        analytic_spot.reshape(image_shape), origin="upper", extent=extent, vmax=vmax
+    )
     axes[1].set_title("local-ray reference")
     axes[1].set_xlabel("v")
     axes[1].set_xlim(spot_uv_center[1] - margin, spot_uv_center[1] + margin)
     axes[1].set_ylim(spot_uv_center[0] + margin, spot_uv_center[0] - margin)
     fig.colorbar(im1, ax=axes[1], fraction=0.046)
     diff = numerical_spot - analytic_spot
-    im2 = axes[2].imshow(diff.reshape(image_shape), origin="upper", extent=extent, cmap="coolwarm")
+    im2 = axes[2].imshow(
+        diff.reshape(image_shape), origin="upper", extent=extent, cmap="coolwarm"
+    )
     axes[2].set_title("difference")
     axes[2].set_xlabel("v")
     axes[2].set_xlim(spot_uv_center[1] - margin, spot_uv_center[1] + margin)
@@ -157,17 +206,23 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
 
     fig, axes = plt.subplots(1, 3, figsize=(10, 3.2))
     vmax = max(numerical_screen.max(), analytic_screen.max())
-    im0 = axes[0].imshow(numerical_screen.reshape(image_shape), origin="upper", extent=extent, vmax=vmax)
+    im0 = axes[0].imshow(
+        numerical_screen.reshape(image_shape), origin="upper", extent=extent, vmax=vmax
+    )
     axes[0].set_title("P @ f")
     axes[0].set_xlabel("v")
     axes[0].set_ylabel("u")
     fig.colorbar(im0, ax=axes[0], fraction=0.046)
-    im1 = axes[1].imshow(analytic_screen.reshape(image_shape), origin="upper", extent=extent, vmax=vmax)
+    im1 = axes[1].imshow(
+        analytic_screen.reshape(image_shape), origin="upper", extent=extent, vmax=vmax
+    )
     axes[1].set_title("analytic convolution")
     axes[1].set_xlabel("v")
     fig.colorbar(im1, ax=axes[1], fraction=0.046)
     screen_diff = numerical_screen - analytic_screen
-    im2 = axes[2].imshow(screen_diff.reshape(image_shape), origin="upper", extent=extent, cmap="coolwarm")
+    im2 = axes[2].imshow(
+        screen_diff.reshape(image_shape), origin="upper", extent=extent, cmap="coolwarm"
+    )
     axes[2].set_title("difference")
     axes[2].set_xlabel("v")
     fig.colorbar(im2, ax=axes[2], fraction=0.046)
@@ -179,11 +234,19 @@ def run(output_dir=None, n_points=81, pixel_shape=(220, 220), subpixel_resolutio
     center_row = image_shape[0] // 2
     numerical_profile = numerical_screen.reshape(image_shape)[center_row]
     analytic_profile = analytic_screen.reshape(image_shape)[center_row]
-    v_axis = np.linspace(screen.subpixel_size[1] * 0.5,
-                         screen.screen_size[1] - screen.subpixel_size[1] * 0.5,
-                         image_shape[1])
+    v_axis = np.linspace(
+        screen.subpixel_size[1] * 0.5,
+        screen.screen_size[1] - screen.subpixel_size[1] * 0.5,
+        image_shape[1],
+    )
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    ax.plot(v_axis, analytic_profile, label="local-ray reference", color="black", linewidth=1.5)
+    ax.plot(
+        v_axis,
+        analytic_profile,
+        label="local-ray reference",
+        color="black",
+        linewidth=1.5,
+    )
     ax.scatter(v_axis, numerical_profile, label="P @ f", color="tab:blue", s=4)
     ax.set_xlabel("v")
     ax.set_ylabel("center-row intensity")

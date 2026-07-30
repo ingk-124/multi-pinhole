@@ -1,4 +1,5 @@
 """Detector geometry, overlap integration, and spot rasterization."""
+
 from numbers import Number
 from typing import List, Literal, Tuple, Union
 
@@ -44,10 +45,12 @@ def _unit_circle_rectangle_overlap(x0, x1, y0, y1):
     if nearest_x * nearest_x + nearest_y * nearest_y >= 1.0:
         return 0.0
 
-    if (x0 * x0 + y0 * y0 <= 1.0 and
-            x0 * x0 + y1 * y1 <= 1.0 and
-            x1 * x1 + y0 * y0 <= 1.0 and
-            x1 * x1 + y1 * y1 <= 1.0):
+    if (
+        x0 * x0 + y0 * y0 <= 1.0
+        and x0 * x0 + y1 * y1 <= 1.0
+        and x1 * x1 + y0 * y0 <= 1.0
+        and x1 * x1 + y1 * y1 <= 1.0
+    ):
         return (x1 - x0) * (y1 - y0)
 
     # The vertical overlap changes expression only where a horizontal
@@ -103,16 +106,16 @@ def _unit_circle_rectangle_overlap(x0, x1, y0, y1):
         else:
             constant -= y0
         area += constant * (right - left)
-        area += coefficient * (_unit_circle_primitive(right)
-                               - _unit_circle_primitive(left))
+        area += coefficient * (
+            _unit_circle_primitive(right) - _unit_circle_primitive(left)
+        )
 
     rectangle_area = (x1 - x0) * (y1 - y0)
     return min(rectangle_area, max(0.0, area))
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _spot_cell_overlap(u0, u1, v0, v1, center_u, center_v,
-                       half_u, half_v, use_ellipse):
+def _spot_cell_overlap(u0, u1, v0, v1, center_u, center_v, half_u, half_v, use_ellipse):
     """Area shared by one detector cell and an ellipse/rectangle spot."""
     if use_ellipse:
         normalized_area = _unit_circle_rectangle_overlap(
@@ -131,8 +134,16 @@ def _spot_cell_overlap(u0, u1, v0, v1, center_u, center_v,
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _local_etendue_density(q_u, q_v, center_u, center_v, zoom_rate,
-                           axial_distance, source_offset_x, source_offset_y):
+def _local_etendue_density(
+    q_u,
+    q_v,
+    center_u,
+    center_v,
+    zoom_rate,
+    axial_distance,
+    source_offset_x,
+    source_offset_y,
+):
     """Etendue density on the detector for one ray through the finite Eye."""
     # Image u is camera Y and image v is camera X.  Inverting
     # q = q_center + zoom_rate * a maps the detector location back to the
@@ -142,15 +153,24 @@ def _local_etendue_density(q_u, q_v, center_u, center_v, zoom_rate,
     dx = source_offset_x - eye_offset_x
     dy = source_offset_y - eye_offset_y
     distance2 = axial_distance * axial_distance + dx * dx + dy * dy
-    return (axial_distance
-            / (4.0 * np.pi * zoom_rate * zoom_rate
-               * distance2 * np.sqrt(distance2)))
+    return axial_distance / (
+        4.0 * np.pi * zoom_rate * zoom_rate * distance2 * np.sqrt(distance2)
+    )
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _rectangle_density_average(u0, u1, v0, v1, center_u, center_v,
-                               zoom_rate, axial_distance,
-                               source_offset_x, source_offset_y):
+def _rectangle_density_average(
+    u0,
+    u1,
+    v0,
+    v1,
+    center_u,
+    center_v,
+    zoom_rate,
+    axial_distance,
+    source_offset_x,
+    source_offset_y,
+):
     """Two-point Gauss average of local etendue density on a rectangle."""
     midpoint_u = 0.5 * (u0 + u1)
     midpoint_v = 0.5 * (v0 + v1)
@@ -162,17 +182,33 @@ def _rectangle_density_average(u0, u1, v0, v1, center_u, center_v,
             total += _local_etendue_density(
                 midpoint_u + sign_u * offset_u,
                 midpoint_v + sign_v * offset_v,
-                center_u, center_v, zoom_rate, axial_distance,
-                source_offset_x, source_offset_y,
+                center_u,
+                center_v,
+                zoom_rate,
+                axial_distance,
+                source_offset_x,
+                source_offset_y,
             )
     return 0.25 * total
 
 
 @njit(cache=True, nogil=True)
-def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
-                             half_u, half_v, use_ellipse, overlap_area,
-                             zoom_rate, axial_distance,
-                             source_offset_x, source_offset_y):
+def _spot_cell_local_etendue(
+    u0,
+    u1,
+    v0,
+    v1,
+    center_u,
+    center_v,
+    half_u,
+    half_v,
+    use_ellipse,
+    overlap_area,
+    zoom_rate,
+    axial_distance,
+    source_offset_x,
+    source_offset_y,
+):
     """Integrate local-ray etendue over one spot/cell intersection.
 
     Exact overlap areas are retained.  The slowly varying angular density is
@@ -190,16 +226,27 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
 
     if not use_ellipse:
         average = _rectangle_density_average(
-            clipped_u0, clipped_u1, clipped_v0, clipped_v1,
-            center_u, center_v, zoom_rate, axial_distance,
-            source_offset_x, source_offset_y,
+            clipped_u0,
+            clipped_u1,
+            clipped_v0,
+            clipped_v1,
+            center_u,
+            center_v,
+            zoom_rate,
+            axial_distance,
+            source_offset_x,
+            source_offset_y,
         )
         return overlap_area * average
 
     # A complete ellipse in one detector cell is common when detector pixels
     # are large.  Integrate it independently of detector subpixel resolution.
-    if (center_u - half_u >= u0 and center_u + half_u <= u1 and
-            center_v - half_v >= v0 and center_v + half_v <= v1):
+    if (
+        center_u - half_u >= u0
+        and center_u + half_u <= u1
+        and center_v - half_v >= v0
+        and center_v + half_v <= v1
+    ):
         # Uniform ellipse area is uniform in t=r**2 and theta.  Two Gauss
         # points in t and eight equally spaced angles capture the leading
         # finite-aperture correction without detector-grid sampling noise.
@@ -213,8 +260,14 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
                 q_u = center_u + half_u * radius * np.cos(angle)
                 q_v = center_v + half_v * radius * np.sin(angle)
                 total += _local_etendue_density(
-                    q_u, q_v, center_u, center_v, zoom_rate,
-                    axial_distance, source_offset_x, source_offset_y,
+                    q_u,
+                    q_v,
+                    center_u,
+                    center_v,
+                    zoom_rate,
+                    axial_distance,
+                    source_offset_x,
+                    source_offset_y,
                 )
         return overlap_area * total / 16.0
 
@@ -223,14 +276,23 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
     all_corners_inside = True
     for corner_u in (u0, u1):
         for corner_v in (v0, v1):
-            normalized = (((corner_u - center_u) / half_u) ** 2
-                          + ((corner_v - center_v) / half_v) ** 2)
+            normalized = ((corner_u - center_u) / half_u) ** 2 + (
+                (corner_v - center_v) / half_v
+            ) ** 2
             if normalized > 1.0:
                 all_corners_inside = False
     if all_corners_inside:
         average = _rectangle_density_average(
-            u0, u1, v0, v1, center_u, center_v, zoom_rate,
-            axial_distance, source_offset_x, source_offset_y,
+            u0,
+            u1,
+            v0,
+            v1,
+            center_u,
+            center_v,
+            zoom_rate,
+            axial_distance,
+            source_offset_x,
+            source_offset_y,
         )
         return overlap_area * average
 
@@ -243,12 +305,19 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
         q_u = clipped_u0 + (sample_u_index + 0.5) * (clipped_u1 - clipped_u0) / 4.0
         for sample_v_index in range(4):
             q_v = clipped_v0 + (sample_v_index + 0.5) * (clipped_v1 - clipped_v0) / 4.0
-            normalized = (((q_u - center_u) / half_u) ** 2
-                          + ((q_v - center_v) / half_v) ** 2)
+            normalized = ((q_u - center_u) / half_u) ** 2 + (
+                (q_v - center_v) / half_v
+            ) ** 2
             if normalized <= 1.0:
                 density_sum += _local_etendue_density(
-                    q_u, q_v, center_u, center_v, zoom_rate,
-                    axial_distance, source_offset_x, source_offset_y,
+                    q_u,
+                    q_v,
+                    center_u,
+                    center_v,
+                    zoom_rate,
+                    axial_distance,
+                    source_offset_x,
+                    source_offset_y,
                 )
                 sample_count += 1
 
@@ -259,8 +328,14 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
         q_u = min(clipped_u1, max(clipped_u0, center_u))
         q_v = min(clipped_v1, max(clipped_v0, center_v))
         average = _local_etendue_density(
-            q_u, q_v, center_u, center_v, zoom_rate,
-            axial_distance, source_offset_x, source_offset_y,
+            q_u,
+            q_v,
+            center_u,
+            center_v,
+            zoom_rate,
+            axial_distance,
+            source_offset_x,
+            source_offset_y,
         )
     else:
         average = density_sum / sample_count
@@ -268,11 +343,27 @@ def _spot_cell_local_etendue(u0, u1, v0, v1, center_u, center_v,
 
 
 @njit(cache=True, nogil=True)
-def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
-                     u_center, v_center, half_u, half_v,
-                     i_min, i_max, j_min, j_max, valid, v_subpixels,
-                     use_ellipse, zoom_rate, axial_distance,
-                     source_offset_x, source_offset_y):
+def _rasterize_spots(
+    u_axis,
+    v_axis,
+    cell_u,
+    cell_v,
+    u_center,
+    v_center,
+    half_u,
+    half_v,
+    i_min,
+    i_max,
+    j_min,
+    j_max,
+    valid,
+    v_subpixels,
+    use_ellipse,
+    zoom_rate,
+    axial_distance,
+    source_offset_x,
+    source_offset_y,
+):
     """Rasterize spots into cell indices, areas, and local etendue weights."""
     counts = np.zeros(u_center.size, dtype=np.int64)
     for valid_index in range(valid.size):
@@ -285,8 +376,15 @@ def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
                 v0 = v_axis[j] - 0.5 * cell_v
                 v1 = v0 + cell_v
                 overlap = _spot_cell_overlap(
-                    u0, u1, v0, v1, u_center[ray], v_center[ray],
-                    half_u[ray], half_v[ray], use_ellipse,
+                    u0,
+                    u1,
+                    v0,
+                    v1,
+                    u_center[ray],
+                    v_center[ray],
+                    half_u[ray],
+                    half_v[ray],
+                    use_ellipse,
                 )
                 if overlap > 0.0:
                     count += 1
@@ -309,16 +407,33 @@ def _rasterize_spots(u_axis, v_axis, cell_u, cell_v,
                 v0 = v_axis[j] - 0.5 * cell_v
                 v1 = v0 + cell_v
                 overlap = _spot_cell_overlap(
-                    u0, u1, v0, v1, u_center[ray], v_center[ray],
-                    half_u[ray], half_v[ray], use_ellipse,
+                    u0,
+                    u1,
+                    v0,
+                    v1,
+                    u_center[ray],
+                    v_center[ray],
+                    half_u[ray],
+                    half_v[ray],
+                    use_ellipse,
                 )
                 if overlap > 0.0:
                     pixel_indices[output_index] = i * v_subpixels + j
                     etendue_weights[output_index] = _spot_cell_local_etendue(
-                        u0, u1, v0, v1, u_center[ray], v_center[ray],
-                        half_u[ray], half_v[ray], use_ellipse, overlap,
-                        zoom_rate[ray], axial_distance[ray],
-                        source_offset_x[ray], source_offset_y[ray],
+                        u0,
+                        u1,
+                        v0,
+                        v1,
+                        u_center[ray],
+                        v_center[ray],
+                        half_u[ray],
+                        half_v[ray],
+                        use_ellipse,
+                        overlap,
+                        zoom_rate[ray],
+                        axial_distance[ray],
+                        source_offset_x[ray],
+                        source_offset_y[ray],
                     )
                     output_index += 1
     return pixel_indices, etendue_weights, counts
@@ -330,11 +445,13 @@ class Screen:
     Screen class is used to create a screen object
     """
 
-    def __init__(self,
-                 screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
-                 screen_size: Union[Number, Vector2DLike] = 10,
-                 pixel_shape: Tuple[int, int] = (100, 100),
-                 subpixel_resolution: int = 1):
+    def __init__(
+        self,
+        screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
+        screen_size: Union[Number, Vector2DLike] = 10,
+        pixel_shape: Tuple[int, int] = (100, 100),
+        subpixel_resolution: int = 1,
+    ):
         """Create a screen object.
 
         Parameters
@@ -407,14 +524,18 @@ class Screen:
         self._frozen = False
 
         # set the screen shape and size
-        self._screen_shape, self._screen_size = stl_utils.shape_check(screen_shape, screen_size)
+        self._screen_shape, self._screen_size = stl_utils.shape_check(
+            screen_shape, screen_size
+        )
 
         # set the pixel shape, pixel size and pixel position
         self._pixel_shape = np.array(pixel_shape, dtype=int)
         self._N_pixel = self._pixel_shape[0] * self._pixel_shape[1]
         self._pixel_size = self._screen_size / self._pixel_shape
         self._A_pixel = self._pixel_size[0] * self._pixel_size[1]
-        self._pixel_position = self.positions(pixel_shape=self._pixel_shape, pixel_size=self._pixel_size)
+        self._pixel_position = self.positions(
+            pixel_shape=self._pixel_shape, pixel_size=self._pixel_size
+        )
 
         self._pixel_image_size = (self._pixel_shape[0], self._pixel_shape[1])
 
@@ -515,7 +636,9 @@ class Screen:
 
     def _ensure_mutable(self):
         if self._frozen:
-            raise RuntimeError("Screen geometry is frozen because its Camera is registered in a World")
+            raise RuntimeError(
+                "Screen geometry is frozen because its Camera is registered in a World"
+            )
 
     def freeze(self) -> "Screen":
         """Freeze screen geometry, cached grids, and sparse mappings."""
@@ -586,21 +709,33 @@ class Screen:
             self._screen_size[1] - self._subpixel_size[1] * 0.5,
             self._subpixel_shape[1],
         )
-        self._subpixel_position = self.positions(pixel_shape=self._subpixel_shape, pixel_size=self._subpixel_size)
+        self._subpixel_position = self.positions(
+            pixel_shape=self._subpixel_shape, pixel_size=self._subpixel_size
+        )
         self._A_subpixel = self._subpixel_size[0] * self._subpixel_size[1]
 
         self._subpixel_image_mask = self.image_mask(self._subpixel_position)
-        indices = np.arange(self._N_subpixel
-                            ).reshape(self._pixel_shape[0], self._subpixel_resolution,
-                                      self._pixel_shape[1], self._subpixel_resolution).transpose(0, 2, 1, 3).ravel()
-        indptr = np.arange(self.N_pixel + 1) * self._subpixel_resolution ** 2
-        self._transform_matrix = sparse.csr_matrix((np.ones(self._N_subpixel), indices, indptr),
-                                                   shape=(self._N_pixel, self._N_subpixel))
+        indices = (
+            np.arange(self._N_subpixel)
+            .reshape(
+                self._pixel_shape[0],
+                self._subpixel_resolution,
+                self._pixel_shape[1],
+                self._subpixel_resolution,
+            )
+            .transpose(0, 2, 1, 3)
+            .ravel()
+        )
+        indptr = np.arange(self.N_pixel + 1) * self._subpixel_resolution**2
+        self._transform_matrix = sparse.csr_matrix(
+            (np.ones(self._N_subpixel), indices, indptr),
+            shape=(self._N_pixel, self._N_subpixel),
+        )
 
     def positions(
-            self,
-            pixel_shape: tuple[int, int] | np.ndarray,
-            pixel_size: tuple[float, float] | np.ndarray
+        self,
+        pixel_shape: tuple[int, int] | np.ndarray,
+        pixel_size: tuple[float, float] | np.ndarray,
     ) -> np.ndarray:
         """Calculate the center ``(u, v)`` of each pixel.
 
@@ -617,8 +752,12 @@ class Screen:
             center of each pixel (u, v) (shape: (U_p * V_p, 2))
         """
 
-        u_axis = np.linspace(pixel_size[0] / 2, self._screen_size[0] - pixel_size[0] / 2, pixel_shape[0])
-        v_axis = np.linspace(pixel_size[1] / 2, self._screen_size[1] - pixel_size[1] / 2, pixel_shape[1])
+        u_axis = np.linspace(
+            pixel_size[0] / 2, self._screen_size[0] - pixel_size[0] / 2, pixel_shape[0]
+        )
+        v_axis = np.linspace(
+            pixel_size[1] / 2, self._screen_size[1] - pixel_size[1] / 2, pixel_shape[1]
+        )
 
         u, v = np.meshgrid(u_axis, v_axis, indexing="ij")
         return np.stack([u, v], axis=-1).reshape((-1, 2))
@@ -647,7 +786,12 @@ class Screen:
         if self._screen_shape == "rectangle":
             return False
         else:
-            mask = np.linalg.norm((position - self._screen_size / 2) / (self._screen_size / 2), axis=1) > 1
+            mask = (
+                np.linalg.norm(
+                    (position - self._screen_size / 2) / (self._screen_size / 2), axis=1
+                )
+                > 1
+            )
             return mask
 
     def cosine(self, eye: Eye) -> np.ndarray:
@@ -670,9 +814,11 @@ class Screen:
 
         """
 
-        uv = self.subpixel_position - (eye.position[:2][::-1] + self._screen_size / 2)  # (U_p * V_p, 2)
+        uv = self.subpixel_position - (
+            eye.position[:2][::-1] + self._screen_size / 2
+        )  # (U_p * V_p, 2)
         tangent = np.linalg.norm(uv, axis=-1) / eye.focal_length  # (U_p * V_p, )
-        return 1 / np.sqrt(1 + tangent ** 2)  # (U_p * V_p, )
+        return 1 / np.sqrt(1 + tangent**2)  # (U_p * V_p, )
 
     def etendue_per_subpixel(self, eye: Eye) -> np.ndarray:
         """Calculate the etendue of each subpixel.
@@ -695,11 +841,11 @@ class Screen:
         return self._A_subpixel * (self.cosine(eye) ** 4) / (4 * np.pi)  # (U_p * V_p, )
 
     def ray2image_grid(
-            self,
-            eye: Eye,
-            rays: Rays,
-            verbose: int = 0,
-            etendue_per_subpixel: np.ndarray | None = None
+        self,
+        eye: Eye,
+        rays: Rays,
+        verbose: int = 0,
+        etendue_per_subpixel: np.ndarray | None = None,
     ) -> sparse.spmatrix:
         """Integrate finite-Eye ray footprints on the detector grid.
 
@@ -746,8 +892,14 @@ class Screen:
         half = 0.5 * spot_size
 
         # subpixel axis (must match positions())
-        U_sub, V_sub = int(self._subpixel_shape[0]), int(self._subpixel_shape[1])  # number of sub-pixels
-        du, dv = float(self._subpixel_size[0]), float(self._subpixel_size[1])  # size of sub-pixels
+        U_sub, V_sub = (
+            int(self._subpixel_shape[0]),
+            int(self._subpixel_shape[1]),
+        )  # number of sub-pixels
+        du, dv = (
+            float(self._subpixel_size[0]),
+            float(self._subpixel_size[1]),
+        )  # size of sub-pixels
         u_axis = self._subpixel_u_axis
         v_axis = self._subpixel_v_axis
         # Cell edges, rather than center extrema, are the physical screen
@@ -776,10 +928,12 @@ class Screen:
         # +-------- ¯''-===-''¯ --------+-- uv[:, 0] + half[:, 0]
         #
 
-        inside_screen = ((uv[:, 0] + half[:, 0] > u_min) &
-                         (uv[:, 0] - half[:, 0] < u_max) &
-                         (uv[:, 1] + half[:, 1] > v_min) &
-                         (uv[:, 1] - half[:, 1] < v_max))
+        inside_screen = (
+            (uv[:, 0] + half[:, 0] > u_min)
+            & (uv[:, 0] - half[:, 0] < u_max)
+            & (uv[:, 1] + half[:, 1] > v_min)
+            & (uv[:, 1] - half[:, 1] < v_max)
+        )
 
         if not np.any(inside_screen):
             # no spots on screen
@@ -803,24 +957,50 @@ class Screen:
         i_max = np.zeros(rays.n, dtype=np.int32)
         j_min = np.zeros(rays.n, dtype=np.int32)
         j_max = np.zeros(rays.n, dtype=np.int32)
-        i_min[valid] = np.clip(np.floor(u_low[valid] / du), 0, U_sub - 1).astype(np.int32)
-        i_max[valid] = np.clip(np.ceil(u_high[valid] / du) - 1, 0, U_sub - 1).astype(np.int32)
-        j_min[valid] = np.clip(np.floor(v_low[valid] / dv), 0, V_sub - 1).astype(np.int32)
-        j_max[valid] = np.clip(np.ceil(v_high[valid] / dv) - 1, 0, V_sub - 1).astype(np.int32)
+        i_min[valid] = np.clip(np.floor(u_low[valid] / du), 0, U_sub - 1).astype(
+            np.int32
+        )
+        i_max[valid] = np.clip(np.ceil(u_high[valid] / du) - 1, 0, U_sub - 1).astype(
+            np.int32
+        )
+        j_min[valid] = np.clip(np.floor(v_low[valid] / dv), 0, V_sub - 1).astype(
+            np.int32
+        )
+        j_max[valid] = np.clip(np.ceil(v_high[valid] / dv) - 1, 0, V_sub - 1).astype(
+            np.int32
+        )
 
         # Source offset from the Eye centre follows from the central projected
         # ray: q0-eye = -f * source_offset / Z.  The rasterizer maps every
         # detector integration point back into the finite Eye and evaluates
         # its own local source-to-Eye ray geometry.
-        source_offset = -(rays.Z[:, None] / eye.focal_length) \
-                        * (rays.XY - eye.position[None, :2])
-        pixel_indices, local_etendue, counts = _rasterize_spots(
-            u_axis, v_axis, du, dv, u_center, v_center, a_u, a_v,
-            i_min, i_max, j_min, j_max, valid, V_sub, use_ellipse,
-            rays.zoom_rate, rays.Z, source_offset[:, 0], source_offset[:, 1],
+        source_offset = -(rays.Z[:, None] / eye.focal_length) * (
+            rays.XY - eye.position[None, :2]
         )
-        indptr = np.concatenate([np.array([0], dtype=np.int64),
-                                 np.cumsum(counts, dtype=np.int64)])
+        pixel_indices, local_etendue, counts = _rasterize_spots(
+            u_axis,
+            v_axis,
+            du,
+            dv,
+            u_center,
+            v_center,
+            a_u,
+            a_v,
+            i_min,
+            i_max,
+            j_min,
+            j_max,
+            valid,
+            V_sub,
+            use_ellipse,
+            rays.zoom_rate,
+            rays.Z,
+            source_offset[:, 0],
+            source_offset[:, 1],
+        )
+        indptr = np.concatenate(
+            [np.array([0], dtype=np.int64), np.cumsum(counts, dtype=np.int64)]
+        )
         if etendue_per_subpixel is not None:
             etendue_per_subpixel = np.asarray(etendue_per_subpixel, dtype=np.float32)
             if etendue_per_subpixel.shape != (self.N_subpixel,):
@@ -856,9 +1036,7 @@ class Screen:
             raise ValueError("xy must be 1D or 2D array")
 
     def uv2subpixel_index(
-            self,
-            light_points: np.ndarray,
-            intensity: np.ndarray
+        self, light_points: np.ndarray, intensity: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Tuple[np.ndarray, np.ndarray]: Convert image-plane samples into subpixel indices.
 
@@ -877,17 +1055,24 @@ class Screen:
 
         # calculate subpixel index
         subpixel_indices = np.floor(
-            (light_points + self._screen_size / 2) / self._pixel_size * self._subpixel_resolution)
+            (light_points + self._screen_size / 2)
+            / self._pixel_size
+            * self._subpixel_resolution
+        )
 
         # if subpixel index is out of range, remove it and its intensity
-        mask = np.all([subpixel_indices[:, 0] >= 0, subpixel_indices[:, 0] < self._subpixel_shape[0],
-                       subpixel_indices[:, 1] >= 0, subpixel_indices[:, 1] < self._subpixel_shape[1]], axis=0)
+        mask = np.all(
+            [
+                subpixel_indices[:, 0] >= 0,
+                subpixel_indices[:, 0] < self._subpixel_shape[0],
+                subpixel_indices[:, 1] >= 0,
+                subpixel_indices[:, 1] < self._subpixel_shape[1],
+            ],
+            axis=0,
+        )
         return subpixel_indices[mask], intensity[mask]
 
-    def subpixel_to_pixel(
-            self,
-            subpixel_image: np.ndarray | None = None
-    ) -> np.ndarray:
+    def subpixel_to_pixel(self, subpixel_image: np.ndarray | None = None) -> np.ndarray:
         """Convert a subpixel image to a pixel image.
 
         Parameters
@@ -918,11 +1103,18 @@ class Screen:
         # Convert subpixel image to pixel image by averaging subpixels
         return self._transform_matrix.dot(subpixel_image)
 
-    def show_image(self, image: np.ndarray | None = None,
-                   ax: plt.Axes | None = None,
-                   block: bool = True, pixel_image: bool = False, pm: bool = False,
-                   colorbar: bool = True, masked: bool = False,
-                   show: bool = False, **kwargs: object) -> plt.Axes:
+    def show_image(
+        self,
+        image: np.ndarray | None = None,
+        ax: plt.Axes | None = None,
+        block: bool = True,
+        pixel_image: bool = False,
+        pm: bool = False,
+        colorbar: bool = True,
+        masked: bool = False,
+        show: bool = False,
+        **kwargs: object,
+    ) -> plt.Axes:
         """Display an image.
 
         Parameters
@@ -954,7 +1146,11 @@ class Screen:
 
         image = image.toarray() if sparse.issparse(image) else image
         if pixel_image:
-            image = self.subpixel_to_pixel(image) if image.size == self._N_subpixel else image
+            image = (
+                self.subpixel_to_pixel(image)
+                if image.size == self._N_subpixel
+                else image
+            )
 
         if image.size == self._N_pixel:
             UV = self.pixel_position.T.reshape((2, *self.pixel_shape))
@@ -965,7 +1161,9 @@ class Screen:
             image_shape = self.subpixel_shape
             mask = self._subpixel_image_mask
         else:
-            raise ValueError(f"image size must be {self._pixel_shape} (pixel) or {self._subpixel_shape} (subpixel)")
+            raise ValueError(
+                f"image size must be {self._pixel_shape} (pixel) or {self._subpixel_shape} (subpixel)"
+            )
 
         image = np.array(image).reshape(image_shape)
 

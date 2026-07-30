@@ -23,7 +23,10 @@ def test_center_interpolator_reproduces_affine_field_at_cartesian_points():
     points = np.array([[1.25, -0.25, 11.75], [2.8, 0.6, 12.2]])
 
     np.testing.assert_allclose(
-        interpolator(points=points), _affine(points), rtol=1e-14, atol=1e-14,
+        interpolator(points=points),
+        _affine(points),
+        rtol=1e-14,
+        atol=1e-14,
     )
 
 
@@ -49,7 +52,10 @@ def test_center_interpolator_converts_broadcast_cylindrical_queries():
     Z = 12.0
 
     actual = interpolator(
-        coordinate_type="cylindrical", R=R, phi=phi, Z=Z,
+        coordinate_type="cylindrical",
+        R=R,
+        phi=phi,
+        Z=Z,
     )
     xyz = voxel.from_coordinates("cylindrical", R=R, phi=phi, Z=Z)
 
@@ -64,8 +70,12 @@ def test_center_interpolator_accepts_normalized_coordinate_queries():
 
     actual = interpolator(
         coordinate_type="cylindrical",
-        R=0.5, phi=0.0, Z=1.0,
-        normalized=True, radius=4.0, height=24.0,
+        R=0.5,
+        phi=0.0,
+        Z=1.0,
+        normalized=True,
+        radius=4.0,
+        height=24.0,
     )
 
     np.testing.assert_allclose(actual, _affine([2.0, 0.0, 12.0]))
@@ -74,7 +84,9 @@ def test_center_interpolator_accepts_normalized_coordinate_queries():
 def test_center_interpolator_forwards_boundary_options():
     voxel = _voxel()
     interpolator = voxel.center_interpolator(
-        _affine(voxel.gravity_center), bounds_error=False, fill_value=-99.0,
+        _affine(voxel.gravity_center),
+        bounds_error=False,
+        fill_value=-99.0,
     )
 
     assert interpolator(points=[[100.0, 0.0, 12.0]])[0] == -99.0
@@ -89,7 +101,10 @@ def test_center_interpolator_rejects_ambiguous_queries():
     with pytest.raises(ValueError, match="mutually exclusive"):
         interpolator(
             points=[[1.0, 0.0, 12.0]],
-            coordinate_type="cylindrical", R=1.0, phi=0.0, Z=12.0,
+            coordinate_type="cylindrical",
+            R=1.0,
+            phi=0.0,
+            Z=12.0,
         )
     with pytest.raises(ValueError, match="explicit coordinate_type"):
         interpolator(points=[[1.0, 0.0, 12.0]], R=1.0)

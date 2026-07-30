@@ -31,8 +31,9 @@ class VoxelCenterInterpolator:
             **interpolator_kwargs,
         )
 
-    def __call__(self, points=None, *, coordinate_type=None,
-                 normalized=False, **components):
+    def __call__(
+        self, points=None, *, coordinate_type=None, normalized=False, **components
+    ):
         """Evaluate the center-grid field at Cartesian or named coordinates.
 
         Parameters
@@ -68,9 +69,7 @@ class VoxelCenterInterpolator:
                     "coordinate components require an explicit coordinate_type"
                 )
             if normalized:
-                raise ValueError(
-                    "normalized=True requires an explicit coordinate_type"
-                )
+                raise ValueError("normalized=True requires an explicit coordinate_type")
             cartesian = np.asarray(points, dtype=float)
             if cartesian.ndim == 0 or cartesian.shape[-1] != 3:
                 raise ValueError("points must have shape (..., 3)")

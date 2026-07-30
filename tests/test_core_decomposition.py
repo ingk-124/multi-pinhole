@@ -1,4 +1,5 @@
 """Compatibility regressions for the core module decomposition."""
+
 import inspect
 import pickle
 
@@ -21,7 +22,9 @@ def _small_camera():
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
     screen = Screen("square", 20.0, pixel_shape=(4, 4), subpixel_resolution=2)
     return Camera(
-        eyes=[eye], apertures=[], screen=screen,
+        eyes=[eye],
+        apertures=[],
+        screen=screen,
         camera_position=(0.0, 0.0, 0.0),
     )
 
@@ -82,26 +85,34 @@ def test_public_constructor_parameter_contract_and_defaults():
             ("wavelength_range", (0.01, 0.1)),
         ),
         Aperture: (
-            ("shape", None), ("size", None), ("position", None),
-            ("direction", None), ("stl_model", None),
+            ("shape", None),
+            ("size", None),
+            ("position", None),
+            ("direction", None),
+            ("stl_model", None),
             ("stl_args", inspect.Parameter.empty),
         ),
         Screen: (
-            ("screen_shape", "square"), ("screen_size", 10),
-            ("pixel_shape", (100, 100)), ("subpixel_resolution", 1),
+            ("screen_shape", "square"),
+            ("screen_size", 10),
+            ("pixel_shape", (100, 100)),
+            ("subpixel_resolution", 1),
         ),
         Camera: (
             ("eyes", inspect.Parameter.empty),
             ("apertures", inspect.Parameter.empty),
             ("screen", inspect.Parameter.empty),
             ("camera_position", inspect.Parameter.empty),
-            ("rotation_matrix", None), ("camera_name", None),
+            ("rotation_matrix", None),
+            ("camera_name", None),
         ),
     }
     for class_, contract in expected.items():
         parameters = inspect.signature(class_).parameters
-        assert tuple((name, parameter.default)
-                     for name, parameter in parameters.items()) == contract
+        assert (
+            tuple((name, parameter.default) for name, parameter in parameters.items())
+            == contract
+        )
 
 
 def test_projection_cache_schema_remains_three():

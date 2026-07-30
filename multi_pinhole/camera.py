@@ -1,4 +1,5 @@
 """Camera composition, coordinate transforms, orientation, and drawing."""
+
 from numbers import Number
 from typing import List, Literal, Tuple, Union
 
@@ -18,7 +19,13 @@ from .utils import stl_utils
 VectorLike = Union[np.ndarray, List[Number], Tuple[Number], Number]
 Vector2DLike = Union[np.ndarray, List[Number], Tuple[Number, Number]]
 Vector3DLike = Union[np.ndarray, List[Number], Tuple[Number, Number, Number]]
-MatrixLike = Union[np.ndarray, List[List[Number]], Tuple[List[Number]], Tuple[List[Number]], Tuple[Tuple[Number]]]
+MatrixLike = Union[
+    np.ndarray,
+    List[List[Number]],
+    Tuple[List[Number]],
+    Tuple[List[Number]],
+    Tuple[Tuple[Number]],
+]
 
 
 class Camera:
@@ -34,13 +41,15 @@ class Camera:
     full parameter reference.
     """
 
-    def __init__(self,
-                 eyes: List[Eye],
-                 apertures: Union[Aperture, List[Aperture]],
-                 screen: Screen,
-                 camera_position: Tuple[float, float, float],
-                 rotation_matrix: np.ndarray | None = None,
-                 camera_name: str | None = None):
+    def __init__(
+        self,
+        eyes: List[Eye],
+        apertures: Union[Aperture, List[Aperture]],
+        screen: Screen,
+        camera_position: Tuple[float, float, float],
+        rotation_matrix: np.ndarray | None = None,
+        camera_name: str | None = None,
+    ):
         """Create a multi-pinhole camera.
 
         Parameters
@@ -70,30 +79,47 @@ class Camera:
         self._world = None
         self._worlds = []
         self._frozen = False
-        self._eyes = list(eyes) if isinstance(eyes, (list, tuple)) else [eyes, ]
+        self._eyes = (
+            list(eyes)
+            if isinstance(eyes, (list, tuple))
+            else [
+                eyes,
+            ]
+        )
         if len({eye.eye_type for eye in self._eyes}) == 1:
             self._eye_type = self._eyes[0].eye_type
         else:
             raise ValueError("eye_type of all eyes should be the same")
-        self._apertures = list(apertures) if isinstance(apertures, (list, tuple)) else [apertures, ]
+        self._apertures = (
+            list(apertures)
+            if isinstance(apertures, (list, tuple))
+            else [
+                apertures,
+            ]
+        )
         self._screen = screen
         self._camera_position = np.array(camera_position, dtype=float, copy=True)
-        self._rotation_matrix = (np.eye(3) if rotation_matrix is None
-                                 else np.array(rotation_matrix, dtype=float, copy=True))
+        self._rotation_matrix = (
+            np.eye(3)
+            if rotation_matrix is None
+            else np.array(rotation_matrix, dtype=float, copy=True)
+        )
 
     @classmethod
-    def single_pinhole(cls,
-                       focal_length: float,
-                       eye_size: Union[float, Vector2DLike],
-                       screen_size: Union[Number, Vector2DLike],
-                       pixel_shape: Tuple[int, int],
-                       apertures: Union[Aperture, List[Aperture]],
-                       *,
-                       eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
-                       screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
-                       subpixel_resolution: int = 1,
-                       wavelength_range: Tuple[float, float] = (0.01, 0.1),
-                       camera_name: str | None = None) -> "Camera":
+    def single_pinhole(
+        cls,
+        focal_length: float,
+        eye_size: Union[float, Vector2DLike],
+        screen_size: Union[Number, Vector2DLike],
+        pixel_shape: Tuple[int, int],
+        apertures: Union[Aperture, List[Aperture]],
+        *,
+        eye_shape: Literal["circle", "ellipse", "rectangle"] = "circle",
+        screen_shape: Literal["circle", "ellipse", "square", "rectangle"] = "square",
+        subpixel_resolution: int = 1,
+        wavelength_range: Tuple[float, float] = (0.01, 0.1),
+        camera_name: str | None = None,
+    ) -> "Camera":
         """Create a single-pinhole camera in its local reference pose.
 
         The screen center is the camera origin, the eye is centered at
@@ -132,22 +158,28 @@ class Camera:
         Camera
             Camera in the identity pose, ready to be positioned and oriented.
         """
-        eye = Eye(position=(0.0, 0.0),
-                  focal_length=focal_length,
-                  eye_type="pinhole",
-                  eye_size=eye_size,
-                  eye_shape=eye_shape,
-                  wavelength_range=wavelength_range)
-        screen = Screen(screen_shape=screen_shape,
-                        screen_size=screen_size,
-                        pixel_shape=pixel_shape,
-                        subpixel_resolution=subpixel_resolution)
-        return cls(eyes=eye,
-                   apertures=apertures,
-                   screen=screen,
-                   camera_position=(0.0, 0.0, 0.0),
-                   rotation_matrix=np.eye(3),
-                   camera_name=camera_name)
+        eye = Eye(
+            position=(0.0, 0.0),
+            focal_length=focal_length,
+            eye_type="pinhole",
+            eye_size=eye_size,
+            eye_shape=eye_shape,
+            wavelength_range=wavelength_range,
+        )
+        screen = Screen(
+            screen_shape=screen_shape,
+            screen_size=screen_size,
+            pixel_shape=pixel_shape,
+            subpixel_resolution=subpixel_resolution,
+        )
+        return cls(
+            eyes=eye,
+            apertures=apertures,
+            screen=screen,
+            camera_position=(0.0, 0.0, 0.0),
+            rotation_matrix=np.eye(3),
+            camera_name=camera_name,
+        )
 
     def __repr__(self):
         """str: Render a concise textual summary of the camera configuration."""
@@ -164,13 +196,24 @@ class Camera:
                 elif k == "_eyes":
                     if len(self.__dict__[k]) != len(other.__dict__[k]):
                         return False
-                    elif not all([eye1 == eye2 for eye1, eye2 in zip(self.__dict__[k], other.__dict__[k])]):
+                    elif not all(
+                        [
+                            eye1 == eye2
+                            for eye1, eye2 in zip(self.__dict__[k], other.__dict__[k])
+                        ]
+                    ):
                         return False
                 elif k == "_apertures":
                     if len(self.__dict__[k]) != len(other.__dict__[k]):
                         return False
-                    elif not all([aperture1 == aperture2 for aperture1, aperture2 in
-                                  zip(self.__dict__[k], other.__dict__[k])]):
+                    elif not all(
+                        [
+                            aperture1 == aperture2
+                            for aperture1, aperture2 in zip(
+                                self.__dict__[k], other.__dict__[k]
+                            )
+                        ]
+                    ):
                         return False
                 elif k == "_screen":
                     if self.__dict__[k] != other.__dict__[k]:
@@ -194,10 +237,19 @@ class Camera:
             d2.pop("_apertures")
             d2.pop("_screen")
 
-            return all([np.all(v1 == v2) for (v1, v2) in zip(d1.values(), d2.values())]) and \
-                all([eye1 == eye2 for eye1, eye2 in zip(self._eyes, other._eyes)]) and \
-                all([aperture1 == aperture2 for aperture1, aperture2 in zip(self._apertures, other._apertures)]) and \
-                self._screen == other._screen
+            return (
+                all([np.all(v1 == v2) for (v1, v2) in zip(d1.values(), d2.values())])
+                and all([eye1 == eye2 for eye1, eye2 in zip(self._eyes, other._eyes)])
+                and all(
+                    [
+                        aperture1 == aperture2
+                        for aperture1, aperture2 in zip(
+                            self._apertures, other._apertures
+                        )
+                    ]
+                )
+                and self._screen == other._screen
+            )
 
     @property
     def eye_type(self) -> str:
@@ -328,10 +380,7 @@ class Camera:
         self._worlds = [world for world in self._worlds if world is not world_obj]
         self._world = self._worlds[-1] if self._worlds else None
 
-    def set_camera_position(
-            self,
-            camera_position: Vector3DLike
-    ) -> "Camera":
+    def set_camera_position(self, camera_position: Vector3DLike) -> "Camera":
         """Set the camera origin to an absolute world-coordinate position.
 
         Parameters
@@ -416,10 +465,7 @@ class Camera:
         return self
 
     def set_rotation_euler(
-            self,
-            order: str,
-            angle: Vector3DLike,
-            degrees: bool = True
+        self, order: str, angle: Vector3DLike, degrees: bool = True
     ) -> "Camera":
         """Set the absolute world-to-camera rotation using Euler angles.
 
@@ -438,7 +484,9 @@ class Camera:
             The camera instance with the updated rotation matrix.
         """
         self._ensure_mutable()
-        self._rotation_matrix = Rotation.from_euler(order, angle, degrees=degrees).as_matrix()
+        self._rotation_matrix = Rotation.from_euler(
+            order, angle, degrees=degrees
+        ).as_matrix()
         return self
 
     def set_rotation_matrix(self, rotation_matrix: MatrixLike) -> "Camera":
@@ -474,11 +522,11 @@ class Camera:
         return self
 
     def set_orientation(
-            self,
-            look: Vector3DLike,
-            *,
-            right: Vector3DLike | None = None,
-            down: Vector3DLike | None = None
+        self,
+        look: Vector3DLike,
+        *,
+        right: Vector3DLike | None = None,
+        down: Vector3DLike | None = None,
     ) -> "Camera":
         """Set camera orientation from axes expressed in world coordinates.
 
@@ -527,23 +575,27 @@ class Camera:
             x_candidate = np.asarray(right, dtype=float)
             if x_candidate.shape != (3,):
                 raise ValueError("right must be a 3D vector")
-            x_axis = normalized(x_candidate - np.dot(x_candidate, z_axis) * z_axis, "right")
+            x_axis = normalized(
+                x_candidate - np.dot(x_candidate, z_axis) * z_axis, "right"
+            )
             y_axis = np.cross(z_axis, x_axis)
         else:
             y_candidate = np.asarray(down, dtype=float)
             if y_candidate.shape != (3,):
                 raise ValueError("down must be a 3D vector")
-            y_axis = normalized(y_candidate - np.dot(y_candidate, z_axis) * z_axis, "down")
+            y_axis = normalized(
+                y_candidate - np.dot(y_candidate, z_axis) * z_axis, "down"
+            )
             x_axis = np.cross(y_axis, z_axis)
 
         return self.set_rotation_matrix(np.stack([x_axis, y_axis, z_axis]))
 
     def set_orientation_from_points(
-            self,
-            look_point: Vector3DLike,
-            *,
-            right_point: Vector3DLike | None = None,
-            down_point: Vector3DLike | None = None
+        self,
+        look_point: Vector3DLike,
+        *,
+        right_point: Vector3DLike | None = None,
+        down_point: Vector3DLike | None = None,
     ) -> "Camera":
         """Set orientation from world-coordinate points viewed from the camera.
 
@@ -576,7 +628,9 @@ class Camera:
         method.
         """
         if (right_point is None) == (down_point is None):
-            raise ValueError("exactly one of right_point and down_point must be provided")
+            raise ValueError(
+                "exactly one of right_point and down_point must be provided"
+            )
 
         def direction_to(point, name):
             point = np.asarray(point, dtype=float)
@@ -585,7 +639,9 @@ class Camera:
             return point - self.camera_position
 
         look = direction_to(look_point, "look_point")
-        right = None if right_point is None else direction_to(right_point, "right_point")
+        right = (
+            None if right_point is None else direction_to(right_point, "right_point")
+        )
         down = None if down_point is None else direction_to(down_point, "down_point")
         return self.set_orientation(look, right=right, down=down)
 
@@ -636,12 +692,12 @@ class Camera:
         self._apertures.append(aperture)
 
     def calc_image_vec(
-            self,
-            eye_num: int,
-            points: np.ndarray,
-            verbose: int = 0,
-            check_visibility: bool = True,
-            etendue_per_subpixel: np.ndarray | None = None
+        self,
+        eye_num: int,
+        points: np.ndarray,
+        verbose: int = 0,
+        check_visibility: bool = True,
+        etendue_per_subpixel: np.ndarray | None = None,
     ) -> sparse.csr_matrix:
         """sparse.csr_matrix: Assemble ray hits into a sparse image vector.
 
@@ -671,30 +727,41 @@ class Camera:
         if check_visibility:
             # Apertures are treated as blocking surfaces: a ray is usable only
             # when it avoids every aperture mesh.
-            visible_list = [stl_utils.check_visible(mesh_obj=aperture.stl_model,
-                                                    start=eye.position,
-                                                    grid_points=points_in_camera,
-                                                    behind_start_included=True) for aperture in self._apertures]
-            visible = np.all(visible_list, axis=0) if visible_list else np.ones(points_in_camera.shape[0], dtype=bool)
+            visible_list = [
+                stl_utils.check_visible(
+                    mesh_obj=aperture.stl_model,
+                    start=eye.position,
+                    grid_points=points_in_camera,
+                    behind_start_included=True,
+                )
+                for aperture in self._apertures
+            ]
+            visible = (
+                np.all(visible_list, axis=0)
+                if visible_list
+                else np.ones(points_in_camera.shape[0], dtype=bool)
+            )
             rays = eye.calc_rays(points_in_camera, visible)
         else:
             rays = eye.calc_rays(points_in_camera)
 
         mat = self.screen.ray2image_grid(
-            eye, rays, verbose=verbose,
+            eye,
+            rays,
+            verbose=verbose,
             etendue_per_subpixel=etendue_per_subpixel,
         )
         return mat
 
     def draw_optical_system(
-            self,
-            ax: plt.Axes | None = None,
-            show_focal_length: bool = True,
-            show_aperture: bool = True,
-            show_screen: bool = True,
-            X_lim: tuple[float, float] | None = None,
-            Y_lim: tuple[float, float] | None = None,
-            Z_lim: tuple[float, float] | None = None
+        self,
+        ax: plt.Axes | None = None,
+        show_focal_length: bool = True,
+        show_aperture: bool = True,
+        show_screen: bool = True,
+        X_lim: tuple[float, float] | None = None,
+        Y_lim: tuple[float, float] | None = None,
+        Z_lim: tuple[float, float] | None = None,
     ) -> plt.Axes:
         """matplotlib.axes.Axes: Visualise optical elements in a 3D Matplotlib scene.
 
@@ -727,28 +794,80 @@ class Camera:
         # z-axis in the figure is -Y-axis in the camera coordinate system
         if ax is None:
             fig = plt.figure(figsize=(5, 5))
-            ax = fig.add_subplot(111, projection='3d')
+            ax = fig.add_subplot(111, projection="3d")
 
         # set axes limits
-        X_lim = (min([*[eye.position[0] for eye in self._eyes],
-                      *[aperture.stl_model.x.min() if aperture.stl_model else
-                        -aperture.size[0] / 2 + aperture.position[0] for aperture in self._apertures],
-                      -self._screen.screen_size[1] / 2]),
-                 max([*[eye.position[0] for eye in self._eyes],
-                      *[aperture.stl_model.x.max() if aperture.stl_model else
-                        aperture.size[0] / 2 + aperture.position[0] for aperture in self._apertures],
-                      self._screen.screen_size[1] / 2])) if X_lim is None else X_lim
-        Y_lim = (min([*[eye.position[1] for eye in self._eyes],
-                      *[aperture.stl_model.y.min() if aperture.stl_model else
-                        -aperture.size[1] / 2 + aperture.position[1] for aperture in self._apertures],
-                      -self._screen.screen_size[0] / 2]),
-                 max([*[eye.position[1] for eye in self._eyes],
-                      *[aperture.stl_model.y.max() if aperture.stl_model else
-                        aperture.size[1] / 2 + aperture.position[1] for aperture in self._apertures],
-                      self._screen.screen_size[0] / 2])) if Y_lim is None else Y_lim
-        Z_lim = (0,
-                 max(*[aperture.position[2] for aperture in self._apertures],
-                     *[eye.position[2] for eye in self._eyes])) if Z_lim is None else Z_lim
+        X_lim = (
+            (
+                min(
+                    [
+                        *[eye.position[0] for eye in self._eyes],
+                        *[
+                            aperture.stl_model.x.min()
+                            if aperture.stl_model
+                            else -aperture.size[0] / 2 + aperture.position[0]
+                            for aperture in self._apertures
+                        ],
+                        -self._screen.screen_size[1] / 2,
+                    ]
+                ),
+                max(
+                    [
+                        *[eye.position[0] for eye in self._eyes],
+                        *[
+                            aperture.stl_model.x.max()
+                            if aperture.stl_model
+                            else aperture.size[0] / 2 + aperture.position[0]
+                            for aperture in self._apertures
+                        ],
+                        self._screen.screen_size[1] / 2,
+                    ]
+                ),
+            )
+            if X_lim is None
+            else X_lim
+        )
+        Y_lim = (
+            (
+                min(
+                    [
+                        *[eye.position[1] for eye in self._eyes],
+                        *[
+                            aperture.stl_model.y.min()
+                            if aperture.stl_model
+                            else -aperture.size[1] / 2 + aperture.position[1]
+                            for aperture in self._apertures
+                        ],
+                        -self._screen.screen_size[0] / 2,
+                    ]
+                ),
+                max(
+                    [
+                        *[eye.position[1] for eye in self._eyes],
+                        *[
+                            aperture.stl_model.y.max()
+                            if aperture.stl_model
+                            else aperture.size[1] / 2 + aperture.position[1]
+                            for aperture in self._apertures
+                        ],
+                        self._screen.screen_size[0] / 2,
+                    ]
+                ),
+            )
+            if Y_lim is None
+            else Y_lim
+        )
+        Z_lim = (
+            (
+                0,
+                max(
+                    *[aperture.position[2] for aperture in self._apertures],
+                    *[eye.position[2] for eye in self._eyes],
+                ),
+            )
+            if Z_lim is None
+            else Z_lim
+        )
 
         ax.set_xlim(-Z_lim[1] * 0.1, Z_lim[1] * 1.1)
         ax.set_ylim(1.1 * X_lim[0], 1.1 * X_lim[1])
@@ -761,7 +880,9 @@ class Camera:
         ax.set_ylabel("X")
         ax.set_zlabel("Y")
 
-        ax.set_box_aspect((Z_lim[1] - Z_lim[0], X_lim[1] - X_lim[0], Y_lim[1] - Y_lim[0]))
+        ax.set_box_aspect(
+            (Z_lim[1] - Z_lim[0], X_lim[1] - X_lim[0], Y_lim[1] - Y_lim[0])
+        )
         ax.set_title("Optical system")
 
         # draw the origin of the camera coordinate system
@@ -769,26 +890,58 @@ class Camera:
         # draw eyes
         for eye in self._eyes:
             # draw eye position
-            ax.scatter(eye.position[0], eye.position[1], eye.position[2], c="k", marker="x", s=50, zdir="x")
+            ax.scatter(
+                eye.position[0],
+                eye.position[1],
+                eye.position[2],
+                c="k",
+                marker="x",
+                s=50,
+                zdir="x",
+            )
             # draw eye principal point
-            ax.scatter(eye.principal_point[0], eye.principal_point[1], eye.principal_point[2], edgecolors="r",
-                       facecolors="none", marker="o", s=50, zdir="x")
+            ax.scatter(
+                eye.principal_point[0],
+                eye.principal_point[1],
+                eye.principal_point[2],
+                edgecolors="r",
+                facecolors="none",
+                marker="o",
+                s=50,
+                zdir="x",
+            )
             if show_focal_length:
                 # draw eye focal length
-                ax.quiver(eye.principal_point[2], eye.principal_point[0], eye.principal_point[1],
-                          -eye.focal_length, 0, 0, color="r")
+                ax.quiver(
+                    eye.principal_point[2],
+                    eye.principal_point[0],
+                    eye.principal_point[1],
+                    -eye.focal_length,
+                    0,
+                    0,
+                    color="r",
+                )
             if self._eye_type == "pinhole":
                 pass
             elif self._eye_type == "lens":
                 # draw eye shape
                 if eye.eye_shape == "rectangle":
                     # patch of rectangle
-                    patch2d = Rectangle((eye.position[0] - eye.eye_size[0] / 2,
-                                         eye.position[1] - eye.eye_size[1] / 2),
-                                        eye.eye_size[0], eye.eye_size[1])
+                    patch2d = Rectangle(
+                        (
+                            eye.position[0] - eye.eye_size[0] / 2,
+                            eye.position[1] - eye.eye_size[1] / 2,
+                        ),
+                        eye.eye_size[0],
+                        eye.eye_size[1],
+                    )
                 else:
                     # patch of ellipse
-                    patch2d = Ellipse((eye.position[0], eye.position[1]), eye.eye_size[0], eye.eye_size[1])
+                    patch2d = Ellipse(
+                        (eye.position[0], eye.position[1]),
+                        eye.eye_size[0],
+                        eye.eye_size[1],
+                    )
                 # transform patch to 3D
                 ax.add_collection3d(col=patch2d, zs=eye.position[2], zdir="x")
         # draw screen
@@ -797,12 +950,24 @@ class Camera:
             # center of the screen is at the origin of the camera coordinate system
             if self._screen.screen_shape == "rectangle":
                 # patch of rectangle
-                patch2d = Rectangle(-np.array(self._screen.screen_size[::-1]) / 2, *self._screen.screen_size[::-1],
-                                    facecolor="orange", edgecolor="k", alpha=0.5, linewidth=2)
+                patch2d = Rectangle(
+                    -np.array(self._screen.screen_size[::-1]) / 2,
+                    *self._screen.screen_size[::-1],
+                    facecolor="orange",
+                    edgecolor="k",
+                    alpha=0.5,
+                    linewidth=2,
+                )
             else:
                 # patch of ellipse
-                patch2d = Ellipse((0, 0), *self._screen.screen_size * 2,
-                                  facecolor="orange", edgecolor="k", alpha=0.5, linewidth=2)
+                patch2d = Ellipse(
+                    (0, 0),
+                    *self._screen.screen_size * 2,
+                    facecolor="orange",
+                    edgecolor="k",
+                    alpha=0.5,
+                    linewidth=2,
+                )
             # transform patch to 3D
             ax.add_patch(patch2d)
             art3d.pathpatch_2d_to_3d(patch2d, z=0, zdir="x")
@@ -810,26 +975,51 @@ class Camera:
         if show_aperture:
             for aperture in self._apertures:
                 # draw aperture position
-                ax.scatter(aperture.position[0], aperture.position[1], aperture.position[2], c="k", marker="x", s=100,
-                           zdir="x")
+                ax.scatter(
+                    aperture.position[0],
+                    aperture.position[1],
+                    aperture.position[2],
+                    c="k",
+                    marker="x",
+                    s=100,
+                    zdir="x",
+                )
                 # show aperture stl model
                 if aperture.stl_model is not None:
-                    tmp_model = stl_utils.rotate_model(aperture.stl_model, matrix=[[0, 1, 0],
-                                                                                   [0, 0, 1],
-                                                                                   [1, 0, 0]])
-                    stl_utils.show_stl(tmp_model, ax=ax, alpha=0.5, facecolors="orange", edgecolors="k", lw=0.5)
+                    tmp_model = stl_utils.rotate_model(
+                        aperture.stl_model, matrix=[[0, 1, 0], [0, 0, 1], [1, 0, 0]]
+                    )
+                    stl_utils.show_stl(
+                        tmp_model,
+                        ax=ax,
+                        alpha=0.5,
+                        facecolors="orange",
+                        edgecolors="k",
+                        lw=0.5,
+                    )
                 else:
                     # draw aperture shape
                     if aperture.shape == "rectangle":
                         # patch of rectangle
-                        patch2d = Rectangle((aperture.position[0] - aperture.size[0] / 2,
-                                             aperture.position[1] - aperture.size[1] / 2),
-                                            *aperture.size,
-                                            facecolor="none", edgecolor="k", linewidth=2)
+                        patch2d = Rectangle(
+                            (
+                                aperture.position[0] - aperture.size[0] / 2,
+                                aperture.position[1] - aperture.size[1] / 2,
+                            ),
+                            *aperture.size,
+                            facecolor="none",
+                            edgecolor="k",
+                            linewidth=2,
+                        )
                     else:
                         # patch of ellipse
-                        patch2d = Ellipse(aperture.position, *aperture.size * 2,
-                                          facecolor="none", edgecolor="k", linewidth=2)
+                        patch2d = Ellipse(
+                            aperture.position,
+                            *aperture.size * 2,
+                            facecolor="none",
+                            edgecolor="k",
+                            linewidth=2,
+                        )
                     ax.add_patch(patch2d)
                     art3d.pathpatch_2d_to_3d(patch2d, z=aperture.position[2], zdir="x")
 
@@ -845,9 +1035,7 @@ class Camera:
         return ax
 
     def draw_camera_orientation_plotly(
-            self,
-            fig: go.Figure | None = None,
-            **kwargs: object
+        self, fig: go.Figure | None = None, **kwargs: object
     ) -> go.Figure:
         """go.Figure: Render camera axes within Plotly for interactive viewing.
 
@@ -864,14 +1052,16 @@ class Camera:
             Figure augmented with camera orientation geometry.
         """
         fig = go.Figure() if fig is None else fig
-        stl_utils.plotly_show_axes(R=self.rotation_matrix, fig=fig, origin=self.camera_position, name="camera",
-                                   **kwargs)
+        stl_utils.plotly_show_axes(
+            R=self.rotation_matrix,
+            fig=fig,
+            origin=self.camera_position,
+            name="camera",
+            **kwargs,
+        )
         return fig
 
-    def draw_camera_orientation(
-            self,
-            ax: plt.Axes | None = None
-    ) -> plt.Axes:
+    def draw_camera_orientation(self, ax: plt.Axes | None = None) -> plt.Axes:
         """matplotlib.axes.Axes: Plot camera axes relative to the world frame.
 
         Parameters
@@ -911,7 +1101,9 @@ class Camera:
         ax.quiver(*self.camera_position, *(self.camera_z * arrow_length), color="b")
 
         # draw world coordinate system
-        arrow_length = np.mean([ax.get_xlim()[1], ax.get_ylim()[1], ax.get_zlim()[1]]) * 0.8
+        arrow_length = (
+            np.mean([ax.get_xlim()[1], ax.get_ylim()[1], ax.get_zlim()[1]]) * 0.8
+        )
         ax.quiver(0, 0, 0, arrow_length, 0, 0, color="k")
         ax.quiver(0, 0, 0, 0, arrow_length, 0, color="k")
         ax.quiver(0, 0, 0, 0, 0, arrow_length, color="k")
@@ -931,6 +1123,8 @@ class Camera:
         print(f"Screen size: {self._screen.screen_size}")
         print(f"pixel shape: {self._screen.pixel_shape}")
         print(f"pixel size: {self._screen.pixel_size}")
-        print(f"Aperture position: {[aperture.position for aperture in self._apertures]}")
+        print(
+            f"Aperture position: {[aperture.position for aperture in self._apertures]}"
+        )
         print(f"Aperture shape: {[aperture.shape for aperture in self._apertures]}")
         print(f"Aperture size: {[aperture.size for aperture in self._apertures]}")

@@ -33,13 +33,21 @@ def _projection_digest(matrix) -> str:
     return digest.hexdigest()
 
 
-def run(voxel_shape=(8, 6, 4), partial_res=2, implementation="optimized",
-        max_working_memory=200_000_000):
+def run(
+    voxel_shape=(8, 6, 4),
+    partial_res=2,
+    implementation="optimized",
+    max_working_memory=200_000_000,
+):
     world = build_mst_world(tuple(voxel_shape), detector_res=1)
     with contextlib.redirect_stdout(io.StringIO()):
         world.remove_camera("right")
     production = stl_utils.check_visible
-    selected = production if implementation == "optimized" else stl_utils._check_visible_reference
+    selected = (
+        production
+        if implementation == "optimized"
+        else stl_utils._check_visible_reference
+    )
     stl_utils.check_visible = selected
     try:
         np.random.seed(124)
@@ -56,18 +64,24 @@ def run(voxel_shape=(8, 6, 4), partial_res=2, implementation="optimized",
         def measured_find_visible_points(points, *args, **kwargs):
             started = time.perf_counter()
             result = original_find_visible_points(points, *args, **kwargs)
-            partial_visibility_calls.append({
-                "points": int(len(points)),
-                "seconds": time.perf_counter() - started,
-            })
+            partial_visibility_calls.append(
+                {
+                    "points": int(len(points)),
+                    "seconds": time.perf_counter() - started,
+                }
+            )
             return result
 
         world.find_visible_points = measured_find_visible_points
         np.random.seed(124)
         _, projection_metrics = _measure(
             lambda: world.set_projection_matrix(
-                res=1, partial_res=partial_res, parallel=1, verbose=0,
-                force=False, max_working_memory=max_working_memory,
+                res=1,
+                partial_res=partial_res,
+                parallel=1,
+                verbose=0,
+                force=False,
+                max_working_memory=max_working_memory,
             ),
         )
         projection = world.P_matrix["left"].tocsr()
@@ -89,8 +103,12 @@ def run(voxel_shape=(8, 6, 4), partial_res=2, implementation="optimized",
         "vertex_cache_reused": world._visible_vertices["left"] is cached_vertices,
         "voxel_cache_reused": world._visible_voxels["left"] is cached_voxels,
         "partial_visibility_calls": len(partial_visibility_calls),
-        "partial_visibility_points": sum(call["points"] for call in partial_visibility_calls),
-        "partial_visibility_seconds": sum(call["seconds"] for call in partial_visibility_calls),
+        "partial_visibility_points": sum(
+            call["points"] for call in partial_visibility_calls
+        ),
+        "partial_visibility_seconds": sum(
+            call["seconds"] for call in partial_visibility_calls
+        ),
         "projection_shape": list(projection.shape),
         "projection_nnz": int(projection.nnz),
         "projection_sum": float(projection.sum()),
@@ -109,12 +127,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--voxel-shape", type=_triplet, default=(8, 6, 4))
     parser.add_argument("--partial-res", type=int, default=2)
-    parser.add_argument("--implementation", choices=("optimized", "reference"), default="optimized")
+    parser.add_argument(
+        "--implementation", choices=("optimized", "reference"), default="optimized"
+    )
     parser.add_argument("--max-working-memory-mb", type=float, default=200.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = run(
-        args.voxel_shape, args.partial_res, args.implementation,
+        args.voxel_shape,
+        args.partial_res,
+        args.implementation,
         int(args.max_working_memory_mb * 1_000_000),
     )
     payload = json.dumps(result, indent=2, sort_keys=True)

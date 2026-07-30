@@ -257,19 +257,26 @@ centered on the camera origin, the world-space position is `(0, 0, 0)`, and
 the rotation is the identity. Place that rigid assembly afterward:
 
 ```python
-camera = Camera.single_pinhole(
-    focal_length=25,
-    eye_size=1,
-    screen_size=61 * 0.13,
-    pixel_shape=(61, 61),
-    subpixel_resolution=5,
-    apertures=aperture,
-).set_rotation_euler(
-    "zxz", (2.9, 98, -19), degrees=True,
-).set_camera_position(
-    world_position,
-).translate_camera(
-    (4.15, 0, 0),
+camera = (
+    Camera.single_pinhole(
+        focal_length=25,
+        eye_size=1,
+        screen_size=61 * 0.13,
+        pixel_shape=(61, 61),
+        subpixel_resolution=5,
+        apertures=aperture,
+    )
+    .set_rotation_euler(
+        "zxz",
+        (2.9, 98, -19),
+        degrees=True,
+    )
+    .set_camera_position(
+        world_position,
+    )
+    .translate_camera(
+        (4.15, 0, 0),
+    )
 )
 ```
 

@@ -22,16 +22,36 @@ def build_relax_world(voxel_shape=(12, 12, 6)):
         max_size=200,
     )
     eyes_1 = [
-        Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25,
-            focal_length=20, position=[0, 0]),
-        Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25,
-            focal_length=20, position=[-5, 5]),
+        Eye(
+            eye_type="pinhole",
+            eye_shape="circle",
+            eye_size=0.25,
+            focal_length=20,
+            position=[0, 0],
+        ),
+        Eye(
+            eye_type="pinhole",
+            eye_shape="circle",
+            eye_size=0.25,
+            focal_length=20,
+            position=[-5, 5],
+        ),
     ]
     eyes_2 = [
-        Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25,
-            focal_length=20, position=[0, 0]),
-        Eye(eye_type="pinhole", eye_shape="circle", eye_size=0.25,
-            focal_length=20, position=[-5, 5]),
+        Eye(
+            eye_type="pinhole",
+            eye_shape="circle",
+            eye_size=0.25,
+            focal_length=20,
+            position=[0, 0],
+        ),
+        Eye(
+            eye_type="pinhole",
+            eye_shape="circle",
+            eye_size=0.25,
+            focal_length=20,
+            position=[-5, 5],
+        ),
     ]
     cameras = {
         "upper": Camera(
@@ -64,7 +84,9 @@ def build_relax_world(voxel_shape=(12, 12, 6)):
         coordinate_type="torus",
         coordinate_parameters={"major_radius": 500, "minor_radius": 250},
     )
-    vessel_path = Path(multi_pinhole.__file__).resolve().parent / "data" / "relax_rotated.stl"
+    vessel_path = (
+        Path(multi_pinhole.__file__).resolve().parent / "data" / "relax_rotated.stl"
+    )
     world = World(
         voxel=voxel,
         cameras=cameras,
@@ -75,7 +97,7 @@ def build_relax_world(voxel_shape=(12, 12, 6)):
     def inside_plasma(x, y, z):
         major_radius = 500
         minor_radius = 250
-        return (np.sqrt(x ** 2 + y ** 2) - major_radius) ** 2 + z ** 2 <= minor_radius ** 2
+        return (np.sqrt(x**2 + y**2) - major_radius) ** 2 + z**2 <= minor_radius**2
 
     world.set_inside_vertices(inside_plasma)
     return world
@@ -89,7 +111,7 @@ def run_projection(world, resolution=1, parallel=1, plot=True):
         parallel=parallel,
     )
     r, _, _ = world.voxel.normalized_coordinates().T
-    emission = np.clip(1 - r ** 2, 0, None)
+    emission = np.clip(1 - r**2, 0, None)
 
     images = {
         camera_key: world.project(emission, camera_idx=camera_key)
@@ -108,12 +130,20 @@ def run_projection(world, resolution=1, parallel=1, plot=True):
 
 def main():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--resolution", type=int, default=1,
-                        help="sub-voxel projection resolution (default: 1)")
-    parser.add_argument("--parallel", type=int, default=1,
-                        help="projection worker count (default: 1)")
-    parser.add_argument("--no-show", action="store_true",
-                        help="build the projection without opening figures")
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=1,
+        help="sub-voxel projection resolution (default: 1)",
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=1, help="projection worker count (default: 1)"
+    )
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="build the projection without opening figures",
+    )
     args = parser.parse_args()
 
     world = build_relax_world()

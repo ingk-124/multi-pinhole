@@ -44,11 +44,12 @@ import numpy as np
 from multi_pinhole import Eye, Screen, Camera, Voxel, World
 
 # Build a simple camera.
-eye = Eye(position=(0., 0.), focal_length=10., eye_size=0.5)
-screen = Screen("square", 20., pixel_shape=(4, 4), subpixel_resolution=2)
-camera = Camera(eyes=[eye], apertures=[], screen=screen,
-                camera_position=(0., 0., -20.))
-voxel = Voxel.uniform_voxel(((-1., 1.),) * 3, shape=(2, 2, 2))
+eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=0.5)
+screen = Screen("square", 20.0, pixel_shape=(4, 4), subpixel_resolution=2)
+camera = Camera(
+    eyes=[eye], apertures=[], screen=screen, camera_position=(0.0, 0.0, -20.0)
+)
+voxel = Voxel.uniform_voxel(((-1.0, 1.0),) * 3, shape=(2, 2, 2))
 world = World(voxel=voxel, cameras={"main": camera}, verbose=0)
 
 # Boolean tests are evaluated at voxel vertices and sample centers.
@@ -185,8 +186,15 @@ center_angle_xy = profiles.helical_center_angle(
     phi_ref=0.0,
 )
 shape = profiles.kinked_profile(
-    x, y, A=1.0, delta=0.1, alpha=2, beta=3,
-    xi_0=0.1, rho_s=0.5, d=2,
+    x,
+    y,
+    A=1.0,
+    delta=0.1,
+    alpha=2,
+    beta=3,
+    xi_0=0.1,
+    rho_s=0.5,
+    d=2,
     center_angle_xy=center_angle_xy,
 )
 ```

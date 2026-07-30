@@ -13,7 +13,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def get_row_col(val_list: list[list[np.ndarray]] | list[np.ndarray] | np.ndarray) -> tuple[int, int, np.ndarray]:
+def get_row_col(
+    val_list: list[list[np.ndarray]] | list[np.ndarray] | np.ndarray,
+) -> tuple[int, int, np.ndarray]:
     """Get the number of rows and columns of a 2d list.
 
     Parameters
@@ -37,11 +39,11 @@ def get_row_col(val_list: list[list[np.ndarray]] | list[np.ndarray] | np.ndarray
         try:
             val_list = np.asarray(val_list)
         except ValueError:
-            raise ValueError('The columns of the 2d list are not the same.')
+            raise ValueError("The columns of the 2d list are not the same.")
     elif isinstance(val_list, np.ndarray):
         pass
     else:
-        raise TypeError('The type of val_list is not supported.')
+        raise TypeError("The type of val_list is not supported.")
 
     val_list = np.array(val_list, ndmin=3)
     rows, cols = val_list.shape[:2]
@@ -49,16 +51,16 @@ def get_row_col(val_list: list[list[np.ndarray]] | list[np.ndarray] | np.ndarray
 
 
 def volume_rendering(
-        f_val: np.ndarray,
-        grid: np.ndarray,
-        fig: go.Figure | None = None,
-        row: int | None = None,
-        col: int | None = None,
-        isomin: float | None = None,
-        isomax: float | None = None,
-        opacity: float = 0.8,
-        surface_count: int = 7,
-        **volumekw: Any
+    f_val: np.ndarray,
+    grid: np.ndarray,
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
+    isomin: float | None = None,
+    isomax: float | None = None,
+    opacity: float = 0.8,
+    surface_count: int = 7,
+    **volumekw: Any,
 ) -> go.Figure:
     """Add a Plotly 3D volume-rendering trace for a scalar field on a grid.
 
@@ -99,7 +101,7 @@ def volume_rendering(
         newly created figure).
     """
     if fig is None:
-        fig = make_subplots(rows=1, cols=1, specs=[[{'type': 'volume'}]])
+        fig = make_subplots(rows=1, cols=1, specs=[[{"type": "volume"}]])
         row = 1
         col = 1
 
@@ -109,22 +111,33 @@ def volume_rendering(
         isomax = f_val.max()
     if isomin is None:
         isomin = f_val.min()
-    fig.add_trace(go.Volume(x=X.ravel(), y=Y.ravel(), z=Z.ravel(), value=f_val.ravel() + 0.,
-                            isomin=isomin, isomax=isomax, opacity=opacity,
-                            surface_count=surface_count, **volumekw),
-                  row=row, col=col)
+    fig.add_trace(
+        go.Volume(
+            x=X.ravel(),
+            y=Y.ravel(),
+            z=Z.ravel(),
+            value=f_val.ravel() + 0.0,
+            isomin=isomin,
+            isomax=isomax,
+            opacity=opacity,
+            surface_count=surface_count,
+            **volumekw,
+        ),
+        row=row,
+        col=col,
+    )
     return fig
 
 
 def multi_volume_rendering(
-        val_list: list[np.ndarray] | list[list[np.ndarray]],
-        grid: np.ndarray,
-        fig: go.Figure | None = None,
-        isomin: float = 10,
-        isomax: float | None = None,
-        opacity: float = 0.8,
-        surface_count: int = 7,
-        **volumekw: Any
+    val_list: list[np.ndarray] | list[list[np.ndarray]],
+    grid: np.ndarray,
+    fig: go.Figure | None = None,
+    isomin: float = 10,
+    isomax: float | None = None,
+    opacity: float = 0.8,
+    surface_count: int = 7,
+    **volumekw: Any,
 ) -> go.Figure:
     """Render a grid of Plotly 3D volume subplots, one per field in ``val_list``.
 
@@ -167,24 +180,34 @@ def multi_volume_rendering(
     """
     rows, cols, val_list = get_row_col(val_list)
     if fig is None:
-        fig = make_subplots(rows=rows, cols=cols, specs=[[{'type': 'volume'}] * cols] * rows)
+        fig = make_subplots(
+            rows=rows, cols=cols, specs=[[{"type": "volume"}] * cols] * rows
+        )
 
     for i in range(rows):
         for j in range(cols):
             f_val = val_list[i, j].ravel()
             isomax = f_val.max() if isomax is None else isomax
-            volume_rendering(f_val, grid, fig=fig, row=i + 1, col=j + 1,
-                             isomin=isomin, isomax=isomax, opacity=opacity,
-                             surface_count=surface_count, **volumekw)
+            volume_rendering(
+                f_val,
+                grid,
+                fig=fig,
+                row=i + 1,
+                col=j + 1,
+                isomin=isomin,
+                isomax=isomax,
+                opacity=opacity,
+                surface_count=surface_count,
+                **volumekw,
+            )
     return fig
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     a = np.arange(5)
     b = np.arange(5) + 10
     c = np.arange(5) + 20
 
     print(get_row_col([a, b, c]))
     print(get_row_col([a, b, c, a]))
-    print(get_row_col([[a, b],
-                       [c, a]]))
+    print(get_row_col([[a, b], [c, a]]))

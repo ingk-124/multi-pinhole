@@ -24,9 +24,7 @@ T = TypeVar("T")
 
 
 def type_check_and_list(
-        obj: T | list[T] | None,
-        type_: type[T],
-        default: T | list[T] | None = None
+    obj: T | list[T] | None, type_: type[T], default: T | list[T] | None = None
 ) -> list[T]:
     """
     Check the type of the input object and convert it to a list if it is not a list.
@@ -53,8 +51,8 @@ def type_check_and_list(
     elif isinstance(obj, list):
         for i, o in enumerate(obj):
             if not isinstance(o, type_):
-                raise TypeError(f'The type of obj[{i}] is not {type_}.')
+                raise TypeError(f"The type of obj[{i}] is not {type_}.")
     else:
-        raise TypeError(f'The type of obj is not {type_} or list.')
+        raise TypeError(f"The type of obj is not {type_} or list.")
 
     return obj

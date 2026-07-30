@@ -103,19 +103,26 @@ world (x, y, z)  →  camera (X, Y, Z)  →  eye/pinhole (X', Y', Z')  →  scre
 1つのscreenと1つのpinholeからなる一般的な構成には、`Camera.single_pinhole(...)` を利用できます。このファクトリは、screen中心とeye中心をカメラ原点に置き、`camera_position=(0, 0, 0)`、単位回転行列のローカル基準姿勢で光学系を生成します。その後、Camera全体を配置します。
 
 ```python
-camera = Camera.single_pinhole(
-    focal_length=25,
-    eye_size=1,
-    screen_size=61 * 0.13,
-    pixel_shape=(61, 61),
-    subpixel_resolution=5,
-    apertures=aperture,
-).set_rotation_euler(
-    "zxz", (2.9, 98, -19), degrees=True,
-).set_camera_position(
-    world_position,
-).translate_camera(
-    (4.15, 0, 0),
+camera = (
+    Camera.single_pinhole(
+        focal_length=25,
+        eye_size=1,
+        screen_size=61 * 0.13,
+        pixel_shape=(61, 61),
+        subpixel_resolution=5,
+        apertures=aperture,
+    )
+    .set_rotation_euler(
+        "zxz",
+        (2.9, 98, -19),
+        degrees=True,
+    )
+    .set_camera_position(
+        world_position,
+    )
+    .translate_camera(
+        (4.15, 0, 0),
+    )
 )
 ```
 

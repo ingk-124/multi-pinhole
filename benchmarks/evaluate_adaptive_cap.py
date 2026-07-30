@@ -12,6 +12,7 @@ import tempfile
 import time
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,10 +24,13 @@ def build_case(detector_res=1):
     """Build a fully-visible d=10 mm source column."""
     eye = Eye(position=(0.0, 0.0), focal_length=25.0, eye_size=1.0)
     camera = Camera(
-        eyes=[eye], apertures=[],
+        eyes=[eye],
+        apertures=[],
         screen=Screen(
-            screen_shape="square", screen_size=7.5,
-            pixel_shape=(61, 61), subpixel_resolution=detector_res,
+            screen_shape="square",
+            screen_size=7.5,
+            pixel_shape=(61, 61),
+            subpixel_resolution=detector_res,
         ),
         camera_position=(0.0, 0.0, 0.0),
     )
@@ -49,13 +53,14 @@ def emission_profiles(voxel, focal_length=25.0):
         "constant": np.ones(voxel.N),
         "linear": 0.25 + 0.75 * (z_eye - z_eye.min()) / np.ptp(z_eye),
         "square_near": (
-            (z_eye >= 400.0) & (z_eye <= 700.0)
+            (z_eye >= 400.0)
+            & (z_eye <= 700.0)
             & (np.abs(centers[:, 0]) <= 10.0)
             & (np.abs(centers[:, 1]) <= 10.0)
         ).astype(float),
         "gaussian_near": (
             np.exp(-0.5 * ((z_eye - 520.0) / 120.0) ** 2)
-            * np.exp(-0.5 * transverse_squared / 15.0 ** 2)
+            * np.exp(-0.5 * transverse_squared / 15.0**2)
         ),
     }
     nearest = np.argmin((z_eye - z_eye.min()) ** 2 + transverse_squared)
@@ -75,12 +80,9 @@ def _metrics(actual, reference):
             abs(actual.sum() - reference.sum()) / abs(reference.sum())
         ),
         "l1_relative": float(
-            np.linalg.norm(difference, ord=1)
-            / np.linalg.norm(reference, ord=1)
+            np.linalg.norm(difference, ord=1) / np.linalg.norm(reference, ord=1)
         ),
-        "l2_relative": float(
-            np.linalg.norm(difference) / np.linalg.norm(reference)
-        ),
+        "l2_relative": float(np.linalg.norm(difference) / np.linalg.norm(reference)),
         "max_pixel_relative": float(
             np.max(np.abs(difference)) / np.max(np.abs(reference))
         ),
@@ -89,8 +91,11 @@ def _metrics(actual, reference):
 
 def run(output_dir=None, cap=5, detector_res=1, parallel=4):
     """Run uncapped ideal and capped auto projections and save diagnostics."""
-    output_dir = (Path(output_dir) if output_dir is not None else
-                  Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_cap")
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_cap"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     world = build_case(detector_res=detector_res)
 
@@ -117,7 +122,10 @@ def run(output_dir=None, cap=5, detector_res=1, parallel=4):
         }
         started = time.perf_counter()
         world.set_projection_matrix(
-            **kwargs, verbose=0, parallel=parallel, force=True,
+            **kwargs,
+            verbose=0,
+            parallel=parallel,
+            force=True,
             max_working_memory=500_000_000,
         )
         build_seconds[name] = time.perf_counter() - started
@@ -157,32 +165,41 @@ def run(output_dir=None, cap=5, detector_res=1, parallel=4):
 
     figure, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     ideal_buckets = dict(
-        (resolution[0], count)
-        for resolution, count in preflight[ideal_name]["buckets"]
+        (resolution[0], count) for resolution, count in preflight[ideal_name]["buckets"]
     )
     capped_buckets = dict(
         (resolution[0], count)
         for resolution, count in preflight[capped_name]["buckets"]
     )
     resolutions = np.arange(
-        min(ideal_buckets), max(ideal_buckets) + 1,
+        min(ideal_buckets),
+        max(ideal_buckets) + 1,
     )
     width = 0.38
-    axes[0].bar(resolutions - width / 2,
-                [ideal_buckets.get(int(value), 0) for value in resolutions],
-                width=width, label="ideal")
-    axes[0].bar(resolutions + width / 2,
-                [capped_buckets.get(int(value), 0) for value in resolutions],
-                width=width, label=f"auto cap={cap}")
+    axes[0].bar(
+        resolutions - width / 2,
+        [ideal_buckets.get(int(value), 0) for value in resolutions],
+        width=width,
+        label="ideal",
+    )
+    axes[0].bar(
+        resolutions + width / 2,
+        [capped_buckets.get(int(value), 0) for value in resolutions],
+        width=width,
+        label=f"auto cap={cap}",
+    )
     axes[0].set(xlabel="source res", ylabel="voxels", title="Resolution buckets")
     axes[0].legend()
 
     ideal_samples = preflight[ideal_name]["samples"]
     capped_samples = preflight[capped_name]["samples"]
-    axes[1].bar(["source samples", "build time"], [
-        capped_samples / ideal_samples,
-        build_seconds[capped_name] / build_seconds[ideal_name],
-    ])
+    axes[1].bar(
+        ["source samples", "build time"],
+        [
+            capped_samples / ideal_samples,
+            build_seconds[capped_name] / build_seconds[ideal_name],
+        ],
+    )
     axes[1].axhline(1.0, color="k", linewidth=1)
     axes[1].set(ylabel="cap / ideal", title="Work reduction")
 
@@ -190,8 +207,10 @@ def run(output_dir=None, cap=5, detector_res=1, parallel=4):
     positions = np.arange(len(names))
     for metric in ("l1_relative", "l2_relative", "max_pixel_relative"):
         axes[2].plot(
-            positions, [profile_metrics[name][metric] for name in names],
-            marker="o", label=metric,
+            positions,
+            [profile_metrics[name][metric] for name in names],
+            marker="o",
+            label=metric,
         )
     axes[2].set_yscale("log")
     axes[2].set_xticks(positions, names, rotation=25, ha="right")

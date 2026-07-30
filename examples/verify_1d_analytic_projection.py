@@ -27,8 +27,12 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"))
-os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"))
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl")
+)
+os.environ.setdefault(
+    "XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache")
+)
 
 import matplotlib
 
@@ -97,15 +101,16 @@ def analytic_pixel_image(world: World, profile) -> np.ndarray:
     eye = camera.eyes[0]
     source_z = 0.5 * sum(SOURCE_Z_BOUNDS)
     axial_distance = source_z - eye.position[2]
-    transverse_area = ((SOURCE_Y_BOUNDS[1] - SOURCE_Y_BOUNDS[0])
-                       * (SOURCE_Z_BOUNDS[1] - SOURCE_Z_BOUNDS[0]))
+    transverse_area = (SOURCE_Y_BOUNDS[1] - SOURCE_Y_BOUNDS[0]) * (
+        SOURCE_Z_BOUNDS[1] - SOURCE_Z_BOUNDS[0]
+    )
     pinhole_area = np.pi * (EYE_DIAMETER / 2.0) ** 2
     v_edges = np.linspace(0.0, screen.screen_size[1], screen.pixel_shape[1] + 1)
     screen_center = screen.screen_size[1] / 2.0
 
     def integrand(x):
-        cosine = axial_distance / np.sqrt(axial_distance ** 2 + x ** 2)
-        solid_angle = pinhole_area * cosine ** 3 / (4.0 * np.pi * axial_distance ** 2)
+        cosine = axial_distance / np.sqrt(axial_distance**2 + x**2)
+        solid_angle = pinhole_area * cosine**3 / (4.0 * np.pi * axial_distance**2)
         return float(profile(x)) * transverse_area * solid_angle
 
     line = np.zeros(screen.pixel_shape[1], dtype=float)
@@ -128,16 +133,24 @@ def relative_metrics(computed: np.ndarray, reference: np.ndarray) -> dict[str, f
     reference_flux = reference.sum()
     return {
         "relative_l2": float(np.linalg.norm(computed - reference) / reference_norm),
-        "relative_flux": float(abs(computed.sum() - reference_flux) / abs(reference_flux)),
+        "relative_flux": float(
+            abs(computed.sum() - reference_flux) / abs(reference_flux)
+        ),
         "correlation": float(np.corrcoef(computed, reference)[0, 1]),
     }
 
 
-def run_validation(output_path: Path, voxel_count: int = 81, voxel_res: int = 8,
-                   subpixel_resolution: int = 24, parallel: int = 1):
+def run_validation(
+    output_path: Path,
+    voxel_count: int = 81,
+    voxel_res: int = 8,
+    subpixel_resolution: int = 24,
+    parallel: int = 1,
+):
     """Compute P, compare four profiles, and save a diagnostic pyplot figure."""
-    world = build_world(voxel_count=voxel_count,
-                        subpixel_resolution=subpixel_resolution)
+    world = build_world(
+        voxel_count=voxel_count, subpixel_resolution=subpixel_resolution
+    )
     world.set_projection_matrix(
         res=(voxel_res, 1, 1),
         partial_res=(voxel_res, 1, 1),
@@ -159,7 +172,9 @@ def run_validation(output_path: Path, voxel_count: int = 81, voxel_res: int = 8,
         reference = analytic_pixel_image(world, lambda x, key=name: profiles(x)[key])
         metrics[name] = relative_metrics(computed, reference)
 
-        axes[row, 0].plot(v_centers, reference, "k-", lw=2, label="point-pinhole analytic")
+        axes[row, 0].plot(
+            v_centers, reference, "k-", lw=2, label="point-pinhole analytic"
+        )
         axes[row, 0].plot(v_centers, computed, "o-", ms=3, lw=1, label="P @ f(x_gc)")
         axes[row, 0].set_ylabel(f"{name}\nsignal / pixel")
         axes[row, 0].grid(alpha=0.25)
@@ -172,11 +187,13 @@ def run_validation(output_path: Path, voxel_count: int = 81, voxel_res: int = 8,
         axes[row, 1].set_ylabel("difference / max(ref.)")
         axes[row, 1].grid(alpha=0.25)
         axes[row, 1].text(
-            0.02, 0.95,
+            0.02,
+            0.95,
             f"rel. L2 = {metrics[name]['relative_l2']:.3e}\n"
             f"rel. flux = {metrics[name]['relative_flux']:.3e}\n"
             f"corr. = {metrics[name]['correlation']:.6f}",
-            transform=axes[row, 1].transAxes, va="top",
+            transform=axes[row, 1].transAxes,
+            va="top",
         )
 
     axes[-1, 0].set_xlabel("screen v [mm]")
@@ -196,16 +213,23 @@ def run_validation(output_path: Path, voxel_count: int = 81, voxel_res: int = 8,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path,
-                        default=Path("examples/output/verify_1d_analytic_projection.png"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("examples/output/verify_1d_analytic_projection.png"),
+    )
     parser.add_argument("--voxels", type=int, default=81)
     parser.add_argument("--voxel-res", type=int, default=8)
     parser.add_argument("--subpixel-res", type=int, default=24)
     parser.add_argument("--parallel", type=int, default=1)
     args = parser.parse_args()
 
-    result = run_validation(args.output, args.voxels, args.voxel_res,
-                            args.subpixel_res, args.parallel)
+    result = run_validation(
+        args.output, args.voxels, args.voxel_res, args.subpixel_res, args.parallel
+    )
     for name, values in result["metrics"].items():
-        print(f"{name:8s}: " + ", ".join(f"{key}={value:.6g}" for key, value in values.items()))
+        print(
+            f"{name:8s}: "
+            + ", ".join(f"{key}={value:.6g}" for key, value in values.items())
+        )
     print(f"figure: {result['output_path']}")

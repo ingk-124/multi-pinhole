@@ -51,10 +51,12 @@ class Rays:
         Rays
             New ``Rays`` instance containing only the selected entries.
         """
-        return Rays(Z=self.Z[key],
-                    XY=self.XY[key],
-                    zoom_rate=self.zoom_rate[key],
-                    front_and_visible=self.front_and_visible[key])
+        return Rays(
+            Z=self.Z[key],
+            XY=self.XY[key],
+            zoom_rate=self.zoom_rate[key],
+            front_and_visible=self.front_and_visible[key],
+        )
 
     def __len__(self) -> int:
         """int: Total number of rays, same as :attr:`n`."""

@@ -13,12 +13,21 @@ from multi_pinhole.projection import projected_axis_spans, select_source_resolut
 def build_case():
     """Return a wall-free x-z source slice viewed by an unrotated camera."""
     camera = Camera(
-        eyes=[Eye(position=(0.0, 0.0), focal_length=20.0,
-                  eye_type="pinhole", eye_shape="circle", eye_size=1.0)],
+        eyes=[
+            Eye(
+                position=(0.0, 0.0),
+                focal_length=20.0,
+                eye_type="pinhole",
+                eye_shape="circle",
+                eye_size=1.0,
+            )
+        ],
         apertures=[],
         screen=Screen(
-            screen_shape="rectangle", screen_size=(30.0, 40.0),
-            pixel_shape=(30, 40), subpixel_resolution=4,
+            screen_shape="rectangle",
+            screen_size=(30.0, 40.0),
+            pixel_shape=(30, 40),
+            subpixel_resolution=4,
         ),
         camera_position=(0.0, 0.0, 0.0),
     )
@@ -31,8 +40,11 @@ def build_case():
 
 def run(output_dir=None, max_resolution=8, max_projected_step=0.25):
     """Calculate and plot projected spans and selected axis resolutions."""
-    output_dir = (Path(output_dir) if output_dir is not None else
-                  Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_res")
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_adaptive_res"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     camera, voxel = build_case()
     indices = np.arange(voxel.N_voxel)
@@ -46,7 +58,9 @@ def run(output_dir=None, max_resolution=8, max_projected_step=0.25):
         camera.eyes[0].eye_size[None, :] * rays.zoom_rate[:, None],
     )
     estimate = select_source_resolution(
-        spans, detector_pitch=psf_scale, max_resolution=max_resolution,
+        spans,
+        detector_pitch=psf_scale,
+        max_resolution=max_resolution,
         max_projected_step=max_projected_step,
     )
 

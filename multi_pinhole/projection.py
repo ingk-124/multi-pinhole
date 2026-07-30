@@ -26,8 +26,9 @@ def _pair(value, name: str) -> np.ndarray:
     return pair
 
 
-def projected_axis_spans(camera: Camera, eye_index: int, centers: np.ndarray,
-                         edge_lengths: np.ndarray) -> np.ndarray:
+def projected_axis_spans(
+    camera: Camera, eye_index: int, centers: np.ndarray, edge_lengths: np.ndarray
+) -> np.ndarray:
     """Project each source-cell axis chord onto the detector plane.
 
     For every cell center and each world axis, this function projects the two
@@ -72,8 +73,9 @@ def projected_axis_spans(camera: Camera, eye_index: int, centers: np.ndarray,
     offsets = np.zeros((n_cells, 3, 3), dtype=float)
     diagonal = np.arange(3)
     offsets[:, diagonal, diagonal] = 0.5 * edge_lengths
-    endpoints = np.stack((centers[:, None, :] - offsets,
-                          centers[:, None, :] + offsets), axis=2)
+    endpoints = np.stack(
+        (centers[:, None, :] - offsets, centers[:, None, :] + offsets), axis=2
+    )
 
     points_camera = camera.world2camera(endpoints.reshape(-1, 3))
     rays = camera.eyes[eye_index].calc_rays(points_camera)
@@ -237,12 +239,14 @@ class ProjectionWorkEstimate:
                 f"samples<={eye.total_samples_upper_bound:,}",
             )
             shown = eye.full_resolution_buckets[:max_buckets]
-            bucket_text = ", ".join(
-                f"{resolution} x {count:,}"
-                for resolution, count in shown
-            ) or "none"
+            bucket_text = (
+                ", ".join(f"{resolution} x {count:,}" for resolution, count in shown)
+                or "none"
+            )
             if len(eye.full_resolution_buckets) > max_buckets:
-                bucket_text += f", ... (+{len(eye.full_resolution_buckets) - max_buckets})"
+                bucket_text += (
+                    f", ... (+{len(eye.full_resolution_buckets) - max_buckets})"
+                )
             lines.append(f"    full buckets: {bucket_text}")
             if eye.ideal_p50 is not None:
                 lines.append(
@@ -259,10 +263,12 @@ class ProjectionWorkEstimate:
 
 
 def select_circumsphere_resolution(
-        points_in_eye: np.ndarray, edge_lengths: np.ndarray,
-        focal_length: float, reference_size: ArrayLike,
-        fallback_resolution: int | tuple[int, int, int] | None = 4,
-        point_source_threshold: float = 1.0 / 8.0,
+    points_in_eye: np.ndarray,
+    edge_lengths: np.ndarray,
+    focal_length: float,
+    reference_size: ArrayLike,
+    fallback_resolution: int | tuple[int, int, int] | None = 4,
+    point_source_threshold: float = 1.0 / 8.0,
 ) -> PointSourceResolutionEstimate:
     """Recommend axis-wise source resolution from a local circumsphere scale.
 
@@ -314,22 +320,25 @@ def select_circumsphere_resolution(
         raise ValueError("edge_lengths must contain only positive finite values")
     if not np.isfinite(focal_length) or focal_length == 0.0:
         raise ValueError("focal_length must be finite and nonzero")
-    if (not np.isfinite(point_source_threshold) or
-            point_source_threshold <= 0.0):
+    if not np.isfinite(point_source_threshold) or point_source_threshold <= 0.0:
         raise ValueError("point_source_threshold must be positive and finite")
 
     fallback = None
     if fallback_resolution is not None:
         try:
             fallback = np.asarray(
-                np.broadcast_to(fallback_resolution, 3), dtype=float,
+                np.broadcast_to(fallback_resolution, 3),
+                dtype=float,
             )
         except ValueError as exc:
             raise ValueError(
                 "fallback_resolution must be None, an integer, or a length-3 sequence",
             ) from exc
-        if (not np.all(np.isfinite(fallback)) or np.any(fallback < 1) or
-                np.any(fallback != np.floor(fallback))):
+        if (
+            not np.all(np.isfinite(fallback))
+            or np.any(fallback < 1)
+            or np.any(fallback != np.floor(fallback))
+        ):
             raise ValueError("fallback_resolution must contain positive integers")
         fallback = fallback.astype(np.int64)
 
@@ -346,24 +355,25 @@ def select_circumsphere_resolution(
     distance = np.linalg.norm(points_in_eye, axis=1)
     axial_distance = points_in_eye[:, 2]
     valid = (
-            np.all(np.isfinite(points_in_eye), axis=1) &
-            (distance > 0.0) &
-            (axial_distance > radius)
+        np.all(np.isfinite(points_in_eye), axis=1)
+        & (distance > 0.0)
+        & (axial_distance > radius)
     )
 
     projected_diameter = np.full(points_in_eye.shape[0], np.inf)
     # Z*cos(theta) = Z**2 / distance. This form avoids a separate angle and
     # makes the off-axis 1/cos(theta) safety factor explicit algebraically.
     projected_diameter[valid] = (
-            abs(float(focal_length)) * diameter[valid] * distance[valid] /
-            axial_distance[valid] ** 2
+        abs(float(focal_length))
+        * diameter[valid]
+        * distance[valid]
+        / axial_distance[valid] ** 2
     )
     ratio = projected_diameter / reference_size
     point_source = valid & (ratio <= point_source_threshold)
     magnification = np.full(points_in_eye.shape[0], np.inf)
     magnification[valid] = (
-            abs(float(focal_length)) * distance[valid] /
-            axial_distance[valid] ** 2
+        abs(float(focal_length)) * distance[valid] / axial_distance[valid] ** 2
     )
     # For a cube, a subcell edge h has circumsphere diameter sqrt(3)*h.
     # Choosing h from the allowed projected diameter therefore reproduces
@@ -371,18 +381,21 @@ def select_circumsphere_resolution(
     # close to cubic after subdivision.
     target_edge = np.zeros(points_in_eye.shape[0], dtype=float)
     target_edge[valid] = (
-            point_source_threshold * reference_size[valid] /
-            (np.sqrt(3.0) * magnification[valid])
+        point_source_threshold
+        * reference_size[valid]
+        / (np.sqrt(3.0) * magnification[valid])
     )
     ideal_float = np.full((points_in_eye.shape[0], 3), np.inf)
     refinable = valid & ~point_source
     ideal_float[point_source] = 1.0
     ideal_float[refinable] = np.maximum(
         1.0,
-        np.ceil(np.nextafter(
-            edge_lengths[refinable] / target_edge[refinable, None],
-            -np.inf,
-        )),
+        np.ceil(
+            np.nextafter(
+                edge_lengths[refinable] / target_edge[refinable, None],
+                -np.inf,
+            )
+        ),
     )
     if fallback is None:
         if not np.all(np.isfinite(ideal_float)):
@@ -413,11 +426,12 @@ def select_circumsphere_resolution(
     )
 
 
-def select_source_resolution(projected_spans: np.ndarray,
-                             detector_pitch: ArrayLike,
-                             max_resolution: int | tuple[int, int, int] = 4,
-                             max_projected_step: float = 1.0
-                             ) -> SourceResolutionEstimate:
+def select_source_resolution(
+    projected_spans: np.ndarray,
+    detector_pitch: ArrayLike,
+    max_resolution: int | tuple[int, int, int] = 4,
+    max_projected_step: float = 1.0,
+) -> SourceResolutionEstimate:
     """Choose axis-wise source resolution from projected cell-axis spans.
 
     The projected displacement of one source subcell is approximated by the
@@ -460,7 +474,8 @@ def select_source_resolution(projected_spans: np.ndarray,
         detector_pitch = np.full((projected_spans.shape[0], 2), detector_pitch)
     elif detector_pitch.shape == (2,):
         detector_pitch = np.broadcast_to(
-            detector_pitch, (projected_spans.shape[0], 2),
+            detector_pitch,
+            (projected_spans.shape[0], 2),
         )
     elif detector_pitch.shape != (projected_spans.shape[0], 2):
         raise ValueError("detector_pitch must be scalar, length 2, or shape (n, 2)")
@@ -472,9 +487,14 @@ def select_source_resolution(projected_spans: np.ndarray,
     try:
         maximum = np.asarray(np.broadcast_to(max_resolution, 3), dtype=float)
     except ValueError as exc:
-        raise ValueError("max_resolution must be an integer or length-3 sequence") from exc
-    if not np.all(np.isfinite(maximum)) or np.any(maximum < 1) or \
-            np.any(maximum != np.floor(maximum)):
+        raise ValueError(
+            "max_resolution must be an integer or length-3 sequence"
+        ) from exc
+    if (
+        not np.all(np.isfinite(maximum))
+        or np.any(maximum < 1)
+        or np.any(maximum != np.floor(maximum))
+    ):
         raise ValueError("max_resolution must contain positive integers")
     maximum = maximum.astype(np.int64)
 
@@ -486,7 +506,8 @@ def select_source_resolution(projected_spans: np.ndarray,
     finite = np.isfinite(requested_float)
     uncapped = np.full(requested_float.shape, np.inf)
     uncapped[finite] = np.maximum(
-        1.0, np.ceil(np.nextafter(requested_float[finite], -np.inf)),
+        1.0,
+        np.ceil(np.nextafter(requested_float[finite], -np.inf)),
     )
     capped = (~finite) | (uncapped > maximum[None, :])
     resolution = np.where(
@@ -554,8 +575,10 @@ class OpticalBinning:
             Views into :attr:`order`; concatenating them restores the complete
             optical ordering.
         """
-        return [self.order[start:stop]
-                for start, stop in zip(self.scope_offsets[:-1], self.scope_offsets[1:])]
+        return [
+            self.order[start:stop]
+            for start, stop in zip(self.scope_offsets[:-1], self.scope_offsets[1:])
+        ]
 
     def work_offsets(self, max_samples: int) -> np.ndarray:
         """Pack complete optical scopes into memory work chunks.
@@ -614,14 +637,19 @@ class OpticalBinning:
             Views into :attr:`order`, with optical scopes kept intact.
         """
         offsets = self.work_offsets(max_samples)
-        return [self.order[start:stop]
-                for start, stop in zip(offsets[:-1], offsets[1:])]
+        return [
+            self.order[start:stop] for start, stop in zip(offsets[:-1], offsets[1:])
+        ]
 
 
-def make_optical_binning(camera: Camera, eye_index: int, points: np.ndarray,
-                         bin_width_pixels: ArrayLike = 1.0,
-                         max_scope_samples: int | None = None,
-                         sample_costs: np.ndarray | None = None) -> OpticalBinning:
+def make_optical_binning(
+    camera: Camera,
+    eye_index: int,
+    points: np.ndarray,
+    bin_width_pixels: ArrayLike = 1.0,
+    max_scope_samples: int | None = None,
+    sample_costs: np.ndarray | None = None,
+) -> OpticalBinning:
     """Order already-visible source samples by Eye projection direction.
 
     Parameters
@@ -653,17 +681,22 @@ def make_optical_binning(camera: Camera, eye_index: int, points: np.ndarray,
         raise ValueError("points must have shape (n, 3)")
     width_pixels = _pair(bin_width_pixels, "bin_width_pixels")
     if max_scope_samples is not None:
-        if isinstance(max_scope_samples, (bool, np.bool_)) or \
-                int(max_scope_samples) != max_scope_samples or max_scope_samples < 1:
+        if (
+            isinstance(max_scope_samples, (bool, np.bool_))
+            or int(max_scope_samples) != max_scope_samples
+            or max_scope_samples < 1
+        ):
             raise ValueError("max_scope_samples must be a positive integer")
         max_scope_samples = int(max_scope_samples)
     if sample_costs is None:
         sample_costs = np.ones(points.shape[0], dtype=np.int64)
     else:
         sample_costs = np.asarray(sample_costs)
-        if sample_costs.shape != (points.shape[0],) or \
-                not np.issubdtype(sample_costs.dtype, np.integer) or \
-                np.any(sample_costs <= 0):
+        if (
+            sample_costs.shape != (points.shape[0],)
+            or not np.issubdtype(sample_costs.dtype, np.integer)
+            or np.any(sample_costs <= 0)
+        ):
             raise ValueError("sample_costs must be positive integers with shape (n,)")
         sample_costs = sample_costs.astype(np.int64, copy=False)
     if points.shape[0] == 0:
@@ -702,8 +735,11 @@ def make_optical_binning(camera: Camera, eye_index: int, points: np.ndarray,
         accumulated_cost = 0
         for position in range(int(start), int(stop)):
             cost = int(ordered_costs[position])
-            if max_scope_samples is not None and accumulated_cost and \
-                    accumulated_cost + cost > max_scope_samples:
+            if (
+                max_scope_samples is not None
+                and accumulated_cost
+                and accumulated_cost + cost > max_scope_samples
+            ):
                 scope_offsets.append(position)
                 scope_keys.append(ordered_keys[start])
                 scope_costs.append(accumulated_cost)

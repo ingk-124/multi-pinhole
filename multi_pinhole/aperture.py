@@ -1,4 +1,5 @@
 """Aperture geometry and STL freeze handling."""
+
 from numbers import Number
 from typing import List, Literal, Tuple, Union
 
@@ -21,13 +22,15 @@ class Aperture:
     full parameter reference.
     """
 
-    def __init__(self,
-                 shape: Literal["circle", "ellipse", "rectangle"] | None = None,
-                 size: Union[Number, Vector2DLike] | None = None,
-                 position: Vector3DLike | None = None,
-                 direction: Vector3DLike | None = None,
-                 stl_model: mesh.Mesh | None = None,
-                 **stl_args):
+    def __init__(
+        self,
+        shape: Literal["circle", "ellipse", "rectangle"] | None = None,
+        size: Union[Number, Vector2DLike] | None = None,
+        position: Vector3DLike | None = None,
+        direction: Vector3DLike | None = None,
+        stl_model: mesh.Mesh | None = None,
+        **stl_args,
+    ):
         """Create an aperture object.
 
         Parameters
@@ -47,8 +50,12 @@ class Aperture:
 
         self._stl_model = None
         self._frozen = False
-        self._position = np.array(position) if position is not None else np.array([0, 0, 0])
-        self._direction = np.array(direction) if direction is not None else np.array([0, 0, 1])
+        self._position = (
+            np.array(position) if position is not None else np.array([0, 0, 0])
+        )
+        self._direction = (
+            np.array(direction) if direction is not None else np.array([0, 0, 1])
+        )
 
         if isinstance(stl_model, mesh.Mesh):
             self._shape = "stl"
@@ -75,9 +82,7 @@ class Aperture:
             return False
 
     def set_model(
-            self,
-            resolution: int = 20,
-            max_size: Union[Number, Vector2DLike] | None = None
+        self, resolution: int = 20, max_size: Union[Number, Vector2DLike] | None = None
     ) -> "Aperture":
         """Set the STL model.
 
@@ -97,8 +102,9 @@ class Aperture:
         if self._shape == "stl":
             return self
 
-        self._stl_model = stl_utils.generate_aperture_stl(shape=self._shape, size=self._size,
-                                                          resolution=resolution, max_size=max_size)
+        self._stl_model = stl_utils.generate_aperture_stl(
+            shape=self._shape, size=self._size, resolution=resolution, max_size=max_size
+        )
         self._stl_model.translate(self._position)
         return self
 
@@ -109,7 +115,9 @@ class Aperture:
 
     def _ensure_mutable(self):
         if self._frozen:
-            raise RuntimeError("Aperture geometry is frozen because its Camera is registered in a World")
+            raise RuntimeError(
+                "Aperture geometry is frozen because its Camera is registered in a World"
+            )
 
     def freeze(self) -> "Aperture":
         """Freeze analytic geometry and the underlying STL data buffer."""

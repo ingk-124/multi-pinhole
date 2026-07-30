@@ -39,12 +39,28 @@ voxel = Voxel.uniform_voxel(ranges=[[-3, 3], [-3, 3], [-3, 3]], shape=[3, 3, 3])
 
 # 2-3. pinhole eye を1つ、円形 aperture を1つ、小さな screen を1つ組み合わせて Camera を構成。
 camera = Camera(
-    eyes=[Eye(eye_type="pinhole", eye_shape="circle", eye_size=1.0,
-              focal_length=12.0, position=[0.0, 0.0])],
-    apertures=Aperture(shape="circle", size=6.0, position=[0.0, 0.0, 25.0],
-                        resolution=24, max_size=24.0),
-    screen=Screen(screen_shape="rectangle", screen_size=[12.0, 12.0],
-                  pixel_shape=(8, 8), subpixel_resolution=2),
+    eyes=[
+        Eye(
+            eye_type="pinhole",
+            eye_shape="circle",
+            eye_size=1.0,
+            focal_length=12.0,
+            position=[0.0, 0.0],
+        )
+    ],
+    apertures=Aperture(
+        shape="circle",
+        size=6.0,
+        position=[0.0, 0.0, 25.0],
+        resolution=24,
+        max_size=24.0,
+    ),
+    screen=Screen(
+        screen_shape="rectangle",
+        screen_size=[12.0, 12.0],
+        pixel_shape=(8, 8),
+        subpixel_resolution=2,
+    ),
     camera_position=[0.0, 0.0, -60.0],
 )
 
@@ -56,11 +72,15 @@ world.set_inside_vertices(lambda x, y, z: np.ones_like(x, dtype=bool))
 world.set_projection_matrix(res=1, verbose=0, parallel=1)
 
 # 6. レンダリング：ボクセルごとに発光値を決め、あとは疎行列積1回で画像を得る。
-emission = np.exp(-((voxel.gravity_center[:, 0] / 2.2) ** 2
-                    + (voxel.gravity_center[:, 1] / 1.8) ** 2
-                    + (voxel.gravity_center[:, 2] / 2.6) ** 2))
-pixel_image = world.P_matrix[0] @ emission      # 全eye、形状 (N_pixel,)
-eye_image = world.projection[0][0] @ emission   # eye 0、形状 (N_pixel,)
+emission = np.exp(
+    -(
+        (voxel.gravity_center[:, 0] / 2.2) ** 2
+        + (voxel.gravity_center[:, 1] / 1.8) ** 2
+        + (voxel.gravity_center[:, 2] / 2.6) ** 2
+    )
+)
+pixel_image = world.P_matrix[0] @ emission  # 全eye、形状 (N_pixel,)
+eye_image = world.projection[0][0] @ emission  # eye 0、形状 (N_pixel,)
 ```
 
 内部的には、ステップ5（`set_projection_matrix`）がもっともコストの高い部分です。カメラの各 eye について、(a) すべてのボクセルの8個の角頂点をすべての aperture・壁に対して光線追跡し、不可視／部分的に可視／完全に可視に分類し、(b) 可視なボクセルについてサブボクセル点をサンプリングし、`Camera.calc_image_vec`（`docs/core.md` で説明する pinhole 投影＋ラスタライズのパイプライン）で eye を通して投影し、(c) それらのサブボクセルサンプルを積分してボクセルあたり1つの重みへ戻します。これらの各サブステップは `docs/world.md` で詳しく説明しています。

@@ -55,9 +55,7 @@ def _missing_component_error(coordinate_type, components):
 
 
 def cartesian_coordinates(
-        width: float,
-        depth: float,
-        height: float
+    width: float, depth: float, height: float
 ) -> CoordinateTransform:
     """Build a normalized Cartesian-coordinate transform.
 
@@ -86,10 +84,7 @@ def cartesian_coordinates(
     return normalized_coordinates
 
 
-def torus_coordinates(
-        major_radius: float,
-        minor_radius: float
-) -> CoordinateTransform:
+def torus_coordinates(major_radius: float, minor_radius: float) -> CoordinateTransform:
     """Return the standard right-handed normalized torus coordinate transform.
 
     Parameters
@@ -139,8 +134,7 @@ def torus_coordinates(
 
 
 def torus_inverse_coordinates(
-        major_radius: float,
-        minor_radius: float
+    major_radius: float, minor_radius: float
 ) -> CoordinateTransform:
     """Return the inverse-angle right-handed normalized torus coordinate transform.
 
@@ -189,8 +183,7 @@ def torus_inverse_coordinates(
 
 
 def poloidal_cartesian_coordinates(
-        major_radius: float,
-        minor_radius: float
+    major_radius: float, minor_radius: float
 ) -> CoordinateTransform:
     """Build a normalized poloidal-Cartesian transform.
 
@@ -228,8 +221,7 @@ def poloidal_cartesian_coordinates(
 
 
 def poloidal_cartesian_inverse_coordinates(
-        major_radius: float,
-        minor_radius: float
+    major_radius: float, minor_radius: float
 ) -> CoordinateTransform:
     """Build a normalized poloidal-Cartesian transform with inverse azimuth.
 
@@ -262,10 +254,7 @@ def poloidal_cartesian_inverse_coordinates(
     return normalized_coordinates
 
 
-def cylindrical_coordinates(
-        radius: float,
-        height: float
-) -> CoordinateTransform:
+def cylindrical_coordinates(radius: float, height: float) -> CoordinateTransform:
     """Build a normalized cylindrical-coordinate transform.
 
     Parameters
@@ -342,8 +331,7 @@ def spherical_coordinates(radius: float) -> CoordinateTransform:
 
 
 def coordinate_transform(
-        coordinate_type: str,
-        coordinate_parameters: dict[str, float]
+    coordinate_type: str, coordinate_parameters: dict[str, float]
 ) -> CoordinateTransform:
     """Build a normalized-coordinate transform selected by name.
 
@@ -407,11 +395,11 @@ def _positive_scale(value, name):
 
 
 def convert_from_cartesian(
-        points: ArrayLike,
-        coordinate_type: str,
-        *,
-        normalized: bool = False,
-        **coordinate_parameters: float
+    points: ArrayLike,
+    coordinate_type: str,
+    *,
+    normalized: bool = False,
+    **coordinate_parameters: float,
 ) -> FloatArray:
     """Convert Cartesian points to a selected coordinate convention.
 
@@ -452,13 +440,16 @@ def convert_from_cartesian(
         if not normalized:
             return points.copy()
         width = _positive_scale(
-            _parameter(coordinate_parameters, "width", "X"), "width",
+            _parameter(coordinate_parameters, "width", "X"),
+            "width",
         )
         depth = _positive_scale(
-            _parameter(coordinate_parameters, "depth", "Y"), "depth",
+            _parameter(coordinate_parameters, "depth", "Y"),
+            "depth",
         )
         height = _positive_scale(
-            _parameter(coordinate_parameters, "height", "Z"), "height",
+            _parameter(coordinate_parameters, "height", "Z"),
+            "height",
         )
         return points / np.array([width / 2, depth / 2, height / 2])
 
@@ -468,10 +459,12 @@ def convert_from_cartesian(
         axial = z
         if normalized:
             radius = _positive_scale(
-                _parameter(coordinate_parameters, "radius", "a"), "radius",
+                _parameter(coordinate_parameters, "radius", "a"),
+                "radius",
             )
             height = _positive_scale(
-                _parameter(coordinate_parameters, "height", "h"), "height",
+                _parameter(coordinate_parameters, "height", "h"),
+                "height",
             )
             radial = radial / radius
             axial = axial / (height / 2)
@@ -480,7 +473,10 @@ def convert_from_cartesian(
 
     if coordinate_type in ("torus", "torus_inverse"):
         major_radius = _parameter(
-            coordinate_parameters, "major_radius", "R_0", required=True,
+            coordinate_parameters,
+            "major_radius",
+            "R_0",
+            required=True,
         )
         rho = np.hypot(R - major_radius, z)
         if normalized:
@@ -497,10 +493,12 @@ def convert_from_cartesian(
             phi = np.arctan2(y, x)
         return np.stack([rho, theta, phi], axis=-1)
 
-    if coordinate_type in (
-            "poloidal_cartesian", "poloidal_cartesian_inverse"):
+    if coordinate_type in ("poloidal_cartesian", "poloidal_cartesian_inverse"):
         major_radius = _parameter(
-            coordinate_parameters, "major_radius", "R_0", required=True,
+            coordinate_parameters,
+            "major_radius",
+            "R_0",
+            required=True,
         )
         poloidal_x = R - major_radius
         poloidal_y = z
@@ -522,11 +520,14 @@ def convert_from_cartesian(
         radial = distance
         if normalized:
             radius = _positive_scale(
-                _parameter(coordinate_parameters, "radius", "a"), "radius",
+                _parameter(coordinate_parameters, "radius", "a"),
+                "radius",
             )
             radial = radial / radius
         cos_theta = np.divide(
-            z, distance, out=np.full_like(distance, np.nan),
+            z,
+            distance,
+            out=np.full_like(distance, np.nan),
             where=distance != 0,
         )
         theta = np.arccos(np.clip(cos_theta, -1.0, 1.0))
@@ -537,10 +538,7 @@ def convert_from_cartesian(
 
 
 def convert_to_cartesian(
-        coordinate_type: str,
-        *,
-        normalized: bool = False,
-        **components: ArrayLike
+    coordinate_type: str, *, normalized: bool = False, **components: ArrayLike
 ) -> FloatArray:
     """Convert broadcastable keyword coordinate components to Cartesian.
 
@@ -571,20 +569,25 @@ def convert_to_cartesian(
     if coordinate_type == "cartesian":
         try:
             x, y, z = np.broadcast_arrays(
-                components["x"], components["y"], components["z"],
+                components["x"],
+                components["y"],
+                components["z"],
             )
         except KeyError:
             raise _missing_component_error("cartesian", components) from None
         x, y, z = (np.asarray(value, dtype=float) for value in (x, y, z))
         if normalized:
             width = _positive_scale(
-                _parameter(components, "width", "X"), "width",
+                _parameter(components, "width", "X"),
+                "width",
             )
             depth = _positive_scale(
-                _parameter(components, "depth", "Y"), "depth",
+                _parameter(components, "depth", "Y"),
+                "depth",
             )
             height = _positive_scale(
-                _parameter(components, "height", "Z"), "height",
+                _parameter(components, "height", "Z"),
+                "height",
             )
             x, y, z = x * width / 2, y * depth / 2, z * height / 2
         return np.stack([x, y, z], axis=-1)
@@ -592,17 +595,21 @@ def convert_to_cartesian(
     if coordinate_type == "cylindrical":
         try:
             R, phi, Z = np.broadcast_arrays(
-                components["R"], components["phi"], components["Z"],
+                components["R"],
+                components["phi"],
+                components["Z"],
             )
         except KeyError:
             raise _missing_component_error("cylindrical", components) from None
         R, phi, Z = (np.asarray(value, dtype=float) for value in (R, phi, Z))
         if normalized:
             radius = _positive_scale(
-                _parameter(components, "radius", "a"), "radius",
+                _parameter(components, "radius", "a"),
+                "radius",
             )
             height = _positive_scale(
-                _parameter(components, "height", "h"), "height",
+                _parameter(components, "height", "h"),
+                "height",
             )
             R, Z = R * radius, Z * height / 2
         return np.stack([R * np.cos(phi), R * np.sin(phi), Z], axis=-1)
@@ -610,19 +617,25 @@ def convert_to_cartesian(
     if coordinate_type in ("torus", "torus_inverse"):
         try:
             r, theta, phi = np.broadcast_arrays(
-                components["r"], components["theta"], components["phi"],
+                components["r"],
+                components["theta"],
+                components["phi"],
             )
         except KeyError:
             raise _missing_component_error(coordinate_type, components) from None
-        r, theta, phi = (
-            np.asarray(value, dtype=float) for value in (r, theta, phi)
+        r, theta, phi = (np.asarray(value, dtype=float) for value in (r, theta, phi))
+        major_radius = float(
+            _parameter(
+                components,
+                "major_radius",
+                "R_0",
+                required=True,
+            )
         )
-        major_radius = float(_parameter(
-            components, "major_radius", "R_0", required=True,
-        ))
         if normalized:
             minor_radius = _positive_scale(
-                _parameter(components, "minor_radius", "a"), "minor_radius",
+                _parameter(components, "minor_radius", "a"),
+                "minor_radius",
             )
             r = r * minor_radius
         if coordinate_type == "torus":
@@ -634,24 +647,30 @@ def convert_to_cartesian(
         z = r * np.sin(theta)
         return np.stack([x, y, z], axis=-1)
 
-    if coordinate_type in (
-            "poloidal_cartesian", "poloidal_cartesian_inverse"):
+    if coordinate_type in ("poloidal_cartesian", "poloidal_cartesian_inverse"):
         try:
             poloidal_x, poloidal_y, phi = np.broadcast_arrays(
-                components["x"], components["y"], components["phi"],
+                components["x"],
+                components["y"],
+                components["phi"],
             )
         except KeyError:
             raise _missing_component_error(coordinate_type, components) from None
         poloidal_x, poloidal_y, phi = (
-            np.asarray(value, dtype=float)
-            for value in (poloidal_x, poloidal_y, phi)
+            np.asarray(value, dtype=float) for value in (poloidal_x, poloidal_y, phi)
         )
-        major_radius = float(_parameter(
-            components, "major_radius", "R_0", required=True,
-        ))
+        major_radius = float(
+            _parameter(
+                components,
+                "major_radius",
+                "R_0",
+                required=True,
+            )
+        )
         if normalized:
             minor_radius = _positive_scale(
-                _parameter(components, "minor_radius", "a"), "minor_radius",
+                _parameter(components, "minor_radius", "a"),
+                "minor_radius",
             )
             poloidal_x = poloidal_x * minor_radius
             poloidal_y = poloidal_y * minor_radius
@@ -666,24 +685,28 @@ def convert_to_cartesian(
     if coordinate_type == "spherical":
         try:
             r, theta, phi = np.broadcast_arrays(
-                components["r"], components["theta"], components["phi"],
+                components["r"],
+                components["theta"],
+                components["phi"],
             )
         except KeyError:
             raise _missing_component_error("spherical", components) from None
-        r, theta, phi = (
-            np.asarray(value, dtype=float) for value in (r, theta, phi)
-        )
+        r, theta, phi = (np.asarray(value, dtype=float) for value in (r, theta, phi))
         if normalized:
             radius = _positive_scale(
-                _parameter(components, "radius", "a"), "radius",
+                _parameter(components, "radius", "a"),
+                "radius",
             )
             r = r * radius
         sin_theta = np.sin(theta)
-        return np.stack([
-            r * sin_theta * np.cos(phi),
-            r * sin_theta * np.sin(phi),
-            r * np.cos(theta),
-        ], axis=-1)
+        return np.stack(
+            [
+                r * sin_theta * np.cos(phi),
+                r * sin_theta * np.sin(phi),
+                r * np.cos(theta),
+            ],
+            axis=-1,
+        )
 
     raise ValueError(
         f"Unsupported coordinate_type: {coordinate_type!r}; "

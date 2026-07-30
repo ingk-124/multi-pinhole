@@ -13,7 +13,8 @@ def test_sum_eye_projections_has_fixed_values_and_csr_format():
     second = sparse.coo_matrix(np.array([[0.0, 3.0], [4.0, 0.0]]))
 
     actual = _projection_matrix.sum_eye_projections(
-        [first, second], shape=(2, 2),
+        [first, second],
+        shape=(2, 2),
     )
 
     np.testing.assert_array_equal(actual.toarray(), [[1.0, 3.0], [4.0, 2.0]])
@@ -24,12 +25,16 @@ def test_sum_eye_projections_has_fixed_values_and_csr_format():
 def test_optical_builder_preserves_world_binning_monkeypatch(monkeypatch):
     eye = Eye(position=(0.0, 0.0), focal_length=10.0, eye_size=1.0)
     screen = Screen(
-        screen_shape="square", screen_size=12.0,
-        pixel_shape=(6, 6), subpixel_resolution=1,
+        screen_shape="square",
+        screen_size=12.0,
+        pixel_shape=(6, 6),
+        subpixel_resolution=1,
     )
     aperture = Aperture(shape="circle", size=20.0, position=(0.0, 0.0, 5.0))
     camera = Camera(
-        eyes=[eye], apertures=aperture, screen=screen,
+        eyes=[eye],
+        apertures=aperture,
+        screen=screen,
         camera_position=(0.0, 0.0, 0.0),
     )
     voxel = Voxel.uniform_voxel(
@@ -47,7 +52,10 @@ def test_optical_builder_preserves_world_binning_monkeypatch(monkeypatch):
 
     monkeypatch.setattr(world_module, "make_optical_binning", recorded)
     world.set_projection_matrix(
-        res=1, verbose=0, parallel=1, chunk_strategy="optical",
+        res=1,
+        verbose=0,
+        parallel=1,
+        chunk_strategy="optical",
     )
 
     assert len(calls) == 1

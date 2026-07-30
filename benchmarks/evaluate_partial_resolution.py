@@ -18,13 +18,16 @@ import tempfile
 import time
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"),
+    "MPLCONFIGDIR",
+    str(Path(tempfile.gettempdir()) / "multi_pinhole_mpl"),
 )
 os.environ.setdefault(
-    "XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"),
+    "XDG_CACHE_HOME",
+    str(Path(tempfile.gettempdir()) / "multi_pinhole_cache"),
 )
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,8 +48,13 @@ BOUNDARIES = {
 
 
 def build_case(
-        spacing: float, z_over_f: float, orientation: str, offset: float,
-        boundary: str, pixel_shape=(81, 81)) -> World:
+    spacing: float,
+    z_over_f: float,
+    orientation: str,
+    offset: float,
+    boundary: str,
+    pixel_shape=(81, 81),
+) -> World:
     """Build one partially included voxel without walls or apertures."""
     focal_length = 25.0
     normal = ORIENTATIONS[orientation].astype(float)
@@ -59,9 +67,13 @@ def build_case(
     else:
         radius = radius_over_d * spacing
         center = radius * normal
-        camera_position = center - np.array([
-            0.0, 0.0, focal_length * (1.0 + z_over_f),
-        ])
+        camera_position = center - np.array(
+            [
+                0.0,
+                0.0,
+                focal_length * (1.0 + z_over_f),
+            ]
+        )
         coordinate_kwargs = {
             "coordinate_type": "spherical",
             "coordinate_parameters": {"radius": radius},
@@ -75,12 +87,13 @@ def build_case(
     )
     screen_size = max(10.0, 2.5 * spacing / max(z_over_f - 1.0, 1.0))
     camera = Camera(
-        eyes=[Eye(position=(0.0, 0.0), focal_length=focal_length,
-                  eye_size=0.2)],
+        eyes=[Eye(position=(0.0, 0.0), focal_length=focal_length, eye_size=0.2)],
         apertures=[],
         screen=Screen(
-            screen_shape="square", screen_size=screen_size,
-            pixel_shape=pixel_shape, subpixel_resolution=1,
+            screen_shape="square",
+            screen_size=screen_size,
+            pixel_shape=pixel_shape,
+            subpixel_resolution=1,
         ),
         camera_position=camera_position,
     )
@@ -97,8 +110,7 @@ def build_case(
     world.find_visible_voxels(verbose=0)
     if world.visible_voxels[0][0, 0] != 1:
         raise RuntimeError(
-            f"case is not partial: {boundary=}, {orientation=}, "
-            f"{offset=}, {z_over_f=}",
+            f"case is not partial: {boundary=}, {orientation=}, {offset=}, {z_over_f=}",
         )
     return world
 
@@ -114,18 +126,23 @@ def _relative_metrics(actual, reference):
         ),
         "l1_relative": float(np.linalg.norm(difference, ord=1) / reference_l1),
         "l2_relative": float(np.linalg.norm(difference) / reference_l2),
-        "max_pixel_relative": float(
-            np.max(np.abs(difference)) / reference_peak
-        ),
+        "max_pixel_relative": float(np.max(np.abs(difference)) / reference_peak),
     }
 
 
 def run(
-        output_dir=None, spacing=25.0, reference_res=48,
-        resolutions=(1, 2, 3, 4, 5, 6, 8), parallel=4):
+    output_dir=None,
+    spacing=25.0,
+    reference_res=48,
+    resolutions=(1, 2, 3, 4, 5, 6, 8),
+    parallel=4,
+):
     """Evaluate partial quadrature over depth, boundary, angle, and offset."""
-    output_dir = (Path(output_dir) if output_dir is not None else
-                  Path(tempfile.gettempdir()) / "multi_pinhole_partial_resolution")
+    output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(tempfile.gettempdir()) / "multi_pinhole_partial_resolution"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     depths = (5.0, 20.0, 80.0)
     offsets = (-0.2, 0.0, 0.2)
@@ -136,15 +153,22 @@ def run(
             for orientation in ORIENTATIONS:
                 for offset in offsets:
                     world = build_case(
-                        spacing, depth, orientation, offset, boundary,
+                        spacing,
+                        depth,
+                        orientation,
+                        offset,
+                        boundary,
                     )
                     images = {}
                     elapsed = {}
                     for resolution in (*resolutions, reference_res):
                         started = time.perf_counter()
                         world.set_projection_matrix(
-                            res=1, partial_res=resolution, force=True,
-                            verbose=0, parallel=parallel,
+                            res=1,
+                            partial_res=resolution,
+                            force=True,
+                            verbose=0,
+                            parallel=parallel,
                             max_working_memory=500_000_000,
                         )
                         elapsed[resolution] = time.perf_counter() - started
@@ -153,43 +177,54 @@ def run(
                         ).ravel()
                     reference = images[reference_res]
                     for resolution in resolutions:
-                        records.append({
-                            "boundary": boundary,
-                            "z_over_f": depth,
-                            "orientation": orientation,
-                            "offset_over_d": offset,
-                            "partial_res": resolution,
-                            "samples": resolution ** 3,
-                            "seconds": elapsed[resolution],
-                            **_relative_metrics(images[resolution], reference),
-                        })
+                        records.append(
+                            {
+                                "boundary": boundary,
+                                "z_over_f": depth,
+                                "orientation": orientation,
+                                "offset_over_d": offset,
+                                "partial_res": resolution,
+                                "samples": resolution**3,
+                                "seconds": elapsed[resolution],
+                                **_relative_metrics(images[resolution], reference),
+                            }
+                        )
 
     figure, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for boundary_index, boundary in enumerate(BOUNDARIES):
-        selected = [record for record in records
-                    if record["boundary"] == boundary]
+        selected = [record for record in records if record["boundary"] == boundary]
         worst_l2 = [
-            max(record["l2_relative"] for record in selected
-                if record["partial_res"] == resolution)
+            max(
+                record["l2_relative"]
+                for record in selected
+                if record["partial_res"] == resolution
+            )
             for resolution in resolutions
         ]
         axes[0].plot(
-            resolutions, worst_l2, marker="o",
-            color=colors[boundary_index], label=boundary,
+            resolutions,
+            worst_l2,
+            marker="o",
+            color=colors[boundary_index],
+            label=boundary,
         )
     for depth_index, depth in enumerate(depths):
-        selected = [record for record in records
-                    if record["z_over_f"] == depth]
+        selected = [record for record in records if record["z_over_f"] == depth]
         worst_l2 = [
-            max(record["l2_relative"] for record in selected
-                if record["partial_res"] == resolution)
+            max(
+                record["l2_relative"]
+                for record in selected
+                if record["partial_res"] == resolution
+            )
             for resolution in resolutions
         ]
         axes[0].plot(
-            resolutions, worst_l2,
+            resolutions,
+            worst_l2,
             color=colors[depth_index + len(BOUNDARIES)],
-            linestyle="--", label=f"all boundaries, Z/f={depth:g}",
+            linestyle="--",
+            label=f"all boundaries, Z/f={depth:g}",
         )
 
     metric_names = ("flux_relative", "l2_relative", "max_pixel_relative")
@@ -197,35 +232,46 @@ def run(
     positions = np.arange(len(resolutions))
     for metric_index, metric in enumerate(metric_names):
         worst = [
-            max(record[metric] for record in records
-                if record["partial_res"] == resolution)
+            max(
+                record[metric]
+                for record in records
+                if record["partial_res"] == resolution
+            )
             for resolution in resolutions
         ]
         axes[1].bar(
-            positions + (metric_index - 1) * width, worst, width,
+            positions + (metric_index - 1) * width,
+            worst,
+            width,
             label=metric,
         )
 
     median_seconds = [
-        np.median([
-            record["seconds"] for record in records
-            if record["partial_res"] == resolution
-        ])
+        np.median(
+            [
+                record["seconds"]
+                for record in records
+                if record["partial_res"] == resolution
+            ]
+        )
         for resolution in resolutions
     ]
     axes[2].plot(
-        [resolution ** 3 for resolution in resolutions], median_seconds,
+        [resolution**3 for resolution in resolutions],
+        median_seconds,
         marker="o",
     )
 
     axes[0].set(
-        xlabel="partial res", ylabel="worst relative L2",
+        xlabel="partial res",
+        ylabel="worst relative L2",
         title="Boundary curvature and depth",
     )
     axes[0].set_yscale("log")
     axes[0].legend(fontsize=7, ncol=2)
     axes[1].set(
-        xlabel="partial res", ylabel="worst relative error over all cases",
+        xlabel="partial res",
+        ylabel="worst relative error over all cases",
         title=f"Worst case vs res={reference_res} reference",
     )
     axes[1].set_xticks(positions, resolutions)
@@ -268,8 +314,10 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=Path)
     arguments = parser.parse_args()
     output = run(
-        output_dir=arguments.output_dir, spacing=arguments.spacing,
-        reference_res=arguments.reference_res, parallel=arguments.parallel,
+        output_dir=arguments.output_dir,
+        spacing=arguments.spacing,
+        reference_res=arguments.reference_res,
+        parallel=arguments.parallel,
     )
     print(output["figure_path"])
     print(output["json_path"])

@@ -32,5 +32,7 @@ def cli() -> None:
     (registered via ``pyproject.toml``'s ``[project.scripts]``) currently
     only prints a short usage hint and performs no simulation work itself.
     """
-    print("This is the multi_pinhole package. "
-          "Use it as a library to create multi-pinhole camera simulations.")
+    print(
+        "This is the multi_pinhole package. "
+        "Use it as a library to create multi-pinhole camera simulations."
+    )
