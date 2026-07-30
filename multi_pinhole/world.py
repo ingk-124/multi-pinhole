@@ -13,7 +13,6 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Any, Literal, Tuple, List
 
-import dill
 import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import ArrayLike
@@ -315,38 +314,79 @@ class World:
             self,
             filename: str | os.PathLike[str]
     ) -> None:
-        """Persist the world instance to disk.
+        """Persist the world as a versioned archive.
 
         Parameters
         ----------
         filename : str or os.PathLike[str]
-            Destination path where the serialized world should be written.
+            Destination path. The extension is not interpreted; ``.mpw`` is
+            recommended for the archive containing ``manifest.json`` and
+            ``world.pkl``.
         """
-        self._ensure_projection_cache_schema()
-        with open(filename, "wb") as f:
-            dill.dump(self, f)
+        self.save(filename)
 
-    @staticmethod
-    def load_world(filename: str | os.PathLike[str]) -> "World":
-        """Deserialize a world instance from disk.
+    def save(self, filename: str | os.PathLike[str]) -> None:
+        """Atomically persist the World and its caches in a versioned archive.
+
+        Parameters
+        ----------
+        filename : path-like
+            Destination archive. ``.mpw`` is the conventional suffix.
+
+        Notes
+        -----
+        Saving does not alter scene arrays or cache state. Loading pickle/dill
+        content is unsafe for untrusted files.
+        """
+        from .serialization import save_world_archive
+
+        save_world_archive(self, filename)
+
+    @classmethod
+    def load(cls, filename: str | os.PathLike[str]) -> "World":
+        """Load a versioned archive or a trusted legacy direct-dill World.
 
         Parameters
         ----------
         filename : str or os.PathLike[str]
-            Path to a pickled :class:`World` instance created by
-            :meth:`save_world`.
+            Archive or legacy direct-dill path.
 
         Returns
         -------
         World
-            Restored world populated with the serialized state.
+            Restored World. A legacy World can immediately be migrated with
+            :meth:`save`.
+
+        Notes
+        -----
+        Pickle and dill can execute arbitrary code. Only load trusted files.
         """
-        with open(filename, "rb") as f:
-            loaded_world = dill.load(f)
-        if not isinstance(loaded_world, World):
-            raise TypeError("serialized object is not a World")
-        loaded_world._ensure_projection_cache_schema()
-        return loaded_world
+        from .serialization import load_world_archive
+
+        return load_world_archive(filename)
+
+    @staticmethod
+    def load_world(filename: str | os.PathLike[str]) -> "World":
+        """Compatibility alias for :meth:`World.load`."""
+        return World.load(filename)
+
+    @staticmethod
+    def inspect_archive(filename: str | os.PathLike[str]) -> dict[str, Any]:
+        """Inspect serialization metadata without unpickling World data.
+
+        Parameters
+        ----------
+        filename : path-like
+            Versioned archive or legacy direct-dill file.
+
+        Returns
+        -------
+        dict
+            Manifest metadata. Legacy files report unknown version fields.
+        """
+        from .serialization import inspect_world_archive
+
+        return inspect_world_archive(filename)
 
     @classmethod
     def from_config(
