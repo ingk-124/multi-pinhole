@@ -12,9 +12,9 @@ clipped ellipse の境界 cell で 4×4 masked midpoint により評価します
 有限 Eye では detector 点を Eye 上へ戻す Jacobian と source/Eye 位置に
 依存する局所立体角正規化密度を用います。
 
-このドキュメントは `multi_pinhole.core` から再エクスポートされるクラスを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。
+このドキュメントはtop-level `multi_pinhole`から公開される光学classを説明します。それも、単なる API の形ではなく、それらが**何をどう計算しているか**——座標系の変換規則、pinhole 投影の式、光線をサブピクセルの重みへ変換するラスタライズアルゴリズム、aperture による遮蔽判定——を中心に説明します。
 
-実装は責務別に、`multi_pinhole.eye`（Eye と ray 生成）、`multi_pinhole.aperture`（aperture／STL geometry）、`multi_pinhole.screen`（detector overlap、etendue quadrature、rasterizer）、`multi_pinhole.camera`（構成、座標変換、姿勢、描画）へ分割されています。`multi_pinhole.core` は後方互換 facade であり、旧import pathと新moduleから得られるclassは同一objectです。
+実装は責務別に、`multi_pinhole.eye`（Eye と ray 生成）、`multi_pinhole.aperture`（aperture／STL geometry）、`multi_pinhole.screen`（detector overlap、etendue quadrature、rasterizer）、`multi_pinhole.camera`（構成、座標変換、姿勢、描画）へ分割されています。`multi_pinhole.core` は旧class importとpickle globalを解決するlegacy-loading専用facadeであり、新規codeの公開入口ではありません。旧pathと新moduleから得られるclassは同一objectです。
 
 ## 4つの座標系
 

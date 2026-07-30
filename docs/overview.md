@@ -25,8 +25,8 @@ frames; `docs/core.md` walks through that chain in detail.
   channel), `Aperture` (an occluding shape, analytic or STL), `Screen` (the
   pixelated detector plane and its rasterizer), and `Camera` (which groups
   eyes/apertures/screen and places them in world space). See
-  `docs/core.md`. `multi_pinhole.core` remains the compatibility facade for
-  all historical imports.
+  `docs/core.md`. `multi_pinhole.core` remains a legacy-loading facade for
+  historical class imports and pickle globals, not a new-code entry point.
 - **Voxel modeling** (`multi_pinhole.voxel`) — a Cartesian voxel grid
   (`Voxel`) plus synthetic-profile helpers for toroidal plasma emission. See
   the "Voxel grid geometry" section below.
@@ -48,6 +48,11 @@ origin ``theta`` is ``nan``; azimuth on the ``z`` axis follows NumPy's
   `multi_pinhole._visibility`, while independent optical-bin quadrature and
   sparse assembly live in private `multi_pinhole._projection_matrix`; public
   methods and cache ownership remain on `World`. See `docs/world.md`.
+- **Configuration and persistence** (`multi_pinhole.config`,
+  `multi_pinhole.serialization`) — strict JSON config constructs a scene
+  without caches. Versioned `.mpw` archives checkpoint the complete World and
+  expose metadata without unpickling. See [the config schema](config.md) and
+  [serialization reference](serialization.md).
 
 ## Typical Workflow
 

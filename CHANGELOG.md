@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.0
+
+- Add the strict `multi-pinhole/world-config` JSON schema and
+  `World.from_config`/`World.to_config`. Configs describe scene construction
+  only, resolve relative STL paths from the config directory, reject unknown
+  data, and never contain calculation caches.
+- Add atomic versioned World archives with a plain `manifest.json`, a
+  `world.pkl` payload, and separate library, World schema, and projection
+  cache schema versions. Add `World.save`, `World.load`, and
+  `World.inspect_archive`.
+- Preserve trusted legacy direct-dill loading and
+  `multi_pinhole.core.{Rays,Eye,Aperture,Screen,Camera}` pickle globals.
+  Compatible schema-3 visibility and projection caches are reused; an
+  incompatible projection schema keeps visibility and clears projection only.
+- Publish `multi_pinhole.__version__`, fix the top-level `__all__` contract,
+  and reduce `multi_pinhole.core` to a legacy-loading class facade. Remove
+  its private rasterizer, `stl_utils`, and unused type-alias re-exports.
+- Keep projection cache schema 3 and all projection formulae, ordering,
+  dtypes, and tolerances unchanged.
+
 ## 0.9.0
 
 - Make non-axisymmetric profiles accept an explicit poloidal

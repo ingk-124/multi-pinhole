@@ -6,8 +6,8 @@
 [`projection-compression-future.md`](projection-compression-future.md)を
 参照する。
 
-現在のパッケージバージョンは0.8系である。以下のバージョン番号は作業範囲を
-整理するための目安であり、日程やリリースを保証するものではない。
+現在の公開契約は1.0.0で確定した。以下の旧version節は判断経緯と1.1以降へ
+延期した構造変更を記録する。
 
 ## 基本方針
 
@@ -112,6 +112,20 @@ schemaを更新し、安全に再計算へフォールバックさせる。
 `optics`を導入する場合は0.9系で十分に検証してから1.0.0で正式化する。
 検証が不十分な場合は、構造変更を1.1.0以降へ延期し、既存構造のまま1.0.0を
 リリースしてよい。
+
+1.0.0では大規模な`optics/`移動を延期し、次の契約を確定した。
+
+- `multi-pinhole/world-config` schema version 1を、cacheを含まないscene構築形式とする。
+- `.mpw` ZIP archiveの`manifest.json`と`world.pkl`を完全なWorld checkpoint形式とする。
+- library version、World serialization schema、projection cache schemaを独立に管理する。
+- projection表現を変更していないためcache schema 3を維持する。
+- 旧direct-dillと`multi_pinhole.core.*` class globalを読み込めるshimを維持する。
+- `multi_pinhole.core`はlegacy loading専用とし、新規codeの公開入口から除外する。
+- 任意callable、STL Aperture、source pathのないwall meshはJSON configでの
+  roundtripを保証せず、明示的に拒否する。
+
+詳細は[config schema](config.md)、[serialization契約](serialization.md)、
+[migration guide](migration-v1.md)を参照する。
 
 ## 1.0以降のversioning
 

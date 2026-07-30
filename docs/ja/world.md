@@ -35,7 +35,27 @@ geometry は設定 resolution へ fallback します。
 
 ## シーンの内省と永続化
 
-`camera_info` と `voxel_info` は登録済みのセンサーおよびグリッドの概要を提供します。`save_world`/`load_world` は `dill`（`coordinate_transform` が内部で使うクロージャなども含めてシリアライズできる、`pickle` 互換のライブラリ）を用いてシーン全体をシリアライズし、長時間のシミュレーションを容易にチェックポイントできます。projection cacheにはschema versionを保存し、versionがない旧pickleまたは非互換versionを読み込んだ場合は、再利用可能なvisibilityを残して `_projection` と `_P_matrix` だけを無効化します。カメラ、ボクセル、壁のプロパティセッターは可能な限りキャッシュ済みの可視性・投影データを再利用しますが、それが不可能な場合は `_invalidate_visibility_cache()` を呼び出し、`_visible_vertices`・`_visible_voxels`・`_projection`・`_P_matrix` を `None` のプレースホルダーへリセットして、次回のクエリで最初から再計算させます。
+`camera_info` と `voxel_info` は登録済みセンサーとグリッドを要約します。
+scene構築と計算済みcheckpointには、独立した形式を使います。
+
+- `World.from_config(path_or_mapping)` と `world.to_config(path)` はcacheを
+  含まないJSON scene schemaを使います。詳細は
+  [config schema reference](config.md)を参照してください。
+- `world.save(path)`、`World.inspect_archive(path)`、`World.load(path)` は、
+  平文JSON manifestとdill payloadからなるversion付きarchiveを使います。
+  `save_world`と`load_world`は互換aliasとして残します。詳細は
+  [serialization reference](serialization.md)を参照してください。
+
+archive manifestではlibrary version、World serialization schema、projection
+cache schemaを分離します。schema 3のprojection cacheは再利用します。非互換な
+projection cache schemaを読み込んだ場合、再利用可能なvisibilityを維持しながら
+`_projection`と`_P_matrix`だけを無効化します。旧direct-dill Worldは読み込んだ直後に
+新archiveへ保存できます。pickle/dillは任意codeを実行できるため、信頼できるfileだけを
+読み込んでください。
+
+camera、voxel、wallのproperty setterは可能な限りcache済みのvisibility／projectionを
+再利用します。不可能な場合は`_invalidate_visibility_cache()`を呼び、
+`_visible_vertices`、`_visible_voxels`、`_projection`、`_P_matrix`を`None`へ戻します。
 
 ## 可視性の評価
 

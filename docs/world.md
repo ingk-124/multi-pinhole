@@ -58,13 +58,24 @@ limits for later plotting (`wall_ranges`).
 ## Scene Introspection and Persistence
 
 `camera_info` and `voxel_info` summarize the registered sensors and grid.
-`save_world`/`load_world` serialize complete scenes with `dill`
-(`pickle`-compatible but able to serialize the closures used internally,
-e.g. by `coordinate_transform`), making it easy to checkpoint long-running
-simulations. Serialized projection caches carry an explicit schema version;
-loading a legacy or incompatible version keeps reusable visibility results but
-invalidates `_projection` and `_P_matrix` so they are recomputed safely.
- Property setters for
+Scene construction and complete calculation checkpoints have separate
+formats:
+
+- `World.from_config(path_or_mapping)` and `world.to_config(path)` use the
+  cache-free JSON scene schema. See [the config reference](config.md).
+- `world.save(path)`, `World.inspect_archive(path)`, and `World.load(path)`
+  use a versioned archive containing a plain JSON manifest and a dill
+  payload. `save_world` and `load_world` remain compatibility aliases. See
+  [the serialization reference](serialization.md).
+
+The archive manifest separates the library version, World serialization
+schema, and projection cache schema. Schema-3 projection caches are reused.
+Loading an incompatible projection cache schema keeps reusable visibility
+results but invalidates `_projection` and `_P_matrix` so they are recomputed
+safely. Legacy direct-dill Worlds can be loaded and immediately saved as
+archives. Pickle/dill can execute arbitrary code: only load trusted files.
+
+Property setters for
 cameras, voxels, and walls reuse cached visibility/projection data when
 possible but otherwise call `_invalidate_visibility_cache()`, which resets
 `_visible_vertices`, `_visible_voxels`, `_projection`, and `_P_matrix` back

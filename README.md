@@ -17,7 +17,8 @@ This repository contains code and resources for Multi-pinhole imaging simulation
 The public classes remain available from `multi_pinhole`. Optics
 implementations live in `eye`, `aperture`, `screen`, `camera`, and `rays`;
 `multi_pinhole.core` remains a compatibility facade exposing the same class
-objects for legacy imports and serialized globals. `World` remains in
+objects for legacy imports and serialized globals; it is not a public
+namespace for new code. `World` remains in
 `multi_pinhole.world` and owns public orchestration, scene state,
 serialization, and caches. Private `_visibility` and `_projection_matrix`
 modules contain calculations that can return masks or sparse matrices without
@@ -76,6 +77,60 @@ implicitly. `backproject` applies the discrete adjoint `P.T` and is not an
 inverse reconstruction. Both methods accept a vector or a column-wise batch.
 See [the world guide](docs/world.md) for resolution policies and
 [the core guide](docs/core.md) for detector integration.
+
+## Minimal World configuration
+
+Scene construction has a strict JSON-compatible schema independent of saved
+projection caches. Lengths are millimetres and angles are radians. This
+minimal mapping is directly executable:
+
+```python
+from multi_pinhole import World
+
+config = {
+    "schema": "multi-pinhole/world-config",
+    "schema_version": 1,
+    "units": {"length": "mm", "angle": "rad"},
+    "voxel": {
+        "axes": {
+            "x": [-1.0, 0.0, 1.0],
+            "y": [-1.0, 1.0],
+            "z": [10.0, 11.0],
+        },
+        "ranges": [[-1.0, 1.0], [-1.0, 1.0], [10.0, 11.0]],
+        "shape": [2, 1, 1],
+        "coordinate": {
+            "type": "cartesian",
+            "parameters": {"width": 1.0, "depth": 1.0, "height": 1.0},
+            "rotation_matrix": [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+        },
+        "sub_voxel_resolution": [1, 1, 1],
+    },
+    "cameras": [],
+    "walls": [],
+    "inside": {"type": "all", "parameters": {}},
+    "verbose": 0,
+}
+
+world = World.from_config(config)
+assert world.to_config() == config
+```
+
+Use `World.from_config("scene.json")` and `world.to_config("scene.json")`
+for files. Relative STL paths are resolved from the config file directory.
+Config files never contain visibility or projection caches. See the
+[config schema reference](docs/config.md).
+
+For complete checkpoints, use `world.save("checkpoint.mpw")`,
+`World.inspect_archive(...)`, and `World.load(...)`. Archives contain a
+plain JSON manifest plus a dill payload. Pickle/dill can execute arbitrary
+code, so load archives and legacy files only when they come from a trusted
+source. See the [serialization reference](docs/serialization.md) and the
+[0.8/0.9 migration guide](docs/migration-v1.md).
 
 ## Classes
 - `World`: Represents the 3D world to be imaged.

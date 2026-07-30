@@ -1,6 +1,6 @@
 # Core Module Reference
 
-This document explains the optics classes re-exported by `multi_pinhole.core` and, more
+This document explains the optics classes exported by top-level `multi_pinhole` and, more
 importantly, *how* they compute what they compute: the coordinate-frame
 conventions, the pinhole projection formula, the rasterization algorithm that
 turns a ray into subpixel weights, and the aperture-occlusion check. For the
@@ -8,7 +8,8 @@ Implementations are organized by responsibility: `multi_pinhole.eye` owns
 `Eye` and ray generation, `multi_pinhole.aperture` owns aperture/STL geometry,
 `multi_pinhole.screen` owns detector overlap, etendue quadrature, and
 rasterization, and `multi_pinhole.camera` owns composition, coordinate
-transforms, orientation, and drawing. `multi_pinhole.core` is a compatibility
+transforms, orientation, and drawing. `multi_pinhole.core` is a legacy-loading
+compatibility
 facade; both the old imports and the direct module imports return the same
 class objects. For the full API surface, read the class docstrings —
 this document focuses on the underlying process.
