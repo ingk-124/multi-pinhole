@@ -27,6 +27,17 @@
   implementation/reference levels with explicit skippable boundaries.
   Add a consolidated coordinate/profile/interpolation guide, including a
   fixed-toroidal-angle R–Z section workflow.
+- Make `flattening_profile` the canonical phenomenological density-island
+  model. It blends kinked and flattened densities, defaults to full-angle
+  flattening, and retains Gaussian/angular localization as an optional mode.
+  Allow the flattening radius (`rho_flat`) to be chosen independently of the
+  kink decay scale (`rho_s`), while defaulting it to `rho_s`.
+- Remove the geometric `flattening_rho`/`blended_flattening_rho` APIs and the
+  superseded blended/fully-flat profile names before the first 1.0 release.
+  Add kink and crescent profiles; make optional controls keyword-only; require
+  scalar, finite model parameters; and use unnormalized kink displacement by
+  default. Gaussian widths are full e-folding widths, Gaussian edge tapering
+  is opt-in, and smoothing defaults to exact hard minima and maxima.
 - Keep projection cache schema 3 and all projection formulae, ordering,
   dtypes, and tolerances unchanged.
 - Remove the unused legacy `stl_utils.check_visible_old` implementation; the
