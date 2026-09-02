@@ -4,8 +4,8 @@ Run from the repository root with::
 
     python examples/profiles_demo.py
 
-The coordinates and amplitudes in this example are dimensionless.  Applications
-can assign physical units to the profile amplitude as needed.
+The coordinates and amplitudes are dimensionless. Applications can assign
+physical units to the profile amplitude as needed.
 """
 
 import matplotlib.pyplot as plt
@@ -14,190 +14,138 @@ import numpy as np
 from multi_pinhole import profiles
 
 
-def plot_radial_cross_sections(x, parameters):
-    """Compare transformed radii and profiles along the horizontal midplane."""
-    axisymmetric = parameters["axisymmetric"]
-    kinked = parameters["kinked"]
-    flattened = parameters["flattened"]
-    full_flattening = parameters["full_flattening"]
+def parameter_title(name, parameters, keys):
+    """Build a plot title from the parameters actually used."""
+    values = ", ".join(rf"${key}={parameters[key]:g}$" for key in keys)
+    return f"{name}: {values}"
 
-    rho_shifted, _ = profiles.shifted_polar(
-        x,
-        0,
-        cx=axisymmetric["delta"],
-        cy=0,
-    )
-    rho_kinked, _ = profiles.kinked_rho(
-        x,
-        0,
-        **{key: kinked[key] for key in ("delta", "xi_0", "rho_s", "d")},
-        center_angle_xy=kinked["center_angle_xy"],
-    )
-    rho_flattened, _ = profiles.flattening_rho(
-        x,
-        0,
-        **{
-            key: flattened[key]
-            for key in ("delta", "xi_0", "rho_s", "d", "w", "gamma", "lam_0")
-        },
-        center_angle_xy=flattened["center_angle_xy"],
-        flattening_angle_offset=flattened["flattening_angle_offset"],
-    )
 
-    values = [
-        profiles.axisymmetric_profile(x, 0, **axisymmetric),
-        profiles.kinked_profile(x, 0, **kinked),
-        profiles.flattening_profile(x, 0, **flattened),
-        profiles.flattening_profile(x, 0, **full_flattening),
-    ]
-    rho_full_flattening, _ = profiles.flattening_rho(
-        x,
-        0,
-        **{
-            key: full_flattening[key]
-            for key in ("delta", "xi_0", "rho_s", "d", "w", "gamma", "lam_0")
-        },
-        center_angle_xy=full_flattening["center_angle_xy"],
-        flattening_angle_offset=full_flattening["flattening_angle_offset"],
+def plot_cross_sections(x, cases, title, *, show_radius=False):
+    """Compare profile, and optionally radius, along the horizontal chord."""
+    nrows = 2 if show_radius else 1
+    fig, axes = plt.subplots(
+        nrows,
+        1,
+        figsize=(8, 6 if show_radius else 4.5),
+        sharex=True,
+        squeeze=False,
+        layout="constrained",
     )
-    radii = [rho_shifted, rho_kinked, rho_flattened, rho_full_flattening]
-    labels = [
-        "Shifted axisymmetric",
-        "Kinked",
-        r"Flattened ($\lambda_0=0.5$)",
-        r"Full flattening ($\lambda_0=1$)",
-    ]
+    profile_ax = axes[-1, 0]
+    for case in cases:
+        profile_ax.plot(
+            x,
+            case["profile"](x, 0, **case["parameters"]),
+            label=case["label"],
+        )
+        if show_radius:
+            radius, _ = case["radius"](x, 0, **case["radius_parameters"])
+            axes[0, 0].plot(x, radius, label=case["label"])
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, layout="constrained")
-    for radius, value, label in zip(radii, values, labels):
-        axes[0].plot(x, radius, label=label)
-        axes[1].plot(x, value, label=label)
-
-    axes[0].set_ylabel(r"Normalized radius $\rho$")
-    axes[1].set_ylabel("Profile amplitude")
-    axes[1].set_xlabel("Normalized poloidal coordinate x")
-    axes[0].legend()
-    axes[1].legend()
-    fig.suptitle(r"Poloidal profiles along $y=0$ at center angle $0$")
+    if show_radius:
+        axes[0, 0].set_ylabel(r"Normalized radius $\rho$")
+        axes[0, 0].legend()
+    profile_ax.set_xlabel("Normalized poloidal coordinate x")
+    profile_ax.set_ylabel("Profile amplitude")
+    profile_ax.legend()
+    fig.suptitle(title)
     return fig
 
 
-def plot_phase_slices(x, y, center_angles, parameters, profile_name):
-    """Plot one non-axisymmetric profile at several poloidal center angles."""
-    xx, yy, aa = np.meshgrid(x, y, center_angles, indexing="ij")
-    axisymmetric = profiles.axisymmetric_profile(
-        xx,
-        yy,
-        **parameters["axisymmetric"],
-    )
-
-    if profile_name == "kinked":
-        values = profiles.kinked_profile(
-            xx,
-            yy,
-            **(parameters["kinked"] | {"center_angle_xy": aa}),
-        )
-    elif profile_name == "flattened":
-        values = profiles.flattening_profile(
-            xx,
-            yy,
-            **(parameters["flattened"] | {"center_angle_xy": aa}),
-        )
-    elif profile_name == "full flattening":
-        values = profiles.flattening_profile(
-            xx,
-            yy,
-            **(parameters["full_flattening"] | {"center_angle_xy": aa}),
-        )
-    else:
-        raise ValueError(f"Unknown profile name: {profile_name}")
-
-    ncols = 4
-    nrows = int(np.ceil(center_angles.size / ncols))
+def plot_maps(x, y, cases, title):
+    """Plot representative two-dimensional profiles in one comparison figure."""
+    xx, yy = np.meshgrid(x, y, indexing="xy")
     fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(3 * ncols + 1, 2.8 * nrows),
+        1,
+        len(cases),
+        figsize=(3.3 * len(cases) + 0.8, 3.3),
         sharex=True,
         sharey=True,
         squeeze=False,
         layout="constrained",
     )
-    levels = np.linspace(0, parameters["axisymmetric"]["A"], 16)
+    levels = np.linspace(0, 1, 16)
     contour = None
-    for index, ax in enumerate(axes.flat):
-        if index >= center_angles.size:
-            ax.set_visible(False)
-            continue
-        contour = ax.contourf(
-            x,
-            y,
-            values[:, :, index].T,
-            levels=levels,
-            cmap="viridis",
-        )
-        ax.contour(
-            x,
-            y,
-            axisymmetric[:, :, index].T,
-            levels=8,
-            colors="white",
-            linewidths=0.5,
-            linestyles="--",
-        )
-        ax.set_title(
-            rf"$\theta_c={center_angles[index] / np.pi:.2g}\pi$",
-        )
+    for ax, case in zip(axes[0], cases, strict=True):
+        values = case["profile"](xx, yy, **case["parameters"])
+        contour = ax.contourf(xx, yy, values, levels=levels, cmap="viridis")
+        ax.set_title(case["label"])
         ax.set_aspect("equal")
-
-    for ax in axes[-1, :]:
-        if ax.get_visible():
-            ax.set_xlabel("x")
-    for ax in axes[:, 0]:
-        ax.set_ylabel("y")
-    fig.suptitle(
-        f"{profile_name.capitalize()} profile over poloidal center angle",
-    )
-    fig.colorbar(
-        contour,
-        ax=axes,
-        label="Profile amplitude",
-        shrink=0.9,
-        pad=0.02,
-    )
+        ax.set_xlabel("x")
+    axes[0, 0].set_ylabel("y")
+    fig.suptitle(title)
+    fig.colorbar(contour, ax=axes, label="Profile amplitude", shrink=0.85)
     return fig
 
 
 def main():
-    x = np.linspace(-1, 1, 101)
-    y = np.linspace(-1, 1, 101)
-    center_angles = np.linspace(-np.pi, np.pi, 8, endpoint=False)
+    x = np.linspace(-1, 1, 201)
+    y = np.linspace(-1, 1, 201)
+    base = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
 
-    axisymmetric = dict(A=1.0, delta=0.2, alpha=2.0, beta=3.0)
-    kinked = axisymmetric | dict(
-        xi_0=0.4,
+    flat_kink = base | dict(
+        xi_0=0.2,
         rho_s=0.3,
         d=2.0,
         center_angle_xy=0.0,
+        normalize_kink=False,
     )
-    flattened = kinked | dict(
-        w=0.4,
-        gamma=0.1,
-        lam_0=0.5,
-        flattening_angle_offset=np.pi,
-    )
-    full_flattening = flattened | dict(lam_0=1.0)
-    parameters = {
-        "axisymmetric": axisymmetric,
-        "kinked": kinked,
-        "flattened": flattened,
-        "full_flattening": full_flattening,
+    flat_cases = [
+        {
+            "label": "Kinked",
+            "profile": profiles.kinked_profile,
+            "parameters": flat_kink,
+        },
+        *[
+            {
+                "label": rf"Full angle, $\lambda_0={lam_0:g}$",
+                "profile": profiles.flattening_profile,
+                "parameters": flat_kink | dict(lam_0=lam_0),
+            }
+            for lam_0 in (1.0, 0.5)
+        ],
+    ]
+    localized_case = {
+        "label": r"Localized option, $\lambda_0=1$",
+        "profile": profiles.flattening_profile,
+        "parameters": flat_kink | dict(localized=True, lam_0=1.0, rho_flat=0.3, w=0.4),
     }
+    flat_title = parameter_title(
+        "Density-island flattening", flat_kink, ("xi_0", "rho_s", "d")
+    )
+    plot_cross_sections(x, flat_cases, flat_title)
+    plot_maps(x, y, flat_cases + [localized_case], flat_title)
 
-    plot_radial_cross_sections(x, parameters)
-    plot_phase_slices(x, y, center_angles, parameters, "kinked")
-    plot_phase_slices(x, y, center_angles, parameters, "flattened")
-    plot_phase_slices(x, y, center_angles, parameters, "full flattening")
+    crescent_kink = base | dict(
+        xi_0=0.7,
+        rho_s=0.3,
+        d=4.0,
+        center_angle_xy=0.0,
+        normalize_kink=False,
+    )
+    crescent_parameters = {
+        key: value for key, value in crescent_kink.items() if key != "normalize_kink"
+    }
+    radius_keys = ("delta", "xi_0", "rho_s", "d", "center_angle_xy")
+    crescent_cases = [
+        {
+            "label": "Kinked",
+            "profile": profiles.kinked_profile,
+            "parameters": crescent_kink,
+            "radius": profiles.kinked_rho,
+            "radius_parameters": {key: crescent_kink[key] for key in radius_keys},
+        },
+        {
+            "label": "Crescent",
+            "profile": profiles.crescent_profile,
+            "parameters": crescent_parameters,
+            "radius": profiles.crescent_rho,
+            "radius_parameters": {key: crescent_parameters[key] for key in radius_keys},
+        },
+    ]
+    crescent_title = parameter_title("Crescent vs. kink", crescent_kink, ("xi_0", "d"))
+    plot_cross_sections(x, crescent_cases, crescent_title, show_radius=True)
+    plot_maps(x, y, crescent_cases, crescent_title)
     plt.show()
 
 

@@ -52,6 +52,7 @@ def make_test_profile(voxel):
     return profiles.flattening_profile(
         x,
         y,
+        localized=True,
         center_angle_xy=center_angle_xy,
         A=1.0,
         delta=0.1,

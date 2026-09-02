@@ -65,12 +65,15 @@ projection matrix.
 |---|---|
 | `axisymmetric_profile` | Shifted but poloidally symmetric profile |
 | `kinked_profile` | Radially dependent displacement toward a center angle |
-| `flattening_profile` | Kinked profile with a localized flattened region |
+| `flattening_profile` | Blend a full-angle or localized density island into a kinked profile |
+| `crescent_profile` | Clip from the analytic fold of the kink map, when one exists |
 | `helical_center_angle` | Propagate a measured center angle between toroidal positions |
 
-All profile inputs broadcast according to NumPy rules. The amplitude `A` and
-`edge_value` may carry application-defined physical units; coordinate and
-shape parameters are dimensionless.
+The evaluation coordinates `x` and `y`, and `center_angle_xy`, broadcast
+according to NumPy rules. Shape parameters such as `delta`, `xi_0`, `rho_s`,
+and `d` are finite scalars. Optional profile controls are keyword-only. The
+amplitude `A` and `edge_value` may carry application-defined physical units;
+coordinate and shape parameters are dimensionless.
 
 `center_angle_xy` is measured counter-clockwise from outward poloidal `+x`
 toward upward `+y`. It is a poloidal Cartesian angle, independent of the sign
@@ -105,6 +108,136 @@ The helper evaluates
 `center_angle_xy_ref + (n/m) * (phi - phi_ref)` without wrapping the result.
 It does not detect the `phi` convention. The caller must use a signed `n`
 consistent with `poloidal_cartesian` or `poloidal_cartesian_inverse`.
+
+### Shift and kink normalization
+
+`delta` is a static horizontal, Shafranov-like shift. It is always normalized
+along each ray so that the original circular wall remains at static radius
+`rho=1`. Denote this radius after the static shift but before the kink by
+`rho_0`. The kink displacement is
+
+$$
+\xi(\rho_0)=\xi_0\exp\left[-\left(\frac{\rho_0}{\rho_s}\right)^d\right]
+$$
+
+toward `center_angle_xy`. By default, `normalize_kink=False`: the kink is not
+renormalized after displacement and may remain nonzero at the wall. Set
+`normalize_kink=True` on `kinked_*` or `flattening_profile` only when the
+kink-displaced radius must also equal one at the wall.
+
+`crescent_*` deliberately has no `normalize_kink` option. It locates a fold of
+the unnormalized kink map analytically using the `-1` branch of Lambert W and
+flattens the non-monotonic part at that radius. If there is no real fold, it
+returns the kinked coordinates unchanged. This is a fixed-wall,
+phenomenological crescent model; `xi_0` is a displacement in the original
+normalized Cartesian frame.
+
+### Flattening controls
+
+`flattening_profile` is a phenomenological density-island model, not an
+equilibrium or transport solver. Its normal mode is full-angle flattening
+(`localized=False`). First choose the flattening radius `rho_flat`; omitting it
+uses `rho_s`. The target island radius is constructed from `rho_0` and the
+kinked radius:
+
+$$
+\rho_{\mathrm{limit}}=\max(\rho_{\mathrm{flat}},\rho_0)
+$$
+
+$$
+\rho_{\mathrm{island}}
+=\min(\rho_{\mathrm{kink}},\rho_{\mathrm{limit}})
+$$
+
+The ordinary two-power profile is then evaluated independently at both radii:
+
+$$
+n_{\mathrm{kink}}=n(\rho_{\mathrm{kink}})
+$$
+
+$$
+n_{\mathrm{island}}=n(\rho_{\mathrm{island}})
+$$
+
+The final density is a density-space blend, not a blend of the radii:
+
+$$
+n_{\mathrm{flat}}
+=(1-\lambda)n_{\mathrm{kink}}+\lambda n_{\mathrm{island}}
+$$
+
+`lam_0` is therefore a dimensionless density blend fraction in the closed
+interval `[0, 1]`. With the default `localized=False`, `lambda=lam_0` at every
+poloidal angle:
+
+```python
+emission = profiles.flattening_profile(
+    x,
+    y,
+    A=1.0,
+    delta=0.1,
+    alpha=2.0,
+    beta=3.0,
+    xi_0=0.2,
+    rho_s=0.3,
+    d=2.0,
+    lam_0=1.0,
+)
+```
+
+Set `rho_flat` only when the flattening radius must differ from the kink decay
+radius `rho_s`. Localization-only arguments are ignored in this mode.
+
+`localized=True` is an optional extension that restricts the density blend in
+radius and angle. A positive width `w` is then required, and
+
+$$
+\lambda=\lambda_0 G(\rho_{\mathrm{kink}};\rho_{\mathrm{flat}},w)
+\frac{1+\cos(\theta')}{2}
+$$
+
+where
+
+$$
+G(\rho;\rho_{\mathrm{flat}},w)
+=\exp\left[-\left|\frac{2(\rho-\rho_{\mathrm{flat}})}{w}\right|^d\right].
+$$
+
+where `theta'` is the kinked angle relative to
+`center_angle_xy + flattening_angle_offset`. The optional distortion is
+`theta' = Delta theta + gamma*sin(Delta theta)`. Here `w` is the full
+e-folding width: `G=exp(-1)` at `|rho-rho_flat|=w/2`. It is not a Gaussian
+standard deviation. For `d=2`, `sigma=w/(2*sqrt(2))`; for general `d`, the
+full width at half maximum is `w*(ln(2))**(1/d)`. `blend_edge=None` applies no
+Gaussian suppression at `rho=0` or `rho=1`; a positive `blend_edge` enables
+that taper.
+
+```python
+localized_emission = profiles.flattening_profile(
+    x,
+    y,
+    A=1.0,
+    delta=0.1,
+    alpha=2.0,
+    beta=3.0,
+    xi_0=0.2,
+    rho_s=0.3,
+    d=2.0,
+    localized=True,
+    rho_flat=0.4,
+    w=0.2,
+)
+```
+
+`smooth_eps=0` uses exact NumPy maximum and minimum operations when constructing
+`rho_island`. A positive value smooths both operations at the same scale.
+
+`edge_value` is the two-power profile value at effective radius `rho=1`.
+When `normalize_kink=False`, the kinked radius on the physical circular wall
+depends on angle, so a single `edge_value` does not guarantee a uniform wall
+value. Use `normalize_kink=True` if that boundary condition is more important
+than allowing a nonzero kink displacement at the wall. Points outside the
+original unit disk are zero in either case.
 
 The complete parameter comparison is executable as:
 
