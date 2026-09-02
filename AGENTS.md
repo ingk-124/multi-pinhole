@@ -34,6 +34,20 @@ package-structure, and release policy.
 - Keep `requirements.txt` synchronized with the direct runtime dependencies.
 - Do not add or install dependencies without explicit approval.
 
+## Git workflow
+
+- Make changes on a dedicated branch and keep commits logically scoped.
+- Do not commit or push directly to `main`. Integrate changes into `main`
+  through a pull request so that review discussion and CI results remain
+  traceable.
+- Merge a pull request only after its required checks pass. If GitHub reports
+  no checks, complete the repository validation below before merging and note
+  that CI was unavailable in the pull request.
+- Direct integration into `main` is reserved for exceptional recovery work.
+  Record the reason when an exception is necessary.
+- Agents must not push, create or merge a pull request, or delete local or
+  remote branches unless the user has authorized that operation.
+
 ## Validation
 
 After changing Python code, run:
