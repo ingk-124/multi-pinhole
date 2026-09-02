@@ -914,6 +914,11 @@ def test_profile_helpers_are_available_from_profiles_module():
     assert not hasattr(multi_pinhole, "emission_profile")
     assert profiles.flattening_profile is multi_pinhole.profiles.flattening_profile
     assert profiles.axisymmetric_profile is multi_pinhole.profiles.axisymmetric_profile
+    assert not hasattr(profiles, "blended_flattening_rho")
+    assert not hasattr(profiles, "flattening_rho")
+    assert not hasattr(profiles, "blended_flattening_profile")
+    assert not hasattr(profiles, "fully_flat_profile")
+    assert not hasattr(profiles, "fully_flat_rho")
 
 
 def test_voxel_vertex_coordinate_properties_initialize_vertices_lazily():
